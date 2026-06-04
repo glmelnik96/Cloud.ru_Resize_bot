@@ -26,7 +26,7 @@ import structlog
 log = structlog.get_logger(__name__)
 
 
-_client_handle: "FigmaMCPClient | None" = None
+_client_handle: FigmaMCPClient | None = None
 
 
 def _mcp_url() -> str:
@@ -99,6 +99,6 @@ async def stop_figma_mcp_client() -> None:
     await client.close()
 
 
-def get_client() -> "FigmaMCPClient | None":
+def get_client() -> FigmaMCPClient | None:
     """Return the active client, or None if MCP is disabled / unreachable."""
     return _client_handle
