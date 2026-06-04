@@ -120,6 +120,44 @@ class FigmaMCPClient:
                 {"fileKey": file_key, "code": code},
             )
 
+    async def export_frame(
+        self, *, file_key: str, node_id: str, max_dim: int
+    ) -> bytes:
+        """Request a PNG screenshot of `node_id` and return its bytes.
+
+        MCP returns a short-lived URL; we follow it with httpx (30s timeout)
+        and hand back the raw bytes for the node to write to disk.
+        """
+        import httpx
+
+        async with self._lock:
+            assert self._session is not None, "FigmaMCPClient.connect() not called"
+            result = await self._session.call_tool(
+                "get_screenshot",
+                {"fileKey": file_key, "nodeId": node_id, "maxDimension": max_dim},
+            )
+        url = _extract_url(result)
+        if not url:
+            raise RuntimeError(f"figma_export_no_url: result={result!r}")
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.get(url)
+            resp.raise_for_status()
+            return resp.content
+
+
+def _extract_url(result: Any) -> str | None:
+    """Pull the screenshot URL out of either {'url': ...} or {'content': [{'url': ...}]}.
+    Returns None if neither shape matches — caller raises."""
+    if isinstance(result, dict):
+        if isinstance(result.get("url"), str):
+            return result["url"]
+        content = result.get("content")
+        if isinstance(content, list) and content and isinstance(content[0], dict):
+            u = content[0].get("url")
+            if isinstance(u, str):
+                return u
+    return None
+
 
 async def start_figma_mcp_client() -> FigmaMCPClient | None:
     """Bootstrap: if FIGMA_MCP_URL is empty, return None (graceful disable).

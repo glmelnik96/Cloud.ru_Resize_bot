@@ -173,3 +173,63 @@ async def test_set_texts_empty_replacements_is_noop() -> None:
     c, fake = _client_with_fake_session()
     await c.set_texts(file_key="FK", replacements=[])
     assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_export_frame_calls_get_screenshot_and_fetches_url(monkeypatch) -> None:
+    c, fake = _client_with_fake_session()
+    fake.next_result = {"url": "http://figma-cdn/short-lived.png"}
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+        content = b"PNG-bytes-from-cdn"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        def __init__(self, *_, **__): ...
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url):
+            captured["url"] = url
+            return _FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
+    out = await c.export_frame(file_key="FK", node_id="3302:516", max_dim=1080)
+    assert out == b"PNG-bytes-from-cdn"
+    assert fake.calls[0][0] == "get_screenshot"
+    assert fake.calls[0][1]["fileKey"] == "FK"
+    assert fake.calls[0][1]["nodeId"] == "3302:516"
+    assert fake.calls[0][1]["maxDimension"] == 1080
+    assert captured["url"] == "http://figma-cdn/short-lived.png"
+
+
+@pytest.mark.asyncio
+async def test_export_frame_handles_url_inside_content_field() -> None:
+    """get_screenshot has been observed to return both {url: ...} and
+    {content: [{url: ...}]} shapes across MCP versions. We accept both."""
+    c, fake = _client_with_fake_session()
+    fake.next_result = {"content": [{"url": "http://figma-cdn/x.png"}]}
+    # Patch httpx to a fake that returns trivial bytes — we only care that the URL is found.
+    import httpx
+
+    class _R:
+        status_code = 200
+        content = b"OK"
+        def raise_for_status(self) -> None: return None
+
+    class _AC:
+        def __init__(self, *_, **__): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return None
+        async def get(self, url): return _R()
+
+    httpx.AsyncClient = _AC  # type: ignore[assignment]
+    out = await c.export_frame(file_key="FK", node_id="3302:516", max_dim=1080)
+    assert out == b"OK"
