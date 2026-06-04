@@ -22,6 +22,8 @@ services:
       - "127.0.0.1:8088:8088"
     networks:
       - resize-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   redis:
     image: redis/redis-stack:7.4.0-v0
