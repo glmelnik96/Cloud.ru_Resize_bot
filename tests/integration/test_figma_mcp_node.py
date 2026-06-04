@@ -420,3 +420,28 @@ async def test_node_skips_cta_when_winner_cta_empty(monkeypatch, tmp_path):
     await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
     # Only slogan replacement should be sent.
     assert {nid for nid, _ in fake.sets[0]} == {"3302:520"}
+
+
+@pytest.mark.asyncio
+async def test_node_calls_admin_alert_on_mcp_error(monkeypatch, tmp_path):
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    fake = _FakeClient(fail_on="upload")
+    figma_mcp._client_handle = fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_MANIFEST_PATH", _seed_manifest(tmp_path))
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+
+    sent: list[dict] = []
+
+    async def _fake_notify(text, *, dedupe_key, cooldown_s=3600.0):
+        sent.append({"text": text, "dedupe_key": dedupe_key, "cooldown_s": cooldown_s})
+        return True
+
+    monkeypatch.setattr(mod, "notify_admin", _fake_notify)
+
+    out = await mod.fill_templates_per_format(_seed_state(tmp_path, ["vk_post_1080x1080"]))  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 1
+    assert len(sent) == 1
+    assert sent[0]["dedupe_key"] == "figma_mcp_dead"
+    assert "Figma" in sent[0]["text"] or "figma" in sent[0]["text"]

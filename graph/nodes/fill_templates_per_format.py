@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from graph.state import AdBrief, GeneratedImage, GraphState, MessageCandidate
 from infra import figma_mcp
+from infra.admin_alert import notify_admin
 from infra.figma_manifest import FigmaManifest, load_manifest
 
 log = structlog.get_logger(__name__)
@@ -204,6 +205,17 @@ async def _render_one(
             reason="mcp_error",
             error=str(exc),
             error_type=err_type,
+        )
+        # Debounced TG ping: dedupe_key "figma_mcp_dead" + 1h cooldown means a
+        # single Figma outage produces ONE admin alert across all formats and
+        # all sessions in the next hour.
+        await notify_admin(
+            (
+                "Figma MCP отвалился — рендеры скатились на PIL-stub.\n"
+                f"slug={fmt}, err={err_type}: {str(exc)[:160]}"
+            ),
+            dedupe_key="figma_mcp_dead",
+            cooldown_s=3600,
         )
         return (
             _pil_fallback(
