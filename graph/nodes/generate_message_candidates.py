@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import structlog
 
+from graph.agent_runner import run_agent
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
@@ -25,10 +26,10 @@ from graph.state import (
     PriorVariant,
     Verdict,
 )
-from llm.cloudru import CloudRuClient, ModelCall, ModelName
 
 log = structlog.get_logger(__name__)
 
+_AGENT_ID = "generate_message_candidates"
 _SKILL_NAME = "creative_ads_explorer"
 
 
@@ -105,20 +106,14 @@ async def generate_message_candidates(state: GraphState) -> dict:
         },
     )
 
-    client = CloudRuClient()
-    cfg = skill.model_config.get("glm-5.1", {})
-    result = await client.call_structured(
-        ModelCall(
-            model=ModelName.GLM,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            thinking=bool(cfg.get("thinking", False)),
-            max_tokens=int(cfg.get("max_tokens", 4000)),
-            temperature=float(cfg.get("temperature", 0.8)),
-        ),
+    result = await run_agent(
+        _AGENT_ID,
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
         schema=CandidateSet,
+        session_id=state.get("session_id"),
     )
     log.info(
         "generate_candidates_ok",

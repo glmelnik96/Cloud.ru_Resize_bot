@@ -1,0 +1,11 @@
+id: derive_persona
+skill: prompts/derive_persona.md
+model: glm-5.1
+model_config:
+  thinking: false
+  max_tokens: 2500
+  temperature: 0.5
+schema: graph.state.PersonaSet
+retry_with_feedback: 1
+pre_hooks: []
+post_hooks: []

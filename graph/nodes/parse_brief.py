@@ -10,17 +10,18 @@ from datetime import date
 
 import structlog
 
+from graph.agent_runner import run_agent
 from graph.prompts import load_skill
 from graph.state import AdBrief, GraphState
-from llm.cloudru import CloudRuClient, ModelCall, ModelName
 
 log = structlog.get_logger(__name__)
 
+_AGENT_ID = "parse_brief"
 _SKILL_NAME = "parse_brief"
 
 
 async def parse_brief(state: GraphState) -> dict:
-    """Parse raw_brief → AdBrief via DeepSeek-V4-Pro."""
+    """Parse raw_brief → AdBrief. Model + hooks config in agents/parse_brief.yaml."""
     raw = state.get("raw_brief")
     if not raw:
         raise ValueError("parse_brief: state.raw_brief is empty")
@@ -31,20 +32,14 @@ async def parse_brief(state: GraphState) -> dict:
 
     user_msg = _render(user_tpl, raw_brief=raw, today=date.today().isoformat())
 
-    client = CloudRuClient()
-    cfg = skill.model_config.get("deepseek-v4-pro", {})
-    brief = await client.call_structured(
-        ModelCall(
-            model=ModelName.DEEPSEEK,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            thinking=bool(cfg.get("thinking") or False),
-            max_tokens=int(cfg.get("max_tokens", 2000)),
-            temperature=float(cfg.get("temperature", 0.2)),
-        ),
+    brief = await run_agent(
+        _AGENT_ID,
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
         schema=AdBrief,
+        session_id=state.get("session_id"),
     )
     log.info(
         "parse_brief_ok",

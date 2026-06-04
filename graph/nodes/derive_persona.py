@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import structlog
 
+from graph.agent_runner import run_agent
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import AdBrief, GraphState, PersonaSet
-from llm.cloudru import CloudRuClient, ModelCall, ModelName
 
 log = structlog.get_logger(__name__)
 
+_AGENT_ID = "derive_persona"
 _SKILL_NAME = "derive_persona"
 
 
@@ -43,20 +44,14 @@ async def derive_persona(state: GraphState) -> dict:
         },
     )
 
-    client = CloudRuClient()
-    cfg = skill.model_config.get("glm-5.1", {})
-    persona_set = await client.call_structured(
-        ModelCall(
-            model=ModelName.GLM,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            thinking=bool(cfg.get("thinking", False)),
-            max_tokens=int(cfg.get("max_tokens", 2500)),
-            temperature=float(cfg.get("temperature", 0.5)),
-        ),
+    persona_set = await run_agent(
+        _AGENT_ID,
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
         schema=PersonaSet,
+        session_id=state.get("session_id"),
     )
     log.info(
         "derive_persona_ok",

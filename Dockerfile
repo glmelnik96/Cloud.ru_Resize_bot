@@ -22,6 +22,7 @@ RUN playwright install --with-deps chromium
 COPY bot/ ./bot/
 COPY llm/ ./llm/
 COPY graph/ ./graph/
+COPY agents/ ./agents/
 COPY prompts/ ./prompts/
 
 RUN mkdir -p /data/user_data /data/traces

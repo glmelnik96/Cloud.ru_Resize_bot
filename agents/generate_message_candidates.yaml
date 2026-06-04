@@ -1,0 +1,51 @@
+id: generate_message_candidates
+skill: prompts/creative_ads_explorer.md
+model: glm-5.1
+model_config:
+  thinking: false
+  max_tokens: 4000
+  temperature: 0.8
+schema: graph.state.CandidateSet
+retry_with_feedback: 1
+pre_hooks: []
+post_hooks:
+  # length limits — duplicate the prompt rules as a hard guard
+  - id: text_len
+    field: slogan
+    max: 60
+    on_violation: fail
+  - id: text_len
+    field: body
+    max: 180
+    on_violation: fail
+  - id: text_len
+    field: cta
+    max: 30
+    on_violation: fail
+
+  # CTA word-count band (2–5 words). warn for now — see AGENTS.md §4.4.
+  - id: text_len
+    field: cta
+    min_words: 2
+    max_words: 5
+    on_violation: warn
+
+  # global: no emojis anywhere
+  - id: ban_emoji
+    fields: [slogan, body, cta]
+    on_violation: fail
+
+  # brand guards (AGENTS.md §4.1)
+  - id: brand_stopwords
+    groups: [A, B, C, D]
+    fields: [slogan, body, cta]
+    on_violation: fail
+
+  # diversity: each candidate must have a distinct hook_angle
+  - id: hook_diversity
+    field: hook_angle
+    on_violation: warn
+
+  # calm tone: no `!` in slogan (CTA is allowed). warn — see AGENTS.md §4.4.
+  - id: no_exclamation_in_slogan
+    on_violation: warn

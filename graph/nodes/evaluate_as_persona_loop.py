@@ -21,6 +21,8 @@ from collections import defaultdict
 
 import structlog
 
+from agents.registry import load_agent
+from graph.agent_runner import run_agent
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
@@ -30,14 +32,12 @@ from graph.state import (
     Persona,
     Verdict,
 )
-from llm.cloudru import CloudRuClient, ModelCall, ModelName
+from llm.cloudru import CloudRuClient
 
 log = structlog.get_logger(__name__)
 
+_AGENT_ID = "evaluate_as_persona_loop"
 _SKILL_NAME = "persona_eval"
-_MAX_CONCURRENCY = 3
-_REVISE_THRESHOLD = 6.5  # avg score below → trigger revise
-_MAX_REVISE_ROUNDS = 2
 
 
 async def evaluate_as_persona_loop(state: GraphState) -> dict:
@@ -53,10 +53,15 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
     skill = load_skill(_SKILL_NAME)
     system_tpl = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
-    cfg = skill.model_config.get("glm-5.1", {})
+
+    card = load_agent(_AGENT_ID)
+    max_concurrency = int(card.extra.get("concurrency", {}).get("semaphore", 3))
+    revise_cfg = card.extra.get("revise", {})
+    revise_threshold = float(revise_cfg.get("threshold", 6.5))
+    max_revise_rounds = int(revise_cfg.get("max_rounds", 2))
 
     client = CloudRuClient()
-    sem = asyncio.Semaphore(_MAX_CONCURRENCY)
+    sem = asyncio.Semaphore(max_concurrency)
 
     async def one_verdict(candidate: MessageCandidate, persona: Persona) -> Verdict:
         system_msg = _render(
@@ -82,18 +87,15 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
             },
         )
         async with sem:
-            verdict = await client.call_structured(
-                ModelCall(
-                    model=ModelName.GLM,
-                    messages=[
-                        {"role": "system", "content": system_msg},
-                        {"role": "user", "content": user_msg},
-                    ],
-                    thinking=bool(cfg.get("thinking", True)),
-                    max_tokens=int(cfg.get("max_tokens", 3000)),
-                    temperature=float(cfg.get("temperature", 0.6)),
-                ),
+            verdict = await run_agent(
+                _AGENT_ID,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
                 schema=Verdict,
+                client=client,
+                session_id=state.get("session_id"),
             )
         # Patch identifiers — the LLM sometimes echoes back its own values.
         return verdict.model_copy(
@@ -113,7 +115,7 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
 
     revise_round = state.get("revise_round", 0)
     needs_revise = (
-        best_score < _REVISE_THRESHOLD and revise_round < _MAX_REVISE_ROUNDS
+        best_score < revise_threshold and revise_round < max_revise_rounds
     )
 
     log.info(
