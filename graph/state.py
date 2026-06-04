@@ -108,6 +108,36 @@ class PriorVariant(BaseModel):
     persona_priority: int = 0
 
 
+# ----- Image stage (M3) -----------------------------------------------------
+
+
+class ImageStyleChoice(BaseModel):
+    """Output of route_image_style — LLM classifier picks one of three visual styles.
+
+    Style vocabulary is fixed by Cloud.ru 2.0 brand book (see AGENTS.md §4):
+    - photo: real photography / staged scene
+    - render: 3D render, studio-lit object
+    - isometric: flat/isometric vector illustration
+    """
+
+    style: str = Field(description="photo | render | isometric")
+    rationale: str = Field(description="Короткое обоснование выбора стиля под бриф")
+
+
+class GeneratedImage(BaseModel):
+    """One image produced by Phygital+ (or stub) — used as hero in Figma templates.
+
+    url is filled later by infra/http_server.py + Cloudflare Tunnel (Direction 2):
+    Figma Make's createImageAsync needs a public URL, not a local path.
+    """
+
+    url: str | None = None
+    local_path: str
+    style: str
+    variant: str = "default"
+    prompt: str = ""
+
+
 # ----- LangGraph state ------------------------------------------------------
 
 
@@ -128,5 +158,14 @@ class GraphState(TypedDict, total=False):
     prior_variant: PriorVariant | None
     text_approved: bool
     refine_comment: str | None
+    # ----- Image stage (M3) -------------------------------------------------
+    image_style: str  # photo | render | isometric — chosen by route_image_style
+    image: dict | None  # GeneratedImage.model_dump()
+    image_revise_round: int
+    image_approved: bool | None
+    image_refine_comment: str | None
+    # ----- Render stage (M3) ------------------------------------------------
+    rendered_files: list[dict]  # [{"format": "tg_post_1080x1350", "path": "/data/..."}, ...]
+    rendered_zip_path: str | None
     cancelled: bool
     error: str | None

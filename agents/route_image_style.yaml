@@ -1,0 +1,11 @@
+id: route_image_style
+skill: prompts/route_image_style.md
+model: glm-5.1
+model_config:
+  thinking: false
+  max_tokens: 600
+  temperature: 0.2
+schema: graph.state.ImageStyleChoice
+retry_with_feedback: 1
+pre_hooks: []
+post_hooks: []

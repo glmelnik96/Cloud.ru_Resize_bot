@@ -121,9 +121,12 @@ async def _handle_terminal_or_interrupt(
 ) -> None:
     interrupts = final.get("__interrupt__")
     if interrupts:
-        # paused at hitl_text_approve — render winner with inline buttons
         payload = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
-        await _render_text_approve(app, session, payload)
+        kind = payload.get("kind") if isinstance(payload, dict) else None
+        if kind == "image_approve":
+            await _render_image_approve(app, session, payload)
+        else:
+            await _render_text_approve(app, session, payload)
         return
 
     # terminal
@@ -131,42 +134,85 @@ async def _handle_terminal_or_interrupt(
         await app.bot.send_message(chat_id=session.chat_id, text="Сессия отменена.")
         drop(app.bot_data, session.user_id)
         return
+
+    zip_path = final.get("rendered_zip_path")
+    if zip_path:
+        await _deliver_zip(app, session, final, zip_path)
+        return
+
+    # safety net: text approved but image pipeline didn't finish
     if final.get("text_approved"):
-        winner = final.get("winner") or {}
-        # remember prior_variant for A/B B
-        if isinstance(winner, dict):
-            slogan = winner.get("slogan", "")
-            hook = winner.get("hook_angle", "")
-        else:
-            slogan = getattr(winner, "slogan", "")
-            hook = getattr(winner, "hook_angle", "")
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Сделать вариант B (A/B)", callback_data=f"ab:{session.thread_id}")]]
-        )
         await app.bot.send_message(
             chat_id=session.chat_id,
             text=(
-                "Текст утверждён. Генерация картинки и форматов — задача M3, пока пайплайн останавливается здесь.\n\n"
-                f"Победитель:\nslogan: {slogan}\nhook: {hook}"
+                "Текст утверждён, но пайплайн картинки/рендера не дошёл до ZIP. "
+                "Логи сессии: " + session.thread_id
             ),
-            reply_markup=kb,
         )
-        # store prior variant in bot_data keyed by thread for later /ab callback
-        ab_store = app.bot_data.setdefault("ab_prior", {})
-        ab_store[session.thread_id] = {
-            "slogan": slogan,
-            "hook_angle": hook,
-            "persona_priority": final.get("persona_priority", 0),
-        }
-        session.status = "done"
+        drop(app.bot_data, session.user_id)
         return
 
-    # graph ended without hitl decision (unexpected for now)
+    # graph ended without hitl decision (unexpected)
     await app.bot.send_message(
         chat_id=session.chat_id,
         text="Граф завершился без явного решения. Лог сессии: " + session.thread_id,
     )
     drop(app.bot_data, session.user_id)
+
+
+async def _deliver_zip(
+    app: Application, session: Session, final: dict, zip_path: str
+) -> None:
+    winner = final.get("winner") or {}
+    if isinstance(winner, dict):
+        slogan = winner.get("slogan", "")
+        hook = winner.get("hook_angle", "")
+    else:
+        slogan = getattr(winner, "slogan", "")
+        hook = getattr(winner, "hook_angle", "")
+    image = final.get("image") or {}
+    style = image.get("style") if isinstance(image, dict) else getattr(image, "style", "")
+    files = final.get("rendered_files") or []
+    formats = ", ".join(r.get("format", "?") for r in files) or "(пусто)"
+
+    caption = (
+        "Готово.\n"
+        f"slogan: {slogan}\n"
+        f"hook: {hook}\n"
+        f"style: {style}\n"
+        f"formats: {formats}"
+    )
+    try:
+        with open(zip_path, "rb") as fh:
+            await app.bot.send_document(
+                chat_id=session.chat_id,
+                document=fh,
+                filename=zip_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
+                caption=caption,
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("zip_send_failed", thread_id=session.thread_id, zip_path=zip_path)
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=f"ZIP сформирован, но отправка не удалась: {type(exc).__name__}. Путь: {zip_path}",
+        )
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Сделать вариант B (A/B)", callback_data=f"ab:{session.thread_id}")]]
+    )
+    await app.bot.send_message(
+        chat_id=session.chat_id,
+        text="Запустить вариант B для сравнения?",
+        reply_markup=kb,
+    )
+
+    ab_store = app.bot_data.setdefault("ab_prior", {})
+    ab_store[session.thread_id] = {
+        "slogan": slogan,
+        "hook_angle": hook,
+        "persona_priority": final.get("persona_priority", 0),
+    }
+    session.status = "done"
 
 
 async def _render_text_approve(
@@ -192,6 +238,46 @@ async def _render_text_approve(
     msg = await app.bot.send_message(chat_id=session.chat_id, text=text, reply_markup=kb)
     session.hitl_message_id = msg.message_id
     session.status = "awaiting_hitl"
+    put(app.bot_data, session)
+
+
+async def _render_image_approve(
+    app: Application, session: Session, payload: dict
+) -> None:
+    image = payload.get("image") or {}
+    local_path = image.get("local_path")
+    style = image.get("style", "?")
+    caption = (
+        f"Hero-картинка (style: {style}).\nЧто делаем?"
+    )
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("OK, картинка принята", callback_data="img:approve")],
+            [InlineKeyboardButton("Перегенерить", callback_data="img:regenerate")],
+            [InlineKeyboardButton("Доработать (комментарием)", callback_data="img:refine")],
+            [InlineKeyboardButton("Отменить", callback_data="img:cancel")],
+        ]
+    )
+    if local_path:
+        try:
+            with open(local_path, "rb") as fh:
+                msg = await app.bot.send_photo(
+                    chat_id=session.chat_id,
+                    photo=fh,
+                    caption=caption,
+                    reply_markup=kb,
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("image_send_failed", thread_id=session.thread_id, local_path=local_path)
+            msg = await app.bot.send_message(
+                chat_id=session.chat_id,
+                text=f"Картинка готова, но превью не отправилось ({type(exc).__name__}). Путь: {local_path}",
+                reply_markup=kb,
+            )
+    else:
+        msg = await app.bot.send_message(chat_id=session.chat_id, text=caption, reply_markup=kb)
+    session.hitl_message_id = msg.message_id
+    session.status = "awaiting_image_hitl"
     put(app.bot_data, session)
 
 
@@ -223,6 +309,52 @@ async def on_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.application.create_task(_resume(context.application, session, decision))
 
 
+async def on_image_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if q is None or q.data is None:
+        return
+    await q.answer()
+    user = update.effective_user
+    if user is None:
+        return
+    session = get_active(context.application.bot_data, user.id)
+    if session is None or session.status != "awaiting_image_hitl":
+        await _edit_hitl_status(q, "Эта сессия больше не активна.")
+        return
+
+    action = q.data.split(":", 1)[1]
+    if action == "refine":
+        session.status = "awaiting_image_refine"
+        put(context.application.bot_data, session)
+        await _edit_hitl_status(q, "Опиши одной-двумя фразами, что переделать в картинке.")
+        return
+
+    await _edit_hitl_status(q, f"Картинка: {action}. Возобновляю граф...")
+    decision = {"action": action, "comment": None}
+    context.application.create_task(_resume(context.application, session, decision))
+
+
+async def _edit_hitl_status(q, text: str) -> None:
+    """Edit a HITL prompt's caption or text — whichever the original message has.
+
+    Image HITL is a photo with caption; text HITL is a plain text message.
+    Telegram errors out if you try to edit_message_text on a photo (no text field).
+    Falls back to dropping the keyboard if both edit kinds fail.
+    """
+    try:
+        msg = q.message
+        if msg is not None and getattr(msg, "photo", None):
+            await q.edit_message_caption(caption=text)
+        else:
+            await q.edit_message_text(text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("hitl_status_edit_failed", error=str(exc))
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+
 async def on_refine_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.message.text is None:
         return
@@ -230,7 +362,7 @@ async def on_refine_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if user is None:
         return
     session = get_active(context.application.bot_data, user.id)
-    if session is None or session.status != "awaiting_refine":
+    if session is None or session.status not in {"awaiting_refine", "awaiting_image_refine"}:
         return  # not our message
     comment = update.message.text.strip()
     await update.message.reply_text("Комментарий принят. Возобновляю граф...")
@@ -276,6 +408,7 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def register_runner_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(on_hitl_callback, pattern=r"^hitl:(approve|regenerate|refine|cancel)$"))
+    app.add_handler(CallbackQueryHandler(on_image_hitl_callback, pattern=r"^img:(approve|regenerate|refine|cancel)$"))
     app.add_handler(CallbackQueryHandler(on_ab_callback, pattern=r"^ab:"))
     app.add_handler(
         MessageHandler(

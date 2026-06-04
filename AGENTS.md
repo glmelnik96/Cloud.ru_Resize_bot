@@ -43,15 +43,31 @@ state ──pre-hooks──► LLM(skill, model_cfg) ──post-hooks──► r
 | `evaluate_as_persona_loop` | `prompts/persona_eval.md` v0.2.0 | GLM-5.1, Semaphore(3) | off | 1 на верификат | pydantic; scores в `[0,1]`; нет critic-фраз |
 | `hitl_text_approve` | — (interrupt) | — | — | — | decision ∈ approve/regenerate/refine/cancel |
 
-### M3 — planned
+### M3.0 / M3.1 — actual (smoke + Phygital adapter; Figma MCP остаётся stub)
 
-| id | skill | model | назначение |
-|---|---|---|---|
-| `route_image_style` | `prompts/route_image_style.md` | GLM-5.1 off | классифицирует winner → photo / render / isometric (или manual override) |
-| `generate_image` | `prompts/generate_image.md` + brand_t2i workflow | Phygital (Gemini Text→Nano Banana) | генерация hero-изображения, B-вариант принудительно другого стиля |
-| `hitl_image_approve` | — (interrupt) | — | OK / перегенерить / сменить вариант / отменить |
-| `fill_templates_per_format` | — (детерминированный) | Figma Make MCP `use_figma` | прописывает `{{slogan}}/{{body}}/{{cta}}` и подменяет fill `{{hero_image}}` |
-| `render_all` | — (детерминированный) | Figma REST `/v1/images/...` | batch-рендер всех форматов в PNG, ZIP, отдача в TG |
+| id | skill | model | статус | назначение |
+|---|---|---|---|---|
+| `route_image_style` | `prompts/route_image_style.md` v0.1.0 | GLM-5.1 off | **REAL LLM** | классифицирует winner → photo / render / isometric. Возвращает `ImageStyleChoice {style, rationale}`. Фоллбек на `photo` при невалидном style. |
+| `generate_image` | `phygital_vendor/workflows/brand_text2img.py` (vendored из Phygital-bot) | Gemini Pro 3.1 + Nano Banana v3_1 (через Phygital+) | **REAL (M3.1)** | звёт `run_brand_text2img(client, prompt=..., variant=image_style)`. Скачивает S3 URL в `/data/images/`. Prompt — только тема (product+audience_raw+tone_hints+refine), **без slogan/CTA/body** — это hero-визуал, текст накладывает макетный этап. Fallback на M3.0 PIL stub когда `PHYGITAL_ENABLED=false`, сессия не загружена или Phygital упал. |
+| `hitl_image_approve` | — (interrupt) | — | **REAL** | OK / перегенерить / доработать комментарием / отменить. `regenerate`/`refine` бампают `image_revise_round`. Картинка идёт в TG как `send_photo`. |
+| `fill_templates_per_format` | — (local PIL stub) | PIL composite | **STUB (M3.2)** | парсит `<channel>_<W>x<H>` slugs из `brief.formats`, делает hero+text composite в `/data/renders/`. Figma MCP — M3.2. |
+| `render_all` | — (deterministic) | `zipfile.ZIP_DEFLATED` | **REAL** | пакует все PNG'и в один ZIP в `/data/zips/`, отдаёт через `send_document`. |
+
+### M3 — planned next
+
+| id | назначение | блокер |
+|---|---|---|
+| `fill_templates_per_format` (real) | Figma Make MCP `use_figma` — мап `{{slogan}}/{{body}}/{{cta}}` и `{{hero_image}}` в master frames | требует public URL для `hero_image` → infra/tunnel.py |
+| `render_all` (real) | Figma REST `/v1/images/...` для финальных экспортов под фактические master-frames | требует Figma file_id и токен |
+
+### M3.0 инфра-каркас + M3.1 Phygital adapter
+
+- `infra/http_server.py` — stdlib `ThreadingHTTPServer` отдаёт `/data/{images,renders,zips}/` read-only. Запускается в `_post_init` (см. `bot/app.py`), порт из `HTTP_PORT` (default 8088).
+- `infra/tunnel.py` — обёртка над `cloudflared`. Режимы: `disabled` (default — для M3.0 smoke не нужен), `quick` (`*.trycloudflare.com`), `named` (`TUNNEL_TOKEN`+`PUBLIC_BASE_URL`). Публичный URL кладётся в `app.bot_data["public_base_url"]`.
+- `infra/phygital_client.py` — singleton-holder `PhygitalClient` (M3.1). Bootstrap'ит `phygital_vendor/` в `sys.path`, открывает HTTP-клиент при старте, закрывает при шатдауне. `get_client()` возвращает None если `PHYGITAL_ENABLED=false` или нет `session.json` — `generate_image` тогда падает на PIL-stub.
+- `phygital_vendor/` — vendor-copy `{client,workflows,docs}` из `C:/Users/Глеб/Documents/Phygital-bot` (2026-06-04). Минимальный patch: `client/config.py::STORAGE_DIR` + `workflows/brand_docs.py::CACHE_FILE` читают `PHYGITAL_STORAGE_DIR` (по умолчанию `/data/phygital_storage`), чтобы сессия и кеш брендовых документов жили в docker-volume, а не в `/app`.
+- Volume map в `docker-compose.yml`: `images`, `renders`, `zips`, `phygital_storage` (все named volumes, не bind).
+- **Bootstrap session.json** (одноразово, после первого `up`): `docker cp C:/Users/Глеб/Documents/Phygital-bot/storage/session.json resize-bot:/data/phygital_storage/session.json`. SuperTokens refresh после этого сам поддерживает сессию.
 
 ---
 

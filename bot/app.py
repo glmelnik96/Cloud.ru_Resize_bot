@@ -85,14 +85,64 @@ async def cmd_ping(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _post_init(app: Application) -> None:
     from bot.graph_runner import init_compiled_graph
+    from infra.admin_alert import set_admin_notifier
+    from infra.http_server import start_static_server
+    from infra.phygital_client import start_phygital_client
+    from infra.ttl_janitor import start_ttl_janitor
+    from infra.tunnel import start_tunnel
+
+    set_admin_notifier(app.bot, get_settings().admin_user_id)
+    app.bot_data["_ttl_janitor_task"] = start_ttl_janitor()
+
+    server, thread, port = start_static_server()
+    app.bot_data["_http_server"] = server
+    app.bot_data["_http_thread"] = thread
+    app.bot_data["_http_port"] = port
+
+    try:
+        handle = await start_tunnel(port)
+        app.bot_data["_tunnel_handle"] = handle
+        app.bot_data["public_base_url"] = handle.public_url
+        log.info(
+            "infra_ready",
+            http_port=port,
+            tunnel_mode=handle.mode,
+            public_base_url=handle.public_url or "(none)",
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("tunnel_start_failed", error=str(exc))
+        app.bot_data["public_base_url"] = ""
+
+    # Phygital+ brand text→image client (M3.1). Returns None if disabled or
+    # session.json missing — generate_image then falls back to PIL stub.
+    phygital = await start_phygital_client()
+    app.bot_data["phygital_enabled"] = phygital is not None
 
     await init_compiled_graph(app)
 
 
 async def _post_shutdown(app: Application) -> None:
     from bot.graph_runner import shutdown_compiled_graph
+    from infra.admin_alert import clear_admin_notifier
+    from infra.http_server import stop_static_server
+    from infra.phygital_client import stop_phygital_client
+    from infra.ttl_janitor import stop_ttl_janitor
+    from infra.tunnel import stop_tunnel
 
     await shutdown_compiled_graph(app)
+    await stop_ttl_janitor()
+    app.bot_data.pop("_ttl_janitor_task", None)
+    await stop_phygital_client()
+    clear_admin_notifier()
+
+    handle = app.bot_data.pop("_tunnel_handle", None)
+    if handle is not None:
+        await stop_tunnel(handle)
+
+    server = app.bot_data.pop("_http_server", None)
+    if server is not None:
+        stop_static_server(server)
+    app.bot_data.pop("_http_thread", None)
 
 
 def build_application() -> Application:

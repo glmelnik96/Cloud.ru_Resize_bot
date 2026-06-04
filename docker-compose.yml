@@ -13,6 +13,13 @@ services:
     volumes:
       - playwright_user_data:/data/user_data
       - traces:/data/traces
+      - images:/data/images
+      - renders:/data/renders
+      - zips:/data/zips
+      - phygital_storage:/data/phygital_storage
+    ports:
+      # static HTTP for hero images / renders / zips (consumed by tunnel in M3.1+)
+      - "127.0.0.1:8088:8088"
     networks:
       - resize-net
 
@@ -37,6 +44,10 @@ volumes:
   playwright_user_data:
   traces:
   redis_data:
+  images:
+  renders:
+  zips:
+  phygital_storage:
 
 networks:
   resize-net:
