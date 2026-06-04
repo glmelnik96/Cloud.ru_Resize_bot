@@ -240,3 +240,40 @@ async def test_export_frame_raises_when_no_url_in_result() -> None:
     fake.next_result = {}  # neither "url" nor "content"
     with pytest.raises(RuntimeError, match="figma_export_no_url"):
         await c.export_frame(file_key="FK", node_id="3302:516", max_dim=1080)
+
+
+@pytest.mark.asyncio
+async def test_node_full_pil_fallback_when_no_client(monkeypatch, tmp_path) -> None:
+    """If get_client() returns None, the node renders every format with PIL."""
+    from PIL import Image
+
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    # Force singleton off.
+    figma_mcp._client_handle = None  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path)
+
+    # Minimal hero PNG on disk for the node to read.
+    hero_path = tmp_path / "hero.png"
+    Image.new("RGB", (512, 512), (200, 100, 100)).save(hero_path)
+
+    state = {
+        "session_id": "s1",
+        "brief": {
+            "product": "P",
+            "goal": "awareness",
+            "audience_raw": "A",
+            "channel": "vk_post",
+            "formats": ["vk_post_1080x1080"],
+            "constraints": [],
+        },
+        "image": {"local_path": str(hero_path), "style": "stub", "variant": "default", "prompt": ""},
+        "winner": {"slogan": "S", "body": "B", "cta": "C", "hook_angle": "rational"},
+    }
+    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 1
+    assert out["rendered_files"][0]["format"] == "vk_post_1080x1080"
+    # File exists and is a valid PNG.
+    p = out["rendered_files"][0]["path"]
+    Image.open(p).verify()

@@ -1,23 +1,23 @@
-"""fill_templates_per_format node — STUB for M3.0 (Figma adapter in M3.1+).
+"""fill_templates_per_format node — M3.2 Figma MCP integration.
 
-Input:
-  - GraphState.brief.formats (list[str], slugs like "tg_post_1080x1350")
-  - GraphState.image (GeneratedImage.model_dump()) — approved hero
-  - GraphState.winner (MessageCandidate) — text overlay source
-Output:
-  - GraphState.rendered_files: [{"format": slug, "path": local_png}, ...]
+For each slug in brief.formats:
+  1. If MCP client available + manifest entry exists → upload hero, set texts,
+     export PNG via Figma MCP.
+  2. Otherwise (no client / no manifest entry / MCP error) → PIL composite
+     fallback. Per-format try/except so one bad format doesn't kill the rest.
 
-Why stub: real Figma MCP integration (mapping {{slogan}}/{{body}}/{{cta}} into
-master frames and exporting per-format PNGs) is M3.2. M3.0 proves the topology
-by compositing hero + text overlay locally so the ZIP step has real files.
+The PIL path is the same composite that shipped in M3.0 — kept intentionally
+so the bot never returns zero renders, even if Figma is fully down.
 
-Default formats if brief.formats is empty: ["tg_post_1080x1350"] — matches
-the wizard's implicit default channel = tg_post.
+Contract unchanged from M3.0:
+  state.brief.formats × state.image (hero) × state.winner (text) →
+  state.rendered_files = [{format, path}, ...]
 """
 
 from __future__ import annotations
 
-import re
+import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -25,12 +25,15 @@ import structlog
 from PIL import Image, ImageDraw, ImageFont
 
 from graph.state import AdBrief, GeneratedImage, GraphState, MessageCandidate
+from infra import figma_mcp
+from infra.figma_manifest import FigmaManifest, load_manifest
 
 log = structlog.get_logger(__name__)
 
 _RENDER_DIR = Path("/data/renders")
-_DEFAULT_FORMAT = "tg_post_1080x1350"
-_FORMAT_RE = re.compile(r"^(?P<channel>[a-z_]+)_(?P<w>\d+)x(?P<h>\d+)$")
+_MANIFEST_PATH = Path(os.environ.get("FIGMA_MANIFEST_PATH", "config/figma_templates.json"))
+_DEFAULT_FORMAT = "vk_post_1080x1080"
+_NODE_TIMEOUT_S = 180.0
 
 
 async def fill_templates_per_format(state: GraphState) -> dict:
@@ -51,37 +54,198 @@ async def fill_templates_per_format(state: GraphState) -> dict:
     formats = (brief.formats if brief else []) or [_DEFAULT_FORMAT]
     _RENDER_DIR.mkdir(parents=True, exist_ok=True)
 
-    hero = Image.open(image.local_path).convert("RGB")
+    manifest = _load_manifest_safe()
+    client = figma_mcp.get_client()
+    hero_bytes = Path(image.local_path).read_bytes()
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 
     out: list[dict] = []
-    for fmt in formats:
-        w, h = _parse_size(fmt)
-        canvas = _compose(hero, w, h, winner)
-        path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
-        canvas.save(path, format="PNG", optimize=True)
-        out.append({"format": fmt, "path": str(path)})
+    n_real = 0
+    n_fallback = 0
+    start = datetime.utcnow()
 
+    # asyncio.wait_for (not asyncio.timeout) so this works on Python 3.10 dev
+    # envs as well as the 3.11 Docker runtime. Inner coroutine + nonlocal so
+    # the counters and `out` list survive a cancellation.
+    async def _render_all() -> None:
+        nonlocal n_real, n_fallback
+        for fmt in formats:
+            path, used_real = await _render_one(
+                fmt=fmt,
+                session_id=session_id,
+                ts=ts,
+                hero_bytes=hero_bytes,
+                hero_local_path=image.local_path,
+                winner=winner,
+                manifest=manifest,
+                client=client,
+            )
+            out.append({"format": fmt, "path": str(path)})
+            if used_real:
+                n_real += 1
+            else:
+                n_fallback += 1
+
+    try:
+        await asyncio.wait_for(_render_all(), timeout=_NODE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        # Hard timeout — fill in whatever wasn't rendered with PIL stubs.
+        rendered_fmts = {r["format"] for r in out}
+        for fmt in formats:
+            if fmt in rendered_fmts:
+                continue
+            path = _pil_fallback(
+                fmt=fmt,
+                session_id=session_id,
+                ts=ts,
+                hero_local_path=image.local_path,
+                winner=winner,
+                manifest=manifest,
+                reason="node_timeout",
+            )
+            out.append({"format": fmt, "path": str(path)})
+            n_fallback += 1
+        log.warning("figma_node_timeout", session_id=session_id, n_real=n_real, n_fallback=n_fallback)
+
+    elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
     log.info(
-        "fill_templates_stub_ok",
+        "figma_node_done",
         session_id=session_id,
-        formats=[r["format"] for r in out],
-        n=len(out),
+        n_total=len(out),
+        n_real=n_real,
+        n_fallback=n_fallback,
+        node_latency_ms=elapsed_ms,
     )
     return {"rendered_files": out}
 
 
-def _parse_size(slug: str) -> tuple[int, int]:
-    m = _FORMAT_RE.match(slug)
-    if m:
-        return int(m["w"]), int(m["h"])
-    log.warning("fill_templates_unparseable_format", slug=slug, fallback="1080x1350")
+def _load_manifest_safe() -> FigmaManifest | None:
+    """Read the manifest; on any failure return None and log loudly.
+    Caller then full-fallbacks every format to PIL."""
+    try:
+        return load_manifest(_MANIFEST_PATH)
+    except FileNotFoundError:
+        log.warning("figma_manifest_missing", path=str(_MANIFEST_PATH))
+        return None
+    except Exception as exc:  # noqa: BLE001 — broken JSON, bad schema, etc.
+        log.warning(
+            "figma_manifest_broken",
+            path=str(_MANIFEST_PATH),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
+
+
+async def _render_one(
+    *,
+    fmt: str,
+    session_id: str,
+    ts: str,
+    hero_bytes: bytes,
+    hero_local_path: str,
+    winner: MessageCandidate,
+    manifest: FigmaManifest | None,
+    client,
+) -> tuple[Path, bool]:
+    """Render one format; return (path, used_real_figma)."""
+    # PIL fallback path: no client, no manifest, or no template entry.
+    if client is None or manifest is None:
+        reason = "no_client" if client is None else "no_manifest"
+        return (
+            _pil_fallback(
+                fmt=fmt, session_id=session_id, ts=ts,
+                hero_local_path=hero_local_path, winner=winner,
+                manifest=manifest, reason=reason,
+            ),
+            False,
+        )
+    tmpl = manifest.templates.get(fmt)
+    if tmpl is None:
+        log.info("figma_format_fallback", slug=fmt, reason="manifest_miss")
+        return (
+            _pil_fallback(
+                fmt=fmt, session_id=session_id, ts=ts,
+                hero_local_path=hero_local_path, winner=winner,
+                manifest=manifest, reason="manifest_miss",
+            ),
+            False,
+        )
+
+    # Real Figma path with per-format try/except.
+    fmt_start = datetime.utcnow()
+    try:
+        await client.upload_hero(
+            file_key=manifest.file_key,
+            node_id=tmpl.slots.hero_image_id,
+            png_bytes=hero_bytes,
+        )
+        replacements: list[tuple[str, str]] = [
+            (tmpl.slots.slogan_text_id, winner.slogan),
+        ]
+        if tmpl.slots.cta_text_id and winner.cta:
+            replacements.append((tmpl.slots.cta_text_id, winner.cta))
+        await client.set_texts(file_key=manifest.file_key, replacements=replacements)
+        png_bytes = await client.export_frame(
+            file_key=manifest.file_key,
+            node_id=tmpl.frame_id,
+            max_dim=max(tmpl.width, tmpl.height),
+        )
+        path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
+        path.write_bytes(png_bytes)
+        latency_ms = int((datetime.utcnow() - fmt_start).total_seconds() * 1000)
+        log.info("figma_format_ok", slug=fmt, latency_ms=latency_ms)
+        return path, True
+    except Exception as exc:  # noqa: BLE001 — fall back per format
+        err_type = type(exc).__name__
+        log.warning(
+            "figma_format_fallback",
+            slug=fmt,
+            reason="mcp_error",
+            error=str(exc),
+            error_type=err_type,
+        )
+        return (
+            _pil_fallback(
+                fmt=fmt, session_id=session_id, ts=ts,
+                hero_local_path=hero_local_path, winner=winner,
+                manifest=manifest, reason=f"mcp_error:{err_type}",
+            ),
+            False,
+        )
+
+
+def _pil_fallback(
+    *,
+    fmt: str,
+    session_id: str,
+    ts: str,
+    hero_local_path: str,
+    winner: MessageCandidate,
+    manifest: FigmaManifest | None,
+    reason: str,
+) -> Path:
+    """Reproduce the M3.0 PIL composite for one slug. Size taken from manifest
+    if present, otherwise from a default."""
+    w, h = _size_for(fmt, manifest)
+    hero = Image.open(hero_local_path).convert("RGB")
+    canvas = _pil_compose(hero, w, h, winner)
+    path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
+    canvas.save(path, format="PNG", optimize=True)
+    log.info("figma_format_fallback_saved", slug=fmt, reason=reason, path=str(path))
+    return path
+
+
+def _size_for(fmt: str, manifest: FigmaManifest | None) -> tuple[int, int]:
+    if manifest is not None:
+        t = manifest.templates.get(fmt)
+        if t is not None:
+            return t.width, t.height
     return 1080, 1350
 
 
-def _compose(hero: Image.Image, w: int, h: int, winner: MessageCandidate) -> Image.Image:
+def _pil_compose(hero: Image.Image, w: int, h: int, winner: MessageCandidate) -> Image.Image:
     canvas = Image.new("RGB", (w, h), (245, 245, 245))
-    # cover-fit hero into top 65% of canvas
     target_h = int(h * 0.65)
     aspect = hero.width / hero.height
     target_w = int(target_h * aspect)
