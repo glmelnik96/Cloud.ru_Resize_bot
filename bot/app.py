@@ -86,6 +86,7 @@ async def cmd_ping(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def _post_init(app: Application) -> None:
     from bot.graph_runner import init_compiled_graph
     from infra.admin_alert import set_admin_notifier
+    from infra.figma_mcp import start_figma_mcp_client
     from infra.http_server import start_static_server
     from infra.phygital_client import start_phygital_client
     from infra.ttl_janitor import start_ttl_janitor
@@ -118,12 +119,16 @@ async def _post_init(app: Application) -> None:
     phygital = await start_phygital_client()
     app.bot_data["phygital_enabled"] = phygital is not None
 
+    figma = await start_figma_mcp_client()
+    app.bot_data["figma_mcp_enabled"] = figma is not None
+
     await init_compiled_graph(app)
 
 
 async def _post_shutdown(app: Application) -> None:
     from bot.graph_runner import shutdown_compiled_graph
     from infra.admin_alert import clear_admin_notifier
+    from infra.figma_mcp import stop_figma_mcp_client
     from infra.http_server import stop_static_server
     from infra.phygital_client import stop_phygital_client
     from infra.ttl_janitor import stop_ttl_janitor
@@ -133,6 +138,7 @@ async def _post_shutdown(app: Application) -> None:
     await stop_ttl_janitor()
     app.bot_data.pop("_ttl_janitor_task", None)
     await stop_phygital_client()
+    await stop_figma_mcp_client()
     clear_admin_notifier()
 
     handle = app.bot_data.pop("_tunnel_handle", None)
