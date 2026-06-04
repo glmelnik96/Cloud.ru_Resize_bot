@@ -97,9 +97,11 @@ class FigmaMCPClient:
         if not replacements:
             return
         # Build one JS snippet that loads each node and writes characters.
-        # Texts are wrapped in JSON.stringify equivalent: escape \\ and " and \n.
+        # Both node_id and text are escaped for "..." JS string literals
+        # (backslash first to avoid double-escaping the quotes we add next).
         lines = []
         for node_id, text in replacements:
+            esc_id = node_id.replace("\\", "\\\\").replace('"', '\\"')
             esc = (
                 text.replace("\\", "\\\\")
                 .replace('"', '\\"')
@@ -107,7 +109,7 @@ class FigmaMCPClient:
                 .replace("\r", "")
             )
             lines.append(
-                f'{{ const n = figma.getNodeById("{node_id}"); '
+                f'{{ const n = figma.getNodeById("{esc_id}"); '
                 f'if (n && "characters" in n) {{ n.characters = "{esc}"; }} }}'
             )
         code = "\n".join(lines)

@@ -163,8 +163,9 @@ async def test_set_texts_escapes_quotes() -> None:
     c, fake = _client_with_fake_session()
     await c.set_texts(file_key="FK", replacements=[("3302:520", 'He said "hi"')])
     code = fake.calls[0][1]["code"]
-    # Backslash-escaped so the JS string literal parses.
+    # Backslash-escaped so the JS string literal parses; raw form must NOT leak.
     assert 'He said \\"hi\\"' in code
+    assert 'characters = "He said "hi""' not in code
 
 
 @pytest.mark.asyncio
