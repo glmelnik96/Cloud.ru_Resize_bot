@@ -1,0 +1,30 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Playwright local data
+user_data/
+playwright_user_data/
+
+# Runtime artifacts
+traces/
+*.jsonl
+*.log
+
+# Local recon (vendored Phygital flow may produce HARs / capture data)
+recon-captures/
+storage_state.json
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

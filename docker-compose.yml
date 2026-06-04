@@ -1,0 +1,43 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: resize-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - playwright_user_data:/data/user_data
+      - traces:/data/traces
+    networks:
+      - resize-net
+
+  redis:
+    image: redis/redis-stack:7.4.0-v0
+    container_name: resize-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - resize-net
+
+volumes:
+  playwright_user_data:
+  traces:
+  redis_data:
+
+networks:
+  resize-net:
+    driver: bridge
