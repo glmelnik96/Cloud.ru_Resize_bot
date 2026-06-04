@@ -1,140 +1,64 @@
-# Figma template spec — что подготовить для M3
+# Figma template spec (M3.2+)
 
-Чек-лист подготовки шаблонов Figma, чтобы их можно было автоматически наполнять текстом и hero-картинкой через Figma Make MCP, а затем батч-рендерить через Figma REST API.
+Resize_bot renders ads by reusing master frames the design team already builds
+in Figma. Layer names stay free; the bot finds slots through a JSON manifest
+in this repo.
 
-Для smoke M3 достаточно **одного файла с одним фреймом** (`tg_post__default__1080x1350`). Дальше тиражируется по форматам.
+## Adding a template
 
----
+1. **Build the frame in Figma.** Use any layer naming. Required content:
+   - One text node for the slogan.
+   - One image-fillable node for the hero (rectangle, frame with image fill,
+     etc — anything `upload_assets` can target).
+   - Optionally one text node for the CTA (e.g. inside a button/tag rect).
+2. **Pick a slug.** Format: `<channel>_<width>x<height>` is the convention but
+   not enforced. Examples: `vk_post_1080x1080`, `tg_post_1080x1350`,
+   `ig_story_1080x1920`. Whatever you pick, add it to the LLM whitelist in
+   `prompts/parse_brief.md` and bump that prompt's version.
+3. **Get node ids.** Easiest way: run
+   `python scripts/figma_dump_structure.py --file-key <FK> --page-id <PAGE>`
+   from a host with Figma Desktop running. Pick the slogan / hero / CTA ids
+   from the dump.
+4. **Edit `config\figma_templates.json`.** Add a `templates.<slug>` entry:
 
-## 1. Файл и доступы
-
-- [ ] Создать или взять готовый файл в Figma.
-- [ ] Скопировать **file URL** — оттуда выдёргивается `file_key` (`https://www.figma.com/file/<file_key>/...`).
-- [ ] Получить **Personal Access Token** (Figma → Settings → Account → Personal access tokens). Положить в `.env` как `FIGMA_PAT`. Нужен для REST-эндпоинта `/v1/images/{file_key}?ids=...` на этапе рендера.
-- [ ] Figma-аккаунт с включённым **Figma Make** (для MCP). Авторизация в MCP-клиенте — OAuth/recon через streamable_http.
-
----
-
-## 2. Фрейм master-шаблона
-
-Один Frame на верхнем уровне страницы. Имя — строго по шаблону:
-
-```
-<channel>__<variant>__<W>x<H>
-```
-
-Для smoke:
-
-```
-tg_post__default__1080x1350
-```
-
-Где:
-
-- `channel` — то же значение, что в `AdBrief.channel` (контролируемый словарь: `tg_post`, `vk_post`, `vk_story`, `banner`, ...).
-- `variant` — `default` для A-варианта, `alt` для B-варианта (когда подключим A/B-визуалы).
-- `WxH` — реальный размер фрейма, должен буквально совпадать (`1080x1350`).
-
-Размер фрейма физически выставить таким же.
-
----
-
-## 3. Слои внутри фрейма
-
-### 3.1 Текст-ноды (обязательные)
-
-Внутри master-фрейма должны быть текст-ноды со следующими именами **слоёв** (не содержимым):
-
-| Имя слоя | Назначение | Обязательность |
-|---|---|---|
-| `{{slogan}}` | большой заголовок | обязателен |
-| `{{body}}` | подзаголовок / описание | опционален (можно пропустить в smoke) |
-| `{{cta}}` | кнопка / лейбл CTA | обязателен |
-
-Внутри текстовых нод может быть любой placeholder-текст — он будет переписан. Стили — твои, бренд Cloud.ru.
-
-**Рекомендации:**
-
-- Auto Layout для контейнера с текстом — чтобы тексты разной длины не ломали композицию.
-- Text Resizing: `Auto height`, ширина зафиксирована.
-- Для slogan'а — длина текста до 60 символов, но композиция должна выживать при +/- 20% длины.
-- Для CTA — фиксированная ширина кнопки с центрированием текста; CTA до 30 символов.
-
-### 3.2 Hero-изображение
-
-- [ ] Пустой Frame (или Rectangle) с именем слоя `{{hero_image}}`.
-- [ ] Заливка: `Image fill` с любой placeholder-картинкой.
-- [ ] `Scale mode = FILL` (не Fit, не Tile).
-- [ ] Размер — какой по композиции (обычно либо весь верх фрейма, либо весь фон).
-
-Бот заменит fill через `figma.createImageAsync(url)` (см. Open Questions — image hosting).
-
-### 3.3 Декоративные элементы (опционально)
-
-Логотип Cloud.ru, фоновый паттерн, brand-green-accent — обычные слои, бот их не трогает.
-
----
-
-## 4. Бренд-консистентность (текст-стили)
-
-Если есть design-system токены — использовать их. Если нет, создать локальные text styles в файле:
-
-| Стиль | Назначение | Рекомендация |
-|---|---|---|
-| `H1 / Slogan` | для `{{slogan}}` | bold/semibold, 56–96px (под 1080x1350) |
-| `Body / Compact` | для `{{body}}` | regular, 28–36px |
-| `CTA / Button` | для `{{cta}}` | medium, 28–36px, кнопочный стиль |
-
-Точные значения — твоё решение, бот не вмешивается в стили, только в content.
-
----
-
-## 5. Future: B-вариант (когда подключим A/B визуалов)
-
-Параллельный фрейм рядом:
-
-```
-tg_post__alt__1080x1350
+```json
+"<slug>": {
+  "frame_id": "3302:516",
+  "width": 1080,
+  "height": 1080,
+  "slots": {
+    "slogan_text_id": "3302:520",
+    "hero_image_id": "3302:522",
+    "cta_text_id": null
+  }
+}
 ```
 
-Та же структура слоёв, но другая композиция / тон / стиль hero-изображения. Бот узнаёт о наличии `alt`-варианта из имён фреймов и переключается между ними по результатам A/B persona-evaluation.
+   `cta_text_id` is the only optional slot — set to `null` if the template has
+   no CTA region.
 
----
+5. **Test.** `/new` with a brief that mentions the new slug → ZIP should
+   contain the new format's PNG straight from Figma (not a PIL stub).
 
-## 6. Future: масштабирование на форматы
+## Invariants
 
-Под каждый формат — отдельный фрейм:
+- One Figma file per manifest (`file_key`). All templates live in the same file.
+- Slugs are unique within `templates`.
+- `width`/`height` mirror the frame dimensions — they're used for the PIL
+  fallback's canvas size when MCP can't be reached.
+- The bot never edits Figma without a successful HITL hero approval upstream.
 
-```
-tg_post__default__1080x1350
-vk_post__default__1080x1080
-vk_story__default__1080x1920
-banner__default__1200x300
-youtube_thumb__default__1280x720
-...
-```
+## Failure modes
 
-Все живут на одной странице одного файла. Бот при `fill_templates_per_format` fan-out'ит по списку `AdBrief.formats` и для каждого формата дублирует контент в соответствующий фрейм.
+- **MCP unreachable on boot** → `figma_mcp_unavailable` log; every format falls
+  back to PIL.
+- **MCP fails mid-render** → that one format falls back to PIL with
+  `figma_format_fallback reason=mcp_error`; admin gets a TG ping (1h dedupe).
+- **Slug missing from manifest** → that format falls back to PIL with
+  `reason=manifest_miss`. Not an alert — this is a brief/whitelist drift bug.
 
----
+## Old spec
 
-## 7. Smoke-чеклист для M3 (минимум-минимум)
-
-- [ ] `file_key` — есть
-- [ ] `FIGMA_PAT` — есть, в `.env`
-- [ ] 1 фрейм `tg_post__default__1080x1350` на странице
-- [ ] Внутри: `{{slogan}}`, `{{cta}}` (минимум; `{{body}}` опционален)
-- [ ] Внутри: `{{hero_image}}` Frame с Image fill, scaleMode FILL
-- [ ] Figma-аккаунт с Figma Make активирован
-- [ ] Ответ по image hosting (см. `docs/open_questions.md`)
-
----
-
-## 8. Что бот никогда не трогает
-
-- Стили, цвета, размеры шрифтов.
-- Auto Layout-настройки и constraints.
-- Любые слои, имя которых **не начинается** с `{{...}}`.
-- Декоративные элементы (логотип, фон, паттерны).
-
-Это значит: если шаблон выглядит хорошо вручную — он будет выглядеть так же после автозаполнения, при условии разумных лимитов длины.
+The pre-M3.2 spec (which assumed `{{slogan}}/{{body}}/{{cta}}/{{hero_image}}`
+layer naming) is archived at
+`docs/archive/figma_template_spec-2026-06-04-pre-m3.2.md`.
