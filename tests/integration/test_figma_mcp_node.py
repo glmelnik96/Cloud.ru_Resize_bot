@@ -134,7 +134,6 @@ async def test_upload_hero_calls_upload_assets() -> None:
     name, args = fake.calls[0]
     assert name == "upload_assets"
     assert args["fileKey"] == "FK"
-    # The MCP tool expects nodeId + bytes; we don't pin the exact arg shape
-    # beyond ensuring node_id and the bytes are forwarded.
-    assert "3302:522" in str(args)
-    assert b"\x89PNG-fake" in args.get("bytes", b"") or "\\x89PNG-fake" in str(args)
+    # Asset goes inside assets[0] — confirm both nodeId and raw bytes survived.
+    assert args["assets"][0]["nodeId"] == "3302:522"
+    assert args["assets"][0]["bytes"] == b"\x89PNG-fake"
