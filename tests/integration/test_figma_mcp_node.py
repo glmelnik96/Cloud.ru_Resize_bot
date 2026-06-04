@@ -77,3 +77,24 @@ def test_manifest_missing_required_slot(tmp_path: Path) -> None:
     p.write_text(json.dumps(cfg), encoding="utf-8")
     with pytest.raises(ValidationError):
         load_manifest(p)
+
+
+@pytest.mark.asyncio
+async def test_figma_client_disabled_when_env_empty(monkeypatch) -> None:
+    from infra import figma_mcp
+
+    monkeypatch.setenv("FIGMA_MCP_URL", "")
+    # Reset singleton state between tests
+    figma_mcp._client_handle = None  # type: ignore[attr-defined]
+    handle = await figma_mcp.start_figma_mcp_client()
+    assert handle is None
+    assert figma_mcp.get_client() is None
+
+
+@pytest.mark.asyncio
+async def test_figma_client_stop_is_idempotent(monkeypatch) -> None:
+    from infra import figma_mcp
+
+    figma_mcp._client_handle = None  # type: ignore[attr-defined]
+    await figma_mcp.stop_figma_mcp_client()  # no-op when never started
+    assert figma_mcp.get_client() is None
