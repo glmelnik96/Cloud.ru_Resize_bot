@@ -137,3 +137,38 @@ async def test_upload_hero_calls_upload_assets() -> None:
     # Asset goes inside assets[0] — confirm both nodeId and raw bytes survived.
     assert args["assets"][0]["nodeId"] == "3302:522"
     assert args["assets"][0]["bytes"] == b"\x89PNG-fake"
+
+
+@pytest.mark.asyncio
+async def test_set_texts_single_use_figma_call() -> None:
+    c, fake = _client_with_fake_session()
+    await c.set_texts(
+        file_key="FK",
+        replacements=[("3302:520", "Сэкономьте до 40%"), ("3302:530", "Купить")],
+    )
+    # One round-trip — both replacements packed into one use_figma JS call.
+    assert len(fake.calls) == 1
+    name, args = fake.calls[0]
+    assert name == "use_figma"
+    assert args["fileKey"] == "FK"
+    code = args["code"]
+    assert "3302:520" in code
+    assert "Сэкономьте до 40%" in code
+    assert "3302:530" in code
+    assert "Купить" in code
+
+
+@pytest.mark.asyncio
+async def test_set_texts_escapes_quotes() -> None:
+    c, fake = _client_with_fake_session()
+    await c.set_texts(file_key="FK", replacements=[("3302:520", 'He said "hi"')])
+    code = fake.calls[0][1]["code"]
+    # Backslash-escaped so the JS string literal parses.
+    assert 'He said \\"hi\\"' in code
+
+
+@pytest.mark.asyncio
+async def test_set_texts_empty_replacements_is_noop() -> None:
+    c, fake = _client_with_fake_session()
+    await c.set_texts(file_key="FK", replacements=[])
+    assert fake.calls == []

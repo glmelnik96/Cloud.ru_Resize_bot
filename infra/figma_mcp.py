@@ -84,6 +84,40 @@ class FigmaMCPClient:
                 },
             )
 
+    async def set_texts(
+        self,
+        *,
+        file_key: str,
+        replacements: list[tuple[str, str]],
+    ) -> None:
+        """Replace `.characters` on each (node_id, text) pair in one JS call.
+
+        Empty replacements list is a no-op (no MCP round-trip).
+        """
+        if not replacements:
+            return
+        # Build one JS snippet that loads each node and writes characters.
+        # Texts are wrapped in JSON.stringify equivalent: escape \\ and " and \n.
+        lines = []
+        for node_id, text in replacements:
+            esc = (
+                text.replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+                .replace("\r", "")
+            )
+            lines.append(
+                f'{{ const n = figma.getNodeById("{node_id}"); '
+                f'if (n && "characters" in n) {{ n.characters = "{esc}"; }} }}'
+            )
+        code = "\n".join(lines)
+        async with self._lock:
+            assert self._session is not None, "FigmaMCPClient.connect() not called"
+            await self._session.call_tool(
+                "use_figma",
+                {"fileKey": file_key, "code": code},
+            )
+
 
 async def start_figma_mcp_client() -> FigmaMCPClient | None:
     """Bootstrap: if FIGMA_MCP_URL is empty, return None (graceful disable).
