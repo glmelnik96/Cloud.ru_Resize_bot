@@ -277,3 +277,146 @@ async def test_node_full_pil_fallback_when_no_client(monkeypatch, tmp_path) -> N
     # File exists and is a valid PNG.
     p = out["rendered_files"][0]["path"]
     Image.open(p).verify()
+
+
+class _FakeClient:
+    """Stand-in for FigmaMCPClient. Records upload/set/export calls and
+    optionally raises on a chosen method."""
+
+    def __init__(self, *, fail_on: str | None = None) -> None:
+        self.fail_on = fail_on
+        self.uploads: list[dict] = []
+        self.sets: list[list[tuple[str, str]]] = []
+        self.exports: list[dict] = []
+
+    async def upload_hero(self, *, file_key, node_id, png_bytes):
+        if self.fail_on == "upload":
+            raise RuntimeError("boom-upload")
+        self.uploads.append({"file_key": file_key, "node_id": node_id, "n": len(png_bytes)})
+
+    async def set_texts(self, *, file_key, replacements):
+        if self.fail_on == "set":
+            raise RuntimeError("boom-set")
+        self.sets.append(list(replacements))
+
+    async def export_frame(self, *, file_key, node_id, max_dim):
+        if self.fail_on == "export":
+            raise RuntimeError("boom-export")
+        self.exports.append({"file_key": file_key, "node_id": node_id, "max_dim": max_dim})
+        # Return a minimal valid PNG.
+        from io import BytesIO
+
+        from PIL import Image as _PIL
+        buf = BytesIO()
+        _PIL.new("RGB", (max_dim, max_dim), (10, 200, 10)).save(buf, format="PNG")
+        return buf.getvalue()
+
+
+def _seed_manifest(tmp_path):
+    cfg = {
+        "file_key": "FK",
+        "templates": {
+            "vk_post_1080x1080": {
+                "frame_id": "3302:516",
+                "width": 1080,
+                "height": 1080,
+                "slots": {
+                    "slogan_text_id": "3302:520",
+                    "hero_image_id": "3302:522",
+                    "cta_text_id": "3302:530",
+                },
+            }
+        },
+    }
+    p = tmp_path / "manifest.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    return p
+
+
+def _seed_state(tmp_path, formats):
+    from PIL import Image as _PIL
+
+    hero = tmp_path / "hero.png"
+    _PIL.new("RGB", (512, 512), (200, 100, 100)).save(hero)
+    return {
+        "session_id": "s2",
+        "brief": {
+            "product": "P", "goal": "awareness", "audience_raw": "A",
+            "channel": "vk_post", "formats": formats, "constraints": [],
+        },
+        "image": {"local_path": str(hero), "style": "stub", "variant": "default", "prompt": ""},
+        "winner": {"slogan": "Sale", "body": "B", "cta": "Buy", "hook_angle": "rational"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_node_happy_path_real_figma(monkeypatch, tmp_path):
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    fake = _FakeClient()
+    figma_mcp._client_handle = fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_MANIFEST_PATH", _seed_manifest(tmp_path))
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+
+    out = await mod.fill_templates_per_format(_seed_state(tmp_path, ["vk_post_1080x1080"]))  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 1
+    assert len(fake.uploads) == 1
+    assert fake.uploads[0]["node_id"] == "3302:522"
+    assert len(fake.sets) == 1
+    # slogan + cta because cta_text_id is set and winner.cta is non-empty
+    assert {nid for nid, _ in fake.sets[0]} == {"3302:520", "3302:530"}
+    assert fake.exports[0]["node_id"] == "3302:516"
+    assert fake.exports[0]["max_dim"] == 1080
+
+
+@pytest.mark.asyncio
+async def test_node_slug_not_in_manifest_falls_back(monkeypatch, tmp_path):
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    fake = _FakeClient()
+    figma_mcp._client_handle = fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_MANIFEST_PATH", _seed_manifest(tmp_path))
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+
+    out = await mod.fill_templates_per_format(
+        _seed_state(tmp_path, ["vk_post_1080x1080", "unknown_slug_999x999"])
+    )  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 2
+    # MCP called exactly once — for the known slug.
+    assert len(fake.uploads) == 1
+
+
+@pytest.mark.asyncio
+async def test_node_mcp_error_falls_back_for_that_format(monkeypatch, tmp_path):
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    fake = _FakeClient(fail_on="upload")
+    figma_mcp._client_handle = fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_MANIFEST_PATH", _seed_manifest(tmp_path))
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+
+    out = await mod.fill_templates_per_format(_seed_state(tmp_path, ["vk_post_1080x1080"]))  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 1
+    # File still produced via PIL.
+    from PIL import Image as _PIL
+    _PIL.open(out["rendered_files"][0]["path"]).verify()
+
+
+@pytest.mark.asyncio
+async def test_node_skips_cta_when_winner_cta_empty(monkeypatch, tmp_path):
+    from graph.nodes import fill_templates_per_format as mod
+    from infra import figma_mcp
+
+    fake = _FakeClient()
+    figma_mcp._client_handle = fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(mod, "_MANIFEST_PATH", _seed_manifest(tmp_path))
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+
+    state = _seed_state(tmp_path, ["vk_post_1080x1080"])
+    state["winner"]["cta"] = ""  # empty CTA
+    await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
+    # Only slogan replacement should be sent.
+    assert {nid for nid, _ in fake.sets[0]} == {"3302:520"}
