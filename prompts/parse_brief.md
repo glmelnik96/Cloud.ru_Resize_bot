@@ -1,6 +1,6 @@
 ---
 name: parse-brief
-version: 0.1.0
+version: 0.2.0
 source_upstream: original (Resize_bot specific)
 target_models:
   primary: deepseek-ai/DeepSeek-V4-Pro
@@ -29,7 +29,9 @@ status: m1
 2. goal: ОДНО из: awareness, consideration, conversion, engagement, retention. Если маркетолог сформулировал иначе — выбери ближайшее по смыслу.
 3. audience_raw: оставь сырое описание ЦА БЕЗ изменений (его потом отдельная нода превратит в Persona).
 4. channel: ОДНО из: tg_post, tg_story, vk_ad, vk_post, ig_story, ig_post, yandex_promo, web_banner, email. Если непонятно — verь tg_post.
-5. formats: список slug'ов мастер-фреймов Figma в формате "<channel>_<width>x<height>" (например ["tg_post_1080x1350"]). Если маркетолог не указал — оставь пустой список (UI подставит дефолты).
+5. formats: список slug'ов мастер-фреймов из whitelist'а ниже. Если маркетолог не указал явно — оставь пустой список (UI/код подставят дефолт). НЕ придумывай новые слаги, бери ТОЛЬКО из списка:
+   - vk_post_1080x1080
+   Если в брифе упоминается формат, которого нет в whitelist — игнорируй, formats остаётся пустым.
 6. tone_hints: фразы про тон ("дружелюбно", "технично без пафоса"), null если нет.
 7. constraints: список обязательных слов/дисклеймеров/запретов, найденных в тексте. [] если нет.
 8. cta_preference: если маркетолог явно предложил CTA — извлеки, иначе null.
@@ -75,3 +77,4 @@ RAW WIZARD INPUT (today={{today}}):
 ## Changelog
 
 - v0.1.0 (2026-06-04) — M1 initial, controlled vocab для goal и channel, чистое извлечение без креатива.
+- v0.2.0 (2026-06-04) — M3.2: formats whitelist привязан к config/figma_templates.json. Расширение whitelist'а = PR в манифест + bump version здесь.
