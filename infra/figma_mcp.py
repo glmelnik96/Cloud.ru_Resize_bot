@@ -139,7 +139,8 @@ class FigmaMCPClient:
         url = _extract_url(result)
         if not url:
             raise RuntimeError(f"figma_export_no_url: result={result!r}")
-        async with httpx.AsyncClient(timeout=30.0) as http:
+        # follow_redirects=True — Figma's CDN URL routinely 302s to the S3 origin.
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
             resp = await http.get(url)
             resp.raise_for_status()
             return resp.content

@@ -211,13 +211,11 @@ async def test_export_frame_calls_get_screenshot_and_fetches_url(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_export_frame_handles_url_inside_content_field() -> None:
+async def test_export_frame_handles_url_inside_content_field(monkeypatch) -> None:
     """get_screenshot has been observed to return both {url: ...} and
     {content: [{url: ...}]} shapes across MCP versions. We accept both."""
     c, fake = _client_with_fake_session()
     fake.next_result = {"content": [{"url": "http://figma-cdn/x.png"}]}
-    # Patch httpx to a fake that returns trivial bytes — we only care that the URL is found.
-    import httpx
 
     class _R:
         status_code = 200
@@ -230,6 +228,15 @@ async def test_export_frame_handles_url_inside_content_field() -> None:
         async def __aexit__(self, *_): return None
         async def get(self, url): return _R()
 
-    httpx.AsyncClient = _AC  # type: ignore[assignment]
+    # monkeypatch (not direct assignment) so the patch is reverted between tests.
+    monkeypatch.setattr("httpx.AsyncClient", _AC)
     out = await c.export_frame(file_key="FK", node_id="3302:516", max_dim=1080)
     assert out == b"OK"
+
+
+@pytest.mark.asyncio
+async def test_export_frame_raises_when_no_url_in_result() -> None:
+    c, fake = _client_with_fake_session()
+    fake.next_result = {}  # neither "url" nor "content"
+    with pytest.raises(RuntimeError, match="figma_export_no_url"):
+        await c.export_frame(file_key="FK", node_id="3302:516", max_dim=1080)
