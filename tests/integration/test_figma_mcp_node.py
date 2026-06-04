@@ -55,8 +55,9 @@ def test_manifest_load_invalid_json(tmp_path: Path) -> None:
 
 
 def test_manifest_missing_required_slot(tmp_path: Path) -> None:
-    from infra.figma_manifest import load_manifest
     from pydantic import ValidationError
+
+    from infra.figma_manifest import load_manifest
 
     cfg = {
         "file_key": "AAA",
