@@ -66,6 +66,24 @@ class FigmaMCPClient:
         self._stack = None
         self._session = None
 
+    async def upload_hero(self, *, file_key: str, node_id: str, png_bytes: bytes) -> None:
+        """Upload hero PNG bytes and bind as fill on `node_id`. Serialised
+        with the client lock so concurrent sessions can't interleave."""
+        async with self._lock:
+            assert self._session is not None, "FigmaMCPClient.connect() not called"
+            await self._session.call_tool(
+                "upload_assets",
+                {
+                    "fileKey": file_key,
+                    "assets": [
+                        {
+                            "nodeId": node_id,
+                            "bytes": png_bytes,
+                        }
+                    ],
+                },
+            )
+
 
 async def start_figma_mcp_client() -> FigmaMCPClient | None:
     """Bootstrap: if FIGMA_MCP_URL is empty, return None (graceful disable).

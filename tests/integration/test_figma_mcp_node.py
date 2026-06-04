@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -98,3 +99,42 @@ async def test_figma_client_stop_is_idempotent(monkeypatch) -> None:
     figma_mcp._client_handle = None  # type: ignore[attr-defined]
     await figma_mcp.stop_figma_mcp_client()  # no-op when never started
     assert figma_mcp.get_client() is None
+
+
+class _FakeSession:
+    """Minimal stand-in for mcp.ClientSession used by FigmaMCPClient.
+
+    Records every call_tool invocation as (name, dict_args) tuples so tests
+    can assert ordering and arguments.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.next_result: Any = None
+
+    async def call_tool(self, name: str, args: dict) -> Any:
+        self.calls.append((name, dict(args)))
+        return self.next_result
+
+
+def _client_with_fake_session() -> tuple[Any, _FakeSession]:
+    from infra.figma_mcp import FigmaMCPClient
+
+    c = FigmaMCPClient(url="http://fake/mcp")
+    fake = _FakeSession()
+    c._session = fake  # type: ignore[attr-defined]
+    return c, fake
+
+
+@pytest.mark.asyncio
+async def test_upload_hero_calls_upload_assets() -> None:
+    c, fake = _client_with_fake_session()
+    await c.upload_hero(file_key="FK", node_id="3302:522", png_bytes=b"\x89PNG-fake")
+    assert len(fake.calls) == 1
+    name, args = fake.calls[0]
+    assert name == "upload_assets"
+    assert args["fileKey"] == "FK"
+    # The MCP tool expects nodeId + bytes; we don't pin the exact arg shape
+    # beyond ensuring node_id and the bytes are forwarded.
+    assert "3302:522" in str(args)
+    assert b"\x89PNG-fake" in args.get("bytes", b"") or "\\x89PNG-fake" in str(args)
