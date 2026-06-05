@@ -17,8 +17,6 @@ WORKDIR /app
 COPY pyproject.toml ./
 RUN uv pip install --system -r pyproject.toml
 
-RUN playwright install --with-deps chromium
-
 COPY bot/ ./bot/
 COPY llm/ ./llm/
 COPY graph/ ./graph/
@@ -26,8 +24,8 @@ COPY agents/ ./agents/
 COPY prompts/ ./prompts/
 COPY infra/ ./infra/
 COPY config/ ./config/
-COPY phygital_vendor/ ./phygital_vendor/
+COPY assets/ ./assets/
 
-RUN mkdir -p /data/user_data /data/traces /data/images /data/renders /data/zips /data/phygital_storage
+RUN mkdir -p /data/traces /data/heroes /data/renders /data/zips
 
 CMD ["python", "-m", "bot.app"]

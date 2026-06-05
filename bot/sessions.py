@@ -19,7 +19,7 @@ class Session:
     user_id: int
     chat_id: int
     thread_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    status: str = "wizard"  # wizard | running | awaiting_hitl | awaiting_refine | awaiting_image_hitl | awaiting_image_refine | done | cancelled
+    status: str = "wizard"  # wizard | running | awaiting_hitl | awaiting_refine | awaiting_image_upload | done | cancelled
     wizard_data: dict[str, Any] = field(default_factory=dict)
     hitl_message_id: int | None = None
     # Single message we keep edit'ing through the run to show "Этап N/M: ..." to user.

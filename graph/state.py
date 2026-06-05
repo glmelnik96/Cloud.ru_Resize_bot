@@ -129,10 +129,12 @@ class ImageStyleChoice(BaseModel):
 
 
 class GeneratedImage(BaseModel):
-    """One image produced by Phygital+ (or stub) — used as hero in Figma templates.
+    """One hero PNG — in M3.3 always uploaded by the user (no auto-generation).
 
-    url is filled later by infra/http_server.py + Cloudflare Tunnel (Direction 2):
-    Figma Make's createImageAsync needs a public URL, not a local path.
+    Field names kept from the M3.0 schema for graph-state compatibility:
+    - local_path: where the bot stored the uploaded file on disk
+    - style: which Cloud.ru style was requested in the prompt (photo/render/isometric)
+    - prompt: the EN image_prompt that was shown to the user
     """
 
     url: str | None = None
@@ -140,6 +142,19 @@ class GeneratedImage(BaseModel):
     style: str
     variant: str = "default"
     prompt: str = ""
+
+
+class ImagePromptOutput(BaseModel):
+    """Output of generate_image_prompt — what we show the user in TG.
+
+    `prompt` is an EN single-paragraph string ready to paste into an image
+    generator (MJ, DALL-E, SDXL, etc). `rationale` is the LLM's 1-sentence
+    note on why this composition fits the brief; we log it but don't show
+    it to the user.
+    """
+
+    prompt: str = Field(min_length=20)
+    rationale: str
 
 
 # ----- LangGraph state ------------------------------------------------------
@@ -162,12 +177,10 @@ class GraphState(TypedDict, total=False):
     prior_variant: PriorVariant | None
     text_approved: bool
     refine_comment: str | None
-    # ----- Image stage (M3) -------------------------------------------------
+    # ----- Image stage (M3.3 — user-uploaded hero) --------------------------
     image_style: str  # photo | render | isometric — chosen by route_image_style
-    image: dict | None  # GeneratedImage.model_dump()
-    image_revise_round: int
-    image_approved: bool | None
-    image_refine_comment: str | None
+    image_prompt: str | None  # EN prompt shown to the user (generate_image_prompt)
+    image: dict | None  # GeneratedImage.model_dump(), filled after user upload
     # ----- Render stage (M3) ------------------------------------------------
     rendered_files: list[dict]  # [{"format": "tg_post_1080x1350", "path": "/data/..."}, ...]
     rendered_zip_path: str | None

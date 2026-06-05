@@ -13,6 +13,10 @@ Lifecycle:
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime
+from pathlib import Path
+
 import structlog
 from langgraph.types import Command
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -25,6 +29,10 @@ from telegram.ext import (
 )
 
 from bot.sessions import Session, drop, get_active, put
+
+_HEROES_DIR = Path("/data/heroes")
+_IMAGE_UPLOAD_TIMEOUT_S = 86400  # 24h
+_IMAGE_UPLOAD_TIMEOUTS_KEY = "_image_upload_timeouts"
 
 log = structlog.get_logger(__name__)
 
@@ -39,8 +47,8 @@ _NODE_LABELS: dict[str, str] = {
     "generate_message_candidates": "Генерирую варианты текста",
     "evaluate_as_persona_loop": "Оцениваю варианты глазами персон",
     "route_image_style": "Подбираю стиль картинки",
-    "generate_image": "Генерирую hero-изображение",
-    "fill_templates_per_format": "Накладываю в Figma-фреймы",
+    "generate_image_prompt": "Пишу промпт для hero-картинки",
+    "fill_templates_per_format": "Накладываю в шаблоны",
     "render_all": "Собираю ZIP",
 }
 _NODE_ORDER: list[str] = list(_NODE_LABELS.keys())
@@ -197,14 +205,15 @@ async def _handle_terminal_or_interrupt(
     if interrupts:
         payload = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
         kind = payload.get("kind") if isinstance(payload, dict) else None
-        if kind == "image_approve":
-            await _render_image_approve(app, session, payload)
+        if kind == "image_upload":
+            await _render_image_upload(app, session, payload)
         else:
             await _render_text_approve(app, session, payload)
         return
 
     # terminal
     if final.get("cancelled"):
+        _cancel_image_upload_timeout(app, session.thread_id)
         await app.bot.send_message(chat_id=session.chat_id, text="Сессия отменена.")
         drop(app.bot_data, session.user_id)
         return
@@ -315,44 +324,115 @@ async def _render_text_approve(
     put(app.bot_data, session)
 
 
-async def _render_image_approve(
+async def _render_image_upload(
     app: Application, session: Session, payload: dict
 ) -> None:
-    image = payload.get("image") or {}
-    local_path = image.get("local_path")
-    style = image.get("style", "?")
-    caption = (
-        f"Hero-картинка (style: {style}).\nЧто делаем?"
+    """Show the EN image prompt to the user and wait for them to upload a hero.
+
+    The user is expected to:
+      - paste the prompt into their image generator (MJ / DALL-E / SDXL / Nano
+        Banana / Flux),
+      - send the resulting PNG back into the chat as a photo OR as an
+        image-MIME Document (uncompressed preferred).
+
+    A 24h timeout is scheduled — if no upload arrives the graph is resumed
+    with action="timeout" and the session cancels itself.
+    """
+    image_prompt = payload.get("image_prompt") or ""
+    image_style = payload.get("image_style") or "photo"
+
+    instructions = (
+        f"Стиль: {image_style}.\n"
+        "Ниже — англоязычный prompt для hero-картинки. Скопируй его в свой "
+        "генератор (MJ / DALL-E / SDXL / Flux / Nano Banana), сгенери и "
+        "пришли результат сюда — фото или файл (Document) PNG.\n\n"
+        "Окно загрузки: 24 часа. /cancel — отменить сессию."
     )
-    kb = InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("OK, картинка принята", callback_data="img:approve")],
-            [InlineKeyboardButton("Перегенерить", callback_data="img:regenerate")],
-            [InlineKeyboardButton("Доработать (комментарием)", callback_data="img:refine")],
-            [InlineKeyboardButton("Отменить", callback_data="img:cancel")],
-        ]
+    # Code-block formatting makes the prompt one-tap-copyable in TG.
+    prompt_block = f"```\n{image_prompt}\n```"
+    text = f"{instructions}\n\n{prompt_block}"
+    msg = await app.bot.send_message(
+        chat_id=session.chat_id,
+        text=text,
+        parse_mode="Markdown",
     )
-    if local_path:
-        try:
-            with open(local_path, "rb") as fh:
-                msg = await app.bot.send_photo(
-                    chat_id=session.chat_id,
-                    photo=fh,
-                    caption=caption,
-                    reply_markup=kb,
-                )
-        except Exception as exc:  # noqa: BLE001
-            log.exception("image_send_failed", thread_id=session.thread_id, local_path=local_path)
-            msg = await app.bot.send_message(
-                chat_id=session.chat_id,
-                text=f"Картинка готова, но превью не отправилось ({type(exc).__name__}). Путь: {local_path}",
-                reply_markup=kb,
-            )
-    else:
-        msg = await app.bot.send_message(chat_id=session.chat_id, text=caption, reply_markup=kb)
     session.hitl_message_id = msg.message_id
-    session.status = "awaiting_image_hitl"
+    session.status = "awaiting_image_upload"
     put(app.bot_data, session)
+
+    # schedule 24h timeout
+    _schedule_image_upload_timeout(app, session, image_style, image_prompt)
+
+
+def _schedule_image_upload_timeout(
+    app: Application, session: Session, image_style: str, image_prompt: str
+) -> None:
+    """Spawn a background sleeper that resumes the graph with action=timeout
+    if the user hasn't uploaded anything within _IMAGE_UPLOAD_TIMEOUT_S."""
+    store = app.bot_data.setdefault(_IMAGE_UPLOAD_TIMEOUTS_KEY, {})
+    # cancel any previous timeout for this thread (paranoia — should not happen)
+    old = store.pop(session.thread_id, None)
+    if old is not None and not old.done():
+        old.cancel()
+
+    async def _timeout_coro() -> None:
+        try:
+            await asyncio.sleep(_IMAGE_UPLOAD_TIMEOUT_S)
+        except asyncio.CancelledError:
+            return
+        # If the session is still waiting, resume with timeout.
+        current = get_active(app.bot_data, session.user_id)
+        if current is None or current.thread_id != session.thread_id:
+            return
+        if current.status != "awaiting_image_upload":
+            return
+        log.warning("image_upload_timeout_fire", thread_id=session.thread_id)
+        try:
+            await app.bot.send_message(
+                chat_id=session.chat_id,
+                text=(
+                    "Время на загрузку картинки истекло (24 ч). "
+                    "Сессия отменена — запусти /new когда будешь готов."
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("timeout_notify_failed", error=str(exc))
+        await _resume(app, current, {"action": "timeout"})
+
+    task = asyncio.create_task(_timeout_coro())
+    store[session.thread_id] = task
+
+
+def _cancel_image_upload_timeout(app: Application, thread_id: str) -> None:
+    store = app.bot_data.get(_IMAGE_UPLOAD_TIMEOUTS_KEY) or {}
+    task = store.pop(thread_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+async def _save_uploaded_hero(
+    app: Application, session: Session, file_id: str, suffix: str
+) -> Path | None:
+    """Download a TG file by file_id and write it under _HEROES_DIR.
+
+    Returns the resulting local Path on success, None on failure. Caller is
+    expected to send an error message to the user on None.
+    """
+    try:
+        _HEROES_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        out = _HEROES_DIR / f"{session.thread_id}_{ts}{suffix}"
+        tg_file = await app.bot.get_file(file_id)
+        await tg_file.download_to_drive(custom_path=str(out))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.exception(
+            "hero_download_failed",
+            thread_id=session.thread_id,
+            file_id=file_id,
+            error=str(exc),
+        )
+        return None
 
 
 # ----- handlers -------------------------------------------------------------
@@ -383,50 +463,89 @@ async def on_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.application.create_task(_resume(context.application, session, decision))
 
 
-async def on_image_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    if q is None or q.data is None:
+async def on_image_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Photo / image-Document handler for the hero upload window.
+
+    Acceptance:
+      - update.message.photo (compressed; we take the largest size),
+      - update.message.document with image/* MIME (uncompressed PNG/JPEG).
+
+    Behavior:
+      - Active session must be in status "awaiting_image_upload"; otherwise
+        we silently ignore (the wizard or another stage may own the chat).
+      - Latest-wins: if multiple photos arrive before resume, only the last
+        one we successfully resume on counts; intermediate ones are processed
+        and the graph resumes on the FIRST successful one, because as soon as
+        the graph leaves the interrupt the session.status flips to "running".
+        Anything sent after that is ignored.
+    """
+    msg = update.message
+    if msg is None:
         return
-    await q.answer()
     user = update.effective_user
     if user is None:
         return
     session = get_active(context.application.bot_data, user.id)
-    if session is None or session.status != "awaiting_image_hitl":
-        await _edit_hitl_status(q, "Эта сессия больше не активна.")
-        return
+    if session is None or session.status != "awaiting_image_upload":
+        return  # not for us
 
-    action = q.data.split(":", 1)[1]
-    if action == "refine":
-        session.status = "awaiting_image_refine"
-        put(context.application.bot_data, session)
-        await _edit_hitl_status(q, "Опиши одной-двумя фразами, что переделать в картинке.")
-        return
+    file_id: str | None = None
+    suffix = ".png"
 
-    await _edit_hitl_status(q, f"Картинка: {action}. Возобновляю граф...")
-    decision = {"action": action, "comment": None}
-    context.application.create_task(_resume(context.application, session, decision))
+    if msg.photo:
+        # take the largest PhotoSize the client uploaded
+        file_id = msg.photo[-1].file_id
+        suffix = ".jpg"  # TG re-encodes compressed photos as JPEG
+    elif msg.document is not None:
+        mime = (msg.document.mime_type or "").lower()
+        if not mime.startswith("image/"):
+            await msg.reply_text(
+                "Это не картинка. Пришли PNG/JPEG как фото или как Document с image/* MIME."
+            )
+            return
+        file_id = msg.document.file_id
+        # keep extension hint from document name if present
+        name = (msg.document.file_name or "").lower()
+        if name.endswith(".png"):
+            suffix = ".png"
+        elif name.endswith((".jpg", ".jpeg")):
+            suffix = ".jpg"
+        elif name.endswith(".webp"):
+            suffix = ".webp"
+    else:
+        return  # neither photo nor doc — let other handlers see it
 
+    notice = await msg.reply_text("Скачиваю картинку...")
 
-async def _edit_hitl_status(q, text: str) -> None:
-    """Edit a HITL prompt's caption or text — whichever the original message has.
-
-    Image HITL is a photo with caption; text HITL is a plain text message.
-    Telegram errors out if you try to edit_message_text on a photo (no text field).
-    Falls back to dropping the keyboard if both edit kinds fail.
-    """
-    try:
-        msg = q.message
-        if msg is not None and getattr(msg, "photo", None):
-            await q.edit_message_caption(caption=text)
-        else:
-            await q.edit_message_text(text)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("hitl_status_edit_failed", error=str(exc))
+    path = await _save_uploaded_hero(
+        context.application, session, file_id=file_id, suffix=suffix
+    )
+    if path is None:
         try:
-            await q.edit_message_reply_markup(reply_markup=None)
-        except Exception:
+            await notice.edit_text("Не удалось скачать файл. Попробуй ещё раз.")
+        except Exception:  # noqa: BLE001
             pass
+        return
+
+    # Mark the session as running BEFORE creating the resume task — this
+    # prevents a second photo arriving in the same instant from triggering
+    # a second resume (status check at the top of this handler will fail).
+    session.status = "running"
+    put(context.application.bot_data, session)
+    _cancel_image_upload_timeout(context.application, session.thread_id)
+
+    try:
+        await notice.edit_text("Картинка принята. Накладываю в шаблоны...")
+    except Exception:  # noqa: BLE001
+        pass
+
+    decision = {
+        "action": "upload",
+        "local_path": str(path),
+    }
+    context.application.create_task(
+        _resume(context.application, session, decision)
+    )
 
 
 async def on_refine_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -436,7 +555,7 @@ async def on_refine_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if user is None:
         return
     session = get_active(context.application.bot_data, user.id)
-    if session is None or session.status not in {"awaiting_refine", "awaiting_image_refine"}:
+    if session is None or session.status != "awaiting_refine":
         return  # not our message
     comment = update.message.text.strip()
     await update.message.reply_text("Комментарий принят. Возобновляю граф...")
@@ -482,7 +601,6 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def register_runner_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(on_hitl_callback, pattern=r"^hitl:(approve|regenerate|refine|cancel)$"))
-    app.add_handler(CallbackQueryHandler(on_image_hitl_callback, pattern=r"^img:(approve|regenerate|refine|cancel)$"))
     app.add_handler(CallbackQueryHandler(on_ab_callback, pattern=r"^ab:"))
     app.add_handler(
         MessageHandler(
@@ -490,4 +608,11 @@ def register_runner_handlers(app: Application) -> None:
             on_refine_text,
         ),
         group=1,  # runs after wizard MessageHandlers (group 0)
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.Document.IMAGE,
+            on_image_upload,
+        ),
+        group=1,
     )

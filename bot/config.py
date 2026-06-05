@@ -24,15 +24,8 @@ class Settings:
 
     redis_url: str
 
-    figma_file_key: str
-    figma_mcp_url: str
-    figma_api_token: str
-
-    phygital_base_url: str
-
     log_level: str
     traces_dir: str
-    playwright_user_data: str
 
 
 @lru_cache(maxsize=1)
@@ -48,13 +41,6 @@ def get_settings() -> Settings:
             "CLOUDRU_BASE_URL", "https://foundation-models.api.cloud.ru/v1"
         ),
         redis_url=os.environ.get("REDIS_URL", "redis://redis:6379/0"),
-        figma_file_key=os.environ.get("FIGMA_FILE_KEY", ""),
-        figma_mcp_url=os.environ.get("FIGMA_MCP_URL", ""),
-        figma_api_token=os.environ.get("FIGMA_API_TOKEN", ""),
-        phygital_base_url=os.environ.get(
-            "PHYGITAL_BASE_URL", "https://app-server-azure.phygital.plus"
-        ),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         traces_dir=os.environ.get("TRACES_DIR", "/data/traces"),
-        playwright_user_data=os.environ.get("PLAYWRIGHT_USER_DATA", "/data/user_data"),
     )

@@ -3,7 +3,7 @@
 Источник правды по агентам пайплайна: что у нас за агенты, какие у них контракты, какие hook'и стоят до и после LLM-вызова, где править поведение.
 
 Парный артефакт для бренда — `docs/brand_voice_notes.md` (выжимка из брендбука).
-Парный артефакт по шаблону Figma — `docs/figma_template_spec.md`.
+Парный артефакт по шаблону рендера — `docs/template_spec.md` (M3.3 PIL composer; M3.2 Figma-вариант — в `docs/archive/figma_template_spec-2026-06-05-m3.2-broken.md`).
 Открытые вопросы — `docs/open_questions.md`.
 
 ---
@@ -29,45 +29,45 @@ state ──pre-hooks──► LLM(skill, model_cfg) ──post-hooks──► r
 
 ---
 
-## 2. Каталог агентов (M2 — текущие, M3 — план)
+## 2. Каталог агентов (M3.3 — current)
 
 Карточка каждого агента — `agents/<id>.yaml`. Реестр загружается при старте, нода тянет конфиг из карточки. Skill-prompt лежит отдельно в `prompts/<id>.md` и версионируется semver'ом в YAML frontmatter.
 
-### M2 — actual
+### LLM-агенты
 
-| id | skill | model | thinking | retry | post-hooks (планируем) |
+| id | skill | model | thinking | retry | post-hooks |
 |---|---|---|---|---|---|
-| `parse_brief` | `prompts/parse_brief.md` v0.1.0 | DeepSeek-V4-Pro | n/a | 1 | pydantic; channel/goal in controlled vocab; product не пустой |
+| `parse_brief` | `prompts/parse_brief.md` v0.1.0 | DeepSeek-V4-Pro | n/a | 1 | pydantic; channel/goal in controlled vocab; **`formats` пиннится whitelist'ом slug'ов из `config/templates.json`**; product не пустой |
 | `derive_persona` | `prompts/derive_persona.md` v0.1.0 | GLM-5.1 | off | 1 | pydantic; `1 ≤ len ≤ 3`; персоны не дубликаты |
-| `generate_message_candidates` | `prompts/creative_ads_explorer.md` v0.2.0 | GLM-5.1 | off | 1 | pydantic; `3 ≤ len ≤ 5`; уникальные `hook_angle`; **brand-guards** (см. §4); длины slogan/body/cta; no emoji |
+| `generate_message_candidates` | `prompts/creative_ads_explorer.md` v0.3.0 | GLM-5.1 | off | 1 | pydantic; `3 ≤ len ≤ 5`; уникальные `hook_angle`; brand-guards (§4); **soft word-bands** (slogan 3-6, cta 1) — warn-only, не блокирует |
 | `evaluate_as_persona_loop` | `prompts/persona_eval.md` v0.2.0 | GLM-5.1, Semaphore(3) | off | 1 на верификат | pydantic; scores в `[0,1]`; нет critic-фраз |
-| `hitl_text_approve` | — (interrupt) | — | — | — | decision ∈ approve/regenerate/refine/cancel |
+| `route_image_style` | `prompts/route_image_style.md` v0.1.0 | GLM-5.1 | off | 1 | pydantic; `style ∈ {photo, render, isometric}`; фоллбек на `photo` при невалидном |
+| `generate_image_prompt` | `prompts/generate_image_prompt.md` v0.1.0 | GLM-5.1 | off (temp=0.5, max_tokens=800) | 1 | warn-only validators: word count 40-90, no Cyrillic, contains "no text"/"no letters"; **outputs EN-paragraph для копипаста юзером в свой image-gen** |
 
-### M3.0 / M3.1 — actual (smoke + Phygital adapter; Figma MCP остаётся stub)
+### Детерминированные / HITL ноды
 
-| id | skill | model | статус | назначение |
-|---|---|---|---|---|
-| `route_image_style` | `prompts/route_image_style.md` v0.1.0 | GLM-5.1 off | **REAL LLM** | классифицирует winner → photo / render / isometric. Возвращает `ImageStyleChoice {style, rationale}`. Фоллбек на `photo` при невалидном style. |
-| `generate_image` | `phygital_vendor/workflows/brand_text2img.py` (vendored из Phygital-bot) | Gemini Pro 3.1 + Nano Banana v3_1 (через Phygital+) | **REAL (M3.1)** | звёт `run_brand_text2img(client, prompt=..., variant=image_style)`. Скачивает S3 URL в `/data/images/`. Prompt — только тема (product+audience_raw+tone_hints+refine), **без slogan/CTA/body** — это hero-визуал, текст накладывает макетный этап. Fallback на M3.0 PIL stub когда `PHYGITAL_ENABLED=false`, сессия не загружена или Phygital упал. |
-| `hitl_image_approve` | — (interrupt) | — | **REAL** | OK / перегенерить / доработать комментарием / отменить. `regenerate`/`refine` бампают `image_revise_round`. Картинка идёт в TG как `send_photo`. |
-| `fill_templates_per_format` | — (local PIL stub) | PIL composite | **STUB (M3.2)** | парсит `<channel>_<W>x<H>` slugs из `brief.formats`, делает hero+text composite в `/data/renders/`. Figma MCP — M3.2. |
-| `render_all` | — (deterministic) | `zipfile.ZIP_DEFLATED` | **REAL** | пакует все PNG'и в один ZIP в `/data/zips/`, отдаёт через `send_document`. |
+| id | назначение |
+|---|---|
+| `hitl_text_approve` | `interrupt()`. Decision ∈ approve/regenerate/refine/cancel. |
+| `hitl_image_upload` | `interrupt()`. Ждёт PHOTO или Document с `image/*` MIME. Resume contract: `{action: upload, local_path}` / `{action: cancel}` / `{action: timeout}`. 24-часовой timeout (`asyncio.create_task`, хранится в `app.bot_data["_image_upload_timeouts"]`) → cancel + TG msg "Время истекло". Latest-wins: `bot/graph_runner.py:on_image_upload` флипает `session.status → running` перед resume, чтобы вторая фотка отбилась. |
+| `fill_templates_per_format` | Локальный PIL композер. Для каждого slug из `brief.formats` зовёт `infra.composer.compose(template, hero=state.image, slogan=..., cta=..., age_rating=...)` → PNG в памяти. Manifest — `config/templates.json`, схема — `infra/template_manifest.py` (Pydantic discriminated union ImageLayer / HeroLayer / TextLayer). |
+| `render_all` | Складывает PNG'и в `state.renders` (имя слот'а → bytes). Без удалённого rendering. |
+| `zip_and_send` | `zipfile.ZIP_DEFLATED` → `/data/zips/<session_id>.zip` → `send_document`. |
 
-### M3 — planned next
+### Что выкинуто в M3.3 (для архивной памяти)
 
-| id | назначение | блокер |
-|---|---|---|
-| `fill_templates_per_format` (real) | Figma Make MCP `use_figma` — мап `{{slogan}}/{{body}}/{{cta}}` и `{{hero_image}}` в master frames | требует public URL для `hero_image` → infra/tunnel.py |
-| `render_all` (real) | Figma REST `/v1/images/...` для финальных экспортов под фактические master-frames | требует Figma file_id и токен |
+- **M3.0–3.1 Phygital path** (vendored client + Playwright + SuperTokens session): хрупкая re-auth, vendor под чужой код. Выкинуто целиком вместе с `phygital_vendor/`.
+- **M3.2 Figma MCP write-flow** (`use_figma` + `createImageAsync` + tunnel + presigned upload): тупик — Desktop MCP read-only, cloud MCP gated. См. `docs/archive/M3.2_BROKEN-2026-06-05.md`.
+- Файлы: `infra/{figma_mcp,phygital_client,tunnel,http_server}.py`, `graph/nodes/{generate_image,hitl_image_approve}.py`, `scripts/`.
+- Deps: `playwright`, `loguru`, `langchain-mcp-adapters`, `mcp`.
 
-### M3.0 инфра-каркас + M3.1 Phygital adapter
+### Manifest contract (M3.3)
 
-- `infra/http_server.py` — stdlib `ThreadingHTTPServer` отдаёт `/data/{images,renders,zips}/` read-only. Запускается в `_post_init` (см. `bot/app.py`), порт из `HTTP_PORT` (default 8088).
-- `infra/tunnel.py` — обёртка над `cloudflared`. Режимы: `disabled` (default — для M3.0 smoke не нужен), `quick` (`*.trycloudflare.com`), `named` (`TUNNEL_TOKEN`+`PUBLIC_BASE_URL`). Публичный URL кладётся в `app.bot_data["public_base_url"]`.
-- `infra/phygital_client.py` — singleton-holder `PhygitalClient` (M3.1). Bootstrap'ит `phygital_vendor/` в `sys.path`, открывает HTTP-клиент при старте, закрывает при шатдауне. `get_client()` возвращает None если `PHYGITAL_ENABLED=false` или нет `session.json` — `generate_image` тогда падает на PIL-stub.
-- `phygital_vendor/` — vendor-copy `{client,workflows,docs}` из `C:/Users/Глеб/Documents/Phygital-bot` (2026-06-04). Минимальный patch: `client/config.py::STORAGE_DIR` + `workflows/brand_docs.py::CACHE_FILE` читают `PHYGITAL_STORAGE_DIR` (по умолчанию `/data/phygital_storage`), чтобы сессия и кеш брендовых документов жили в docker-volume, а не в `/app`.
-- Volume map в `docker-compose.yml`: `images`, `renders`, `zips`, `phygital_storage` (все named volumes, не bind).
-- **Bootstrap session.json** (одноразово, после первого `up`): `docker cp C:/Users/Глеб/Documents/Phygital-bot/storage/session.json resize-bot:/data/phygital_storage/session.json`. SuperTokens refresh после этого сам поддерживает сессию.
+- `config/templates.json` — single source of truth для layouts. Manifest schema — `infra/template_manifest.py`.
+- Slug whitelist: добавил новый slug → синхронно правишь (a) `config/templates.json`, (b) `bot/wizard.py` format whitelist, (c) `prompts/parse_brief.md` slug whitelist, (d) `tests/unit/test_composer.py::test_compose_real_template_smoke` parametrize.
+- Fonts — `assets/fonts/SBSansDisplay-*.otf` (Light/Regular/Medium/Semibold/Bold).
+- Brand-area strips — `assets/brand/brand_area_line_<W>x<H>_v1.png`.
+- Полная спека композера — `docs/template_spec.md`.
 
 ---
 
@@ -90,9 +90,9 @@ post_hooks:
   - pydantic_validate
   - len_between:    {min: 3, max: 5}
   - field_diversity: {field: hook_angle}
-  - text_len:       {field: slogan, max: 60}
-  - text_len:       {field: body,   max: 180}
-  - text_len:       {field: cta,    max: 30}
+  - word_band:      {field: slogan, min_words: 3, max_words: 6, severity: warn}
+  - word_band:      {field: cta,    min_words: 1, max_words: 1, severity: warn}
+  - text_len:       {field: body,   max: 180, severity: warn}
   - ban_emoji
   - brand_stopwords_regex
   - brand_pleasewords_optional       # warn-only, не блокирует
@@ -138,10 +138,14 @@ metrics:
 
 **Структурные хард-фейлы:**
 
-- `slogan` > 60 символов / `body` > 180 / `cta` > 30 → fail (уже в `creative_ads_explorer.md`, выносим в YAML).
 - любой emoji в любом поле → fail (правило уже в нашем глобальном CLAUDE — `feedback_no_emojis.md`).
 - `!` в `slogan` → fail (calm tone). В `cta` — разрешён.
-- `cta` короче 2 слов или > 5 слов → fail.
+
+**Soft word-bands (warn-only, не fail):**
+
+- `slogan` 3–6 слов (до 8 допустимо для мягкого target).
+- `cta` ровно 1 слово.
+- `body` ≤ 180 символов (черновое описание / референс, в финальный макет не идёт).
 
 ### 4.2 Что warn'им, но не блочим (LLM видит и может учесть на retry)
 
@@ -205,8 +209,9 @@ metrics:
 
 ## 8. Связанные документы
 
-- `docs/figma_template_spec.md` — что подготовить в Figma для M3 шаблона
-- `docs/open_questions.md` — нерешённые архитектурные вопросы (включая image hosting для Figma)
+- `docs/template_spec.md` — спека M3.3 PIL композера (manifest, layers, fonts)
+- `docs/open_questions.md` — нерешённые архитектурные вопросы
+- `docs/archive/M3.2_BROKEN-2026-06-05.md` — почему Figma MCP write-flow дохлый (для археологии)
 - `prompts/*.md` — собственно skill-файлы агентов
 - `graph/state.py` — Pydantic-модели, общие для пайплайна
 - `llm/cloudru.py` — единая точка LLM-вызовов и retry-with-feedback

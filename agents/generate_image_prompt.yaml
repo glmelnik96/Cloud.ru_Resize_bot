@@ -1,0 +1,11 @@
+id: generate_image_prompt
+skill: prompts/generate_image_prompt.md
+model: glm-5.1
+model_config:
+  thinking: false
+  max_tokens: 800
+  temperature: 0.5
+schema: graph.state.ImagePromptOutput
+retry_with_feedback: 1
+pre_hooks: []
+post_hooks: []

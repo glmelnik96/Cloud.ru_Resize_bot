@@ -11,19 +11,12 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - playwright_user_data:/data/user_data
       - traces:/data/traces
-      - images:/data/images
+      - heroes:/data/heroes
       - renders:/data/renders
       - zips:/data/zips
-      - phygital_storage:/data/phygital_storage
-    ports:
-      # static HTTP for hero images / renders / zips (consumed by tunnel in M3.1+)
-      - "127.0.0.1:8088:8088"
     networks:
       - resize-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   redis:
     image: redis/redis-stack:7.4.0-v0
@@ -43,13 +36,11 @@ services:
       - resize-net
 
 volumes:
-  playwright_user_data:
   traces:
   redis_data:
-  images:
+  heroes:
   renders:
   zips:
-  phygital_storage:
 
 networks:
   resize-net:

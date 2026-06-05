@@ -35,8 +35,10 @@ import structlog
 log = structlog.get_logger(__name__)
 
 # Dirs the janitor manages. Kept as a module constant so tests can patch.
+# /data/heroes is M3.3 user-uploaded heroes (replaced /data/images which was
+# the Phygital auto-generation dir).
 JANITOR_DIRS: tuple[Path, ...] = (
-    Path("/data/images"),
+    Path("/data/heroes"),
     Path("/data/renders"),
     Path("/data/zips"),
 )

@@ -9,25 +9,29 @@ schema: graph.state.CandidateSet
 retry_with_feedback: 1
 pre_hooks: []
 post_hooks:
-  # length limits — duplicate the prompt rules as a hard guard
+  # M3.3: char-limit hard fails dropped (they were for Figma layer width).
+  # PIL composer auto-shrinks text, so length is enforced at render time.
+  # We keep warn-only soft targets on word bands instead.
+
+  # slogan: 3-6 words soft target — what actually goes on the macro.
   - id: text_len
     field: slogan
-    max: 60
-    on_violation: fail
+    min_words: 3
+    max_words: 6
+    on_violation: warn
+
+  # cta: 1 word soft target (button label, single verb).
+  - id: text_len
+    field: cta
+    min_words: 1
+    max_words: 1
+    on_violation: warn
+
+  # body: kept as a draft description / reference for downstream stages.
+  # Not used in final macro, but should not balloon.
   - id: text_len
     field: body
     max: 180
-    on_violation: fail
-  - id: text_len
-    field: cta
-    max: 30
-    on_violation: fail
-
-  # CTA word-count band (2–5 words). warn for now — see AGENTS.md §4.4.
-  - id: text_len
-    field: cta
-    min_words: 2
-    max_words: 5
     on_violation: warn
 
   # global: no emojis anywhere

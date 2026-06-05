@@ -1,6 +1,6 @@
 ---
 name: creative-ads-explorer
-version: 0.2.0
+version: 0.3.0
 source_upstream: https://github.com/DKeken/codex-skills-alternative/tree/main/skills/creative-ads-explorer
 target_models:
   primary: zai-org/GLM-5.1
@@ -34,12 +34,13 @@ status: m2
 ПРАВИЛА:
 1. Возвращай 3–5 кандидатов.
 2. У каждого свой hook_angle, разные между собой.
-3. slogan ≤ 60 символов. body ≤ 180. cta ≤ 30. Это ЖЁСТКИЕ лимиты, не превышай.
-4. CTA — глагол в инфинитиве или повелительном.
-5. hook_angle ∈ {emotional, rational, social_proof, direct_benefit, fear_of_missing_out, curiosity, authority}.
-6. Никаких эмодзи. Никаких восклицательных знаков, кроме как в самом CTA при необходимости.
-7. Если в constraints указаны обязательные слова — используй их хотя бы в одном поле.
-8. Запрещённые слова из constraints не должны появляться нигде.
+3. slogan — короткий рекламный заголовок. Мягкий target: 3–6 слов. До 8 слов допустимо, если без потери смысла иначе нельзя. Это то, что реально появится на макете.
+4. body — черновое описание идеи в 1–2 предложения (до ~180 символов). Это РАБОЧИЙ референс для последующих стадий (image prompt, persona-eval), в финальный макет не идёт. Не нужно стараться сделать его «красивым».
+5. cta — одно слово (мягкий target). Глагол в инфинитиве или повелительном. Если односложный CTA звучит коряво — допустимо до 2 слов, но это исключение.
+6. hook_angle ∈ {emotional, rational, social_proof, direct_benefit, fear_of_missing_out, curiosity, authority}.
+7. Никаких эмодзи. Никаких восклицательных знаков, кроме как в самом CTA при необходимости.
+8. Если в constraints указаны обязательные слова — используй их хотя бы в одном поле.
+9. Запрещённые слова из constraints не должны появляться нигде.
 
 Не объясняй решения, не пиши преамбулу. ТОЛЬКО валидный JSON.
 ```
@@ -113,12 +114,15 @@ REVISE-ИТЕРАЦИЯ {{revise_round}}/2. Предыдущие кандида�
 ## Validation
 
 - `schema_ok` >= 95%
-- `hook_diversity` (uniq hook_angle ≥ min(N, 3)) >= 90%
-- `length_compliance` (slogan/body/cta в лимитах) 100% — иначе retry-with-feedback
-- `must_include_compliance` 100%
-- `forbidden_compliance` 0% запрещённых слов
+- `hook_diversity` (uniq hook_angle ≥ min(N, 3)) >= 90% (warn-only)
+- `slogan_word_band` (3–6 слов) — soft target, warn-only.
+- `cta_word_band` (1 слово) — soft target, warn-only.
+- `body_len` (<= 180 chars) — soft guard для черновика, warn-only.
+- `must_include_compliance` 100% (fail).
+- `forbidden_compliance` 0% запрещённых слов (fail).
 
 ## Changelog
 
+- v0.3.0 (2026-06-05) — M3.3: slogan смягчён до 3–6 слов soft target, cta до 1 слова soft target, body переопределён как «черновое описание / референс» (в финальный макет не идёт), убран `length_compliance` retry-with-feedback (был char-based hard limit для Figma layer-width). Размер слогана и CTA теперь определяется не промптом, а PIL композером с auto-shrink.
 - v0.2.0 (2026-06-04) — M2-ready: явные секции System/User/anti-bias/revise (плейсхолдеры рендерятся нодой, без Jinja `{% if %}`).
 - v0.1.0 (2026-06-04) — skeleton.

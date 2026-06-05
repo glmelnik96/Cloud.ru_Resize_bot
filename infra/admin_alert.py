@@ -6,15 +6,14 @@ Why a module-level singleton instead of bot_data:
   would pollute the schema and the checkpoint payload (state.image / state.brief
   are typed dicts persisted in Redis; sticking a Bot handle in there is wrong).
   Instead we hold the bot handle in this module, set once at `_post_init`,
-  cleared at `_post_shutdown` — same shape as `infra.phygital_client`.
+  cleared at `_post_shutdown`.
 
 Debouncing:
-  PhygitalAuthError fires once per failed `/new` attempt — and the owner may
-  click «перегенерить» multiple times before realising the session is dead.
-  Without a cooldown the admin gets spammed. `notify_admin(...,
-  dedupe_key="phygital_auth_dead", cooldown_s=3600)` makes the same alert at
-  most once per hour per process; clearing on shutdown means a docker restart
-  (the natural recovery action) also resets the cooldown.
+  An infra failure can fire once per `/new` attempt — and the owner may retry
+  multiple times before realising something is dead upstream. Without a cooldown
+  the admin gets spammed. `notify_admin(..., dedupe_key=..., cooldown_s=3600)`
+  makes the same alert at most once per hour per process; clearing on shutdown
+  means a docker restart (the natural recovery action) also resets the cooldown.
 """
 
 from __future__ import annotations

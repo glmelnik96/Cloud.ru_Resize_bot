@@ -4,22 +4,22 @@
 
 ## 1. Что это
 
-Telegram-бот для **audience-driven генерации рекламных креативов с мультиформатным выводом**. Маркетолог в TG проходит wizard (продукт → goal → ЦА → канал → форматы) → LangGraph агент на моделях Cloud.ru Foundation Models генерирует кандидатов рекламного сообщения → валидирует в persona-as-TA agentic loop → линейный HITL approve текста → генерация картинки через Phygital+ brand pipeline → HITL approve картинки → подмена placeholders `{{token}}` в N мастер-фреймах Figma → batch render через Figma REST API → ZIP → отправка в TG + кнопка `[Сделать вариант B]` для A/B-тестa.
+Telegram-бот для **audience-driven генерации рекламных креативов с мультиформатным выводом**. Маркетолог в TG проходит wizard (продукт → goal → ЦА → канал → форматы) → LangGraph агент на моделях Cloud.ru Foundation Models генерирует кандидатов рекламного сообщения → валидирует в persona-as-TA agentic loop → линейный HITL approve текста → LLM пишет EN prompt для hero-картинки → **юзер сам прогоняет prompt в своём image-генераторе (MJ / DALL-E / SDXL / Nano Banana) и присылает PNG в чат** → локальный PIL композер накладывает hero + slogan + CTA в N layered шаблонов из `config/templates.json` → ZIP → отправка в TG + кнопка `[Сделать вариант B]` для A/B-тестa.
 
 **Объёмы:** 10/день MVP → 100/день целевой.
 
+**Статус (2026-06-05):** M3.3 — Phygital и Figma MCP **выкинуты** (см. `docs/archive/M3.2_BROKEN-2026-06-05.md` про тупик с Figma MCP write-flow). Hero рисует юзер вручную, бот только пишет prompt и компонует макет.
+
 ## 2. Стек
 
-- Python 3.11+ (uv-managed)
+- Python 3.11+ (uv-managed; локальный pytest на 3.10 — без stdlib 3.11-only)
 - `python-telegram-bot[ext]==22.x` async
 - `langgraph` + `langgraph-checkpoint-redis` (AsyncRedisSaver)
-- `langchain-mcp-adapters` + `mcp` (для Figma Make MCP, streamable_http)
 - `openai` (Cloud.ru FM OpenAI-compatible endpoint)
-- `pydantic>=2.9`
+- `pydantic>=2.9` (discriminated unions для layer schema)
 - `structlog` (JSON logs)
-- `playwright` (embedded SuperTokens browser для Phygital auth)
 - `httpx[http2]` + `truststore` (для Cloud.ru MITM cert)
-- `pillow` (PIL fallback для Figma image composition + format resize)
+- `pillow` — основной композер (PIL canvas + layered templates, fonts SBSansDisplay)
 - Redis Stack 7.4
 - Docker Compose
 
@@ -27,16 +27,17 @@ Telegram-бот для **audience-driven генерации рекламных �
 
 ### LangGraph nodes (async)
 
-1. `parse_brief` — DeepSeek-V4-Pro (long-context). Wizard text → `AdBrief` Pydantic.
+1. `parse_brief` — DeepSeek-V4-Pro (long-context). Wizard text → `AdBrief` Pydantic. `formats` пиннится whitelist'ом slug'ов из manifest'а.
 2. `derive_persona` — GLM-5.1 thinking-OFF. Описание ЦА → 1-3 дискретные `Persona`.
-3. `generate_message_candidates` — GLM-5.1 thinking-OFF. N=3-5 кандидатов (slogan/body/CTA). Если есть `prior_variant` (A/B вариант B) — anti-bias по hook angle.
+3. `generate_message_candidates` — GLM-5.1 thinking-OFF. N=3-5 кандидатов (slogan/body/CTA). Soft word-bands (slogan 3-6, cta 1), retry-with-feedback на schema-fail. Если есть `prior_variant` — anti-bias по hook angle.
 4. `evaluate_as_persona_loop` — GLM-5.1 thinking-ON. Для каждого candidate × persona — Structured Output verdict (resonance/clarity/action_intent 0-10 + free-form). Aggregate → revise (≤2 итераций). Симуляция в роли ЦА, не критик. Для B variant — приоритет ранкинга на persona[1].
 5. `hitl_text_approve` — `interrupt()`, inline `[OK, делать картинку]/[Перегенерить]/[Доработать]/[Отменить]`.
-6. `generate_image` — Phygital vendored client. brand_t2i (Gemini Text node 72 + Nano Banana node 94). Вариант LLM-router (photo/render/isometric) или ручной override. Для B variant — принудительно другой вариант если позволяет brief.
-7. `hitl_image_approve` — `interrupt()`, inline `[OK, делать форматы]/[Перегенерить]/[Сменить вариант]/[Отменить]`.
-8. `fill_templates_per_format` — fan-out через `use_figma` MCP. Batch text updates + image fills через `figma.createImageAsync(s3_url)`. Один глобальный `{{slogan}}`, format-specific trim только при overflow.
-9. `render_all` — REST `GET /v1/images/{file_key}?ids=...` (один batch на все форматы).
-10. `zip_and_send` — ZIP + summary + `[Сделать вариант B (A/B)]`.
+6. `route_image_style` — детерминированный routing по brief (photo / render / isometric).
+7. `generate_image_prompt` — GLM-5.1 thinking-OFF, temp=0.5. Outputs EN-paragraph (40-90 слов) под image_style. Soft validators: word-count band, cyrillic guard, "no text/no letters" required phrase. Юзеру отдаётся в TG как markdown-code-block для копи-паста.
+8. `hitl_image_upload` — `interrupt()`. Ждёт PHOTO или Document с `image/*` MIME (latest-wins, status flip → "running" перед resume). 24-часовой timeout → cancel + TG msg "Время истекло, запусти /new". Resume contract: `{action: upload, local_path}` / `{action: cancel}` / `{action: timeout}`.
+9. `fill_templates_per_format` — локальный PIL композер. Для каждого slug из `brief.formats` зовёт `infra.composer.compose(template, hero, slogan, cta, age_rating)` → PNG. Один глобальный `winner.slogan`, авто-shrink текста при overflow.
+10. `render_all` — собирает PNG'и в `state.renders` (без удалённого rendering — композер уже отдал bytes).
+11. `zip_and_send` — ZIP + summary + `[Сделать вариант B (A/B)]`.
 
 ### Modal split
 
@@ -50,18 +51,23 @@ Telegram-бот для **audience-driven генерации рекламных �
 
 - **async LangGraph + PTB** в одном Python процессе (без Celery — 10-100/день не требует worker isolation).
 - **2 Docker сервиса:** `bot` + `redis` (Redis Stack 7.4).
-- **Playwright embedded** в main process с persistent volume `user_data`. Recon один раз при первом запуске. Re-login по 401-детекту → notify admin + headed page в фоне.
-- **MCP streamable_http** для Figma Make MCP (один MCP-клиент в системе). Phygital через vendored Python client напрямую, без MCP. Cloud.ru FM через openai SDK.
+- **Cloud.ru FM через openai SDK.** Никаких MCP-клиентов, никаких embedded браузеров — M3.2-стек выкинут.
 - **structlog JSON** → stdout + RotatingFileHandler на `/data/traces/{session_id}.jsonl`. LangFuse/LangSmith добавлять по факту необходимости.
 - **Whitelist** — env-var `WHITELIST_USER_IDS="123,456"`, единственный админ.
+- **TTL janitor** чистит `/data/heroes`, `/data/renders`, `/data/zips` старше `ARTIFACT_TTL_HOURS` (24h по умолчанию). `/data/traces` не трогает.
 
-### Figma anatomy
+### Template anatomy (PIL composer)
 
-- Одна Figma-страница, N фреймов с naming `format__<slug>__<WxH>`.
-- Placeholders `{{token}}` в named text nodes. Детерминированные из brief (`{{product}}`, `{{cta}}`, `{{disclaimer}}`, `{{date}}`) + LLM-generated (`{{slogan}}`, `{{body}}`, `{{hashtags}}`).
-- Image — Frame с name `{{hero_image}}`, scaleMode = FILL (никаких компонентов с image properties).
-- Image-write: Phygital PNG → Cloud.ru Object Storage public URL (TTL 7д) → `figma.createImageAsync(url)` через `use_figma`. Fallback при недоступности MCP image-write — PIL local composition.
-- Render: REST `/v1/images` batch (1 request на 8 форматов = 100 req/день при 100 task/день, 6× запас под 600/день лимит).
+Полная спека — `docs/template_spec.md`. Кратко:
+
+- `config/templates.json` — manifest со списком templates по slug'ам. Каждый template = canvas (width/height/background_color) + ordered `layers`.
+- Три типа layer (Pydantic discriminated union в `infra/template_manifest.py`):
+  - `image` — статический PNG (brand-area-line на верхушке каждого баннера).
+  - `hero` — user-uploaded PNG, `fit: cover|contain`. Ровно один на template.
+  - `text` — slot `slogan | cta | age_rating`, auto-shrink `font_size_max → font_size_min`, опциональные `per_line_highlight` (cloud.ru lemon highlight) и flat `background`.
+- Render: `infra/composer.py` сортирует layers по `z`, рисует на RGBA PIL canvas, сохраняет PNG.
+- Fonts — `assets/fonts/SBSansDisplay-<Weight>.otf` (Light/Regular/Medium/Semibold/Bold).
+- Brand-area strips — `assets/brand/brand_area_line_<W>x<H>_v1.png`.
 
 ### HITL & Drafts
 
@@ -84,29 +90,49 @@ State-поле `prior_variant: {slogan, hook_angle, brand_variant, persona_prior
 ```
 Resize_bot/
 ├─ HANDOFF.md                      # этот файл (source of truth)
+├─ AGENTS.md                       # rules для агентов (Claude/Cursor)
 ├─ pyproject.toml                  # uv-managed
+├─ Dockerfile
 ├─ docker-compose.yml              # bot + redis
 ├─ .env.example
-├─ .gitignore
+├─ assets/
+│  ├─ brand/                       # brand_area_line_<W>x<H>_v1.png
+│  └─ fonts/                       # SBSansDisplay-*.otf
+├─ config/
+│  └─ templates.json               # manifest (M3.3, replaces figma_templates.json)
 ├─ docs/
-│  └─ archive/
-│     └─ HANDOFF-2026-06-03-figma-tirage.md   # оригинальный data-merge замысел
-├─ bot/                            # PTB layer
-│  ├─ __init__.py
-│  └─ app.py                       # entry, whitelist middleware, /start wizard
-├─ llm/                            # Cloud.ru FM client
-│  ├─ __init__.py
+│  ├─ template_spec.md             # M3.3 PIL composer spec
+│  ├─ open_questions.md
+│  └─ archive/                     # HANDOFF-* + M3.2_BROKEN-* + figma_template_spec-*
+├─ bot/
+│  ├─ app.py                       # entry, PTB init, TTL janitor task
+│  ├─ wizard.py                    # ConversationHandler + format whitelist
+│  ├─ graph_runner.py              # LangGraph driver, HITL bridge, hero upload handler
+│  └─ sessions.py                  # status enum + Redis adapter
+├─ llm/
 │  └─ cloudru.py                   # model-aware thinking-toggle, retry-with-feedback
-├─ graph/                          # LangGraph nodes & state (создаётся в M2)
-├─ figma/                          # MCP client + REST helpers (M3)
-├─ phygital/                       # vendored client from Phygital-bot (M3)
-├─ prompts/                        # SKILL.md
+├─ graph/
+│  ├─ state.py                     # AdBrief / Persona / MessageCandidate / ImagePromptOutput
+│  ├─ builder.py                   # state graph wiring
+│  └─ nodes/                       # parse_brief, derive_persona, generate_message_candidates,
+│                                  #   evaluate_as_persona_loop, hitl_text_approve,
+│                                  #   route_image_style, generate_image_prompt,
+│                                  #   hitl_image_upload, fill_templates_per_format,
+│                                  #   render_all, zip_and_send
+├─ infra/
+│  ├─ composer.py                  # PIL render engine
+│  ├─ template_manifest.py         # Pydantic schema + loader for config/templates.json
+│  ├─ ttl_janitor.py               # /data/heroes,renders,zips sweeper
+│  └─ admin_alert.py
+├─ prompts/                        # SKILL.md (markdown frontmatter)
 │  ├─ creative_ads_explorer.md
-│  ├─ creative_positioning.md
-│  └─ persona_eval.md
+│  ├─ persona_eval.md
+│  ├─ parse_brief.md
+│  └─ generate_image_prompt.md     # EN hero-prompt writer (M3.3)
+├─ agents/                         # *.yaml — model+skill+schema configs
 └─ tests/
+   ├─ unit/
    └─ integration/
-      └─ test_smoke.py             # ping 3 моделей одним API-ключом
 ```
 
 ## 5. Milestones
@@ -143,18 +169,20 @@ Resize_bot/
 
 **DoD:** реальный brief → winner кандидата → TG inline approve → `prior_variant` сохранён для возможного B.
 
-### M3 — image gen + Figma fill + render
+### M3 — image gen + render (история итераций)
 
-- `phygital/` vendored client (копия из Phygital-bot) + brand_t2i workflow
-- Playwright sidecar embedded в main process
-- `graph/nodes/generate_image.py`
-- HITL image approve
-- `figma/mcp.py` подключение к Figma Make MCP (streamable_http) через `langchain-mcp-adapters`
-- `graph/nodes/fill_templates_per_format.py`
-- `graph/nodes/render_all.py` + REST batch `/v1/images`
-- Image-write smoke-test: подтвердить или fallback на PIL
+- **M3.0–3.1 (Phygital path, выкинут):** vendored Phygital client + Playwright SuperTokens auth → brand_t2i (Gemini Text + Nano Banana). Работало end-to-end, но session expiry болезненный + цепочка хрупкая.
+- **M3.2 (Figma MCP write-flow, **тупик**):** попытка fan-out форматов через `use_figma` MCP (`createImageAsync` + batch text updates). Desktop MCP read-only, cloud MCP gated to whitelisted clients — третья сторона зайти не может. Артефакты: `docs/archive/M3.2_BROKEN-2026-06-05.md`, `docs/archive/figma_template_spec-2026-06-05-m3.2-broken.md`.
+- **M3.3 (current, done):** **юзер сам рисует hero** в любом image-генераторе, бот пишет EN prompt + накладывает hero+text локальным PIL композером по manifest'у.
+  - `agents/generate_image_prompt.yaml` + `prompts/generate_image_prompt.md`
+  - `graph/nodes/generate_image_prompt.py`, `graph/nodes/hitl_image_upload.py`
+  - `infra/template_manifest.py` + `infra/composer.py` + `config/templates.json` + `assets/`
+  - `bot/graph_runner.py` — handler на PHOTO/Document.IMAGE, 24h timeout, latest-wins
+  - `docs/template_spec.md` — спека композера
+  - удалено: `infra/{figma_mcp,phygital_client,tunnel,http_server}.py`, `graph/nodes/{generate_image,hitl_image_approve}.py`, `phygital_vendor/`, `scripts/`
+  - deps выкинуты: `playwright`, `loguru`, `langchain-mcp-adapters`, `mcp`
 
-**DoD:** real brief → winner → image → 8 формат ZIP → TG.
+**DoD M3.3:** реальный brief → winner → EN prompt в чат → юзер шлёт PNG → PIL композер → ZIP с N форматами → TG. 76 unit+agent тестов зелёные.
 
 ### M4 — A/B + drafts + admin
 
@@ -188,11 +216,12 @@ Resize_bot/
 
 ## 7. Open risks
 
-1. **Figma image-write через MCP не подтверждён.** Smoke-test в M3, fallback PIL.
-2. **Phygital recon свежесть.** SuperTokens expiry → 401 detect → notify + re-login.
-3. **SKILL.md alignment cost.** Пилот на `creative-ads-explorer`, экстраполируем.
-4. **Persona-loop стоимость.** 100/день × 16 вызовов = 1600/день. ОК до 100/день, дальше пересмотреть N×M.
-5. **Figma rate-limit.** Batch `/images` спасает от 600/день при цели 100/день × 8 форматов.
+1. **Hero quality dependence на юзера.** Если маркетолог пришлёт мутный PNG — композер всё равно ляпнет его на canvas. Контроль качества вне бота. Митигация: EN prompt в чате готов к копи-пасту в MJ/DALL-E/SDXL.
+2. **24h timeout длинный.** Если юзер бросил сессию — она висит в Redis сутки. Митигация: TTL janitor чистит `/data/heroes`; `/cancel` доступен глобально.
+3. **Manifest drift.** Добавили новый slug в `bot/wizard.py` и `prompts/parse_brief.md` whitelist, забыли в `config/templates.json` → KeyError в композере. Митигация: smoke-тест `tests/unit/test_composer.py::test_compose_real_template_smoke` параметризован slug'ами.
+4. **SKILL.md alignment cost.** Пилот на `creative-ads-explorer`, экстраполируем.
+5. **Persona-loop стоимость.** 100/день × 16 вызовов = 1600/день. ОК до 100/день, дальше пересмотреть N×M.
+6. **Fonts/brand assets отсутствуют в git.** `assets/fonts/SBSansDisplay-*.otf` и `assets/brand/brand_area_line_*.png` — лицензионные, держим вне репо. При деплое — заносить вручную в volume.
 
 ## 8. Memory & references
 

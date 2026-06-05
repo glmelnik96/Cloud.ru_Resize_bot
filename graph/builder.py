@@ -1,6 +1,6 @@
 """StateGraph assembly.
 
-M1 + M2 + M3.0 image pipeline (stubs for image gen & Figma rendering):
+M3.3 — user-uploaded hero (no Phygital, no Figma MCP rendering):
 
     parse_brief
       -> derive_persona
@@ -12,17 +12,18 @@ M1 + M2 + M3.0 image pipeline (stubs for image gen & Figma rendering):
                                        --(cancel)-> END
                                        --(regenerate / refine)-> generate_message_candidates
 
-    route_image_style
-      -> generate_image
-      -> hitl_image_approve
-         --(approve)-> fill_templates_per_format -> render_all -> END
-         --(cancel)-> END
-         --(regenerate / refine)-> generate_image
+    route_image_style          (LLM classifier: photo | render | isometric)
+      -> generate_image_prompt (LLM writes EN hero prompt for the user)
+      -> hitl_image_upload     (interrupt; user pastes prompt into their
+                                generator and uploads the result)
+         --(upload)-> fill_templates_per_format -> render_all -> END
+         --(cancel / timeout)-> END
 
-M3.0 status:
+M3.3 status:
 - route_image_style: REAL LLM classifier (GLM-5.1).
-- generate_image: STUB (PIL placeholder PNG) — Phygital adapter is M3.1.
-- fill_templates_per_format: STUB (local compositing) — Figma MCP adapter is M3.2.
+- generate_image_prompt: REAL LLM writer (GLM-5.1, EN output).
+- hitl_image_upload: REAL HITL (PTB photo/Document handler in bot/graph_runner).
+- fill_templates_per_format: REAL PIL composer (no Figma at runtime).
 - render_all: REAL (zipfile of per-format PNGs).
 """
 
@@ -33,9 +34,9 @@ from langgraph.graph import END, START, StateGraph
 from graph.nodes.derive_persona import derive_persona
 from graph.nodes.evaluate_as_persona_loop import evaluate_as_persona_loop
 from graph.nodes.fill_templates_per_format import fill_templates_per_format
-from graph.nodes.generate_image import generate_image
+from graph.nodes.generate_image_prompt import generate_image_prompt
 from graph.nodes.generate_message_candidates import generate_message_candidates
-from graph.nodes.hitl_image_approve import hitl_image_approve
+from graph.nodes.hitl_image_upload import hitl_image_upload
 from graph.nodes.hitl_text_approve import hitl_text_approve
 from graph.nodes.parse_brief import parse_brief
 from graph.nodes.render_all import render_all
@@ -58,13 +59,14 @@ def _route_after_text_hitl(state: GraphState) -> str:
     return "generate_message_candidates"
 
 
-def _route_after_image_hitl(state: GraphState) -> str:
+def _route_after_image_upload(state: GraphState) -> str:
     if state.get("cancelled"):
         return END
-    if state.get("image_approved"):
+    if state.get("image"):
         return "fill_templates_per_format"
-    # regenerate or refine — image has been cleared in hitl_image_approve
-    return "generate_image"
+    # Defensive fallback — should not happen because hitl_image_upload
+    # always returns either an image, cancelled=True, or an error.
+    return END
 
 
 def build_text_graph() -> StateGraph:
@@ -76,8 +78,8 @@ def build_text_graph() -> StateGraph:
     g.add_node("evaluate_as_persona_loop", evaluate_as_persona_loop)
     g.add_node("hitl_text_approve", hitl_text_approve)
     g.add_node("route_image_style", route_image_style)
-    g.add_node("generate_image", generate_image)
-    g.add_node("hitl_image_approve", hitl_image_approve)
+    g.add_node("generate_image_prompt", generate_image_prompt)
+    g.add_node("hitl_image_upload", hitl_image_upload)
     g.add_node("fill_templates_per_format", fill_templates_per_format)
     g.add_node("render_all", render_all)
 
@@ -102,13 +104,12 @@ def build_text_graph() -> StateGraph:
             END: END,
         },
     )
-    g.add_edge("route_image_style", "generate_image")
-    g.add_edge("generate_image", "hitl_image_approve")
+    g.add_edge("route_image_style", "generate_image_prompt")
+    g.add_edge("generate_image_prompt", "hitl_image_upload")
     g.add_conditional_edges(
-        "hitl_image_approve",
-        _route_after_image_hitl,
+        "hitl_image_upload",
+        _route_after_image_upload,
         {
-            "generate_image": "generate_image",
             "fill_templates_per_format": "fill_templates_per_format",
             END: END,
         },
