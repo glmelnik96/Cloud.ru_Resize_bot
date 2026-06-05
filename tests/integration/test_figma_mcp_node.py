@@ -127,16 +127,57 @@ def _client_with_fake_session() -> tuple[Any, _FakeSession]:
 
 
 @pytest.mark.asyncio
-async def test_upload_hero_calls_upload_assets() -> None:
+async def test_upload_hero_presigned_url_flow(monkeypatch) -> None:
+    """upload_assets returns a presigned URL; we POST raw PNG bytes to it.
+    Bytes never go through MCP (they'd hit UnicodeDecodeError on the PNG
+    magic byte during JSON encoding)."""
     c, fake = _client_with_fake_session()
+    fake.next_result = {"uploadUrl": "https://figma-upload/short-lived"}
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        def __init__(self, *_, **__): ...
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def post(self, url, *, content=None, headers=None):
+            captured["url"] = url
+            captured["content"] = content
+            captured["headers"] = headers or {}
+            return _FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
     await c.upload_hero(file_key="FK", node_id="3302:522", png_bytes=b"\x89PNG-fake")
+
+    # MCP got the new param shape — no `assets`/`bytes` array.
     assert len(fake.calls) == 1
     name, args = fake.calls[0]
     assert name == "upload_assets"
-    assert args["fileKey"] == "FK"
-    # Asset goes inside assets[0] — confirm both nodeId and raw bytes survived.
-    assert args["assets"][0]["nodeId"] == "3302:522"
-    assert args["assets"][0]["bytes"] == b"\x89PNG-fake"
+    assert args == {"fileKey": "FK", "count": 1, "nodeId": "3302:522", "scaleMode": "FILL"}
+
+    # The raw PNG bytes went straight to the presigned URL with the right MIME.
+    assert captured["url"] == "https://figma-upload/short-lived"
+    assert captured["content"] == b"\x89PNG-fake"
+    assert captured["headers"].get("Content-Type") == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_upload_hero_raises_when_no_url() -> None:
+    """If MCP returns a result with no upload URL we must NOT silently
+    succeed — node should fall back to PIL with a clear error."""
+    c, fake = _client_with_fake_session()
+    fake.next_result = {}  # no url / uploadUrl / content
+    with pytest.raises(RuntimeError, match="figma_upload_no_url"):
+        await c.upload_hero(file_key="FK", node_id="3302:522", png_bytes=b"\x89PNG")
 
 
 @pytest.mark.asyncio

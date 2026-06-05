@@ -17,7 +17,9 @@ because the simpler shape is fine until parallel /new sessions exist.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -67,22 +69,38 @@ class FigmaMCPClient:
         self._session = None
 
     async def upload_hero(self, *, file_key: str, node_id: str, png_bytes: bytes) -> None:
-        """Upload hero PNG bytes and bind as fill on `node_id`. Serialised
-        with the client lock so concurrent sessions can't interleave."""
+        """Upload hero PNG and bind as fill on `node_id`.
+
+        Figma's upload_assets is a two-phase protocol: MCP returns a
+        short-lived presigned URL, and the caller POSTs the raw image bytes
+        to it. We do NOT pass bytes through MCP — that would force JSON
+        encoding of binary and fail with UnicodeDecodeError on the PNG
+        magic byte (0x89). Serialised with the client lock so concurrent
+        sessions can't interleave.
+        """
+        import httpx
+
         async with self._lock:
             assert self._session is not None, "FigmaMCPClient.connect() not called"
-            await self._session.call_tool(
+            result = await self._session.call_tool(
                 "upload_assets",
                 {
                     "fileKey": file_key,
-                    "assets": [
-                        {
-                            "nodeId": node_id,
-                            "bytes": png_bytes,
-                        }
-                    ],
+                    "count": 1,
+                    "nodeId": node_id,
+                    "scaleMode": "FILL",
                 },
             )
+        upload_url = _extract_url(result)
+        if not upload_url:
+            raise RuntimeError(f"figma_upload_no_url: result={result!r}")
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
+            resp = await http.post(
+                upload_url,
+                content=png_bytes,
+                headers={"Content-Type": "image/png"},
+            )
+            resp.raise_for_status()
 
     async def set_texts(
         self,
@@ -117,7 +135,12 @@ class FigmaMCPClient:
             assert self._session is not None, "FigmaMCPClient.connect() not called"
             await self._session.call_tool(
                 "use_figma",
-                {"fileKey": file_key, "code": code},
+                {
+                    "fileKey": file_key,
+                    "code": code,
+                    # `description` is required by the MCP tool schema.
+                    "description": "Resize_bot: set slogan/cta characters on template text nodes",
+                },
             )
 
     async def export_frame(
@@ -146,17 +169,82 @@ class FigmaMCPClient:
             return resp.content
 
 
+_URL_RE = re.compile(r'https?://[^\s\'"<>)\]]+')
+
+
 def _extract_url(result: Any) -> str | None:
-    """Pull the screenshot URL out of either {'url': ...} or {'content': [{'url': ...}]}.
-    Returns None if neither shape matches — caller raises."""
+    """Pull a URL out of an MCP tool result.
+
+    Real MCP CallToolResult is a Pydantic model whose `content` is a list
+    of TextContent (or similar). Each TextContent has `.text` carrying the
+    payload — for upload_assets that's a JSON blob with an upload URL, for
+    get_screenshot a human-readable string with the short-lived URL and a
+    curl snippet. We handle both, plus the legacy dict shape the unit
+    tests use ({'url': ...} / {'content': [{'url': ...}]}). Returns None
+    on miss — caller raises.
+    """
+    # 1) Direct dict shape (legacy fakes used in tests).
     if isinstance(result, dict):
         if isinstance(result.get("url"), str):
             return result["url"]
+        if isinstance(result.get("uploadUrl"), str):
+            return result["uploadUrl"]
         content = result.get("content")
-        if isinstance(content, list) and content and isinstance(content[0], dict):
-            u = content[0].get("url")
-            if isinstance(u, str):
-                return u
+    else:
+        # 2) Pydantic-style CallToolResult.content
+        content = getattr(result, "content", None)
+
+    if not isinstance(content, list):
+        return None
+
+    for block in content:
+        # 2a) Dict-shaped block carrying a URL directly (legacy fakes).
+        if isinstance(block, dict):
+            for key in ("url", "uploadUrl"):
+                v = block.get(key)
+                if isinstance(v, str):
+                    return v
+        # 2b) TextContent-style block — pull JSON or regex a URL out of .text
+        text = getattr(block, "text", None)
+        if text is None and isinstance(block, dict):
+            text = block.get("text")
+        if not isinstance(text, str):
+            continue
+        # Try JSON-decoded payload first (upload_assets returns structured).
+        try:
+            data = json.loads(text)
+        except (ValueError, TypeError):
+            data = None
+        url = _scan_dict_for_url(data)
+        if url:
+            return url
+        # Plain-text fallback (get_screenshot embeds the URL in prose).
+        m = _URL_RE.search(text)
+        if m:
+            return m.group(0)
+    return None
+
+
+def _scan_dict_for_url(data: Any) -> str | None:
+    """Walk a JSON-decoded MCP payload looking for an upload/screenshot URL.
+    Handles the common keys we've seen: 'url', 'uploadUrl', 'urls[]',
+    'uploads[].uploadUrl', 'assets[].url'."""
+    if not isinstance(data, dict):
+        return None
+    for key in ("url", "uploadUrl", "screenshotUrl", "downloadUrl"):
+        v = data.get(key)
+        if isinstance(v, str):
+            return v
+    urls = data.get("urls")
+    if isinstance(urls, list) and urls and isinstance(urls[0], str):
+        return urls[0]
+    for list_key in ("uploads", "assets"):
+        lst = data.get(list_key)
+        if isinstance(lst, list) and lst and isinstance(lst[0], dict):
+            for key in ("uploadUrl", "url"):
+                v = lst[0].get(key)
+                if isinstance(v, str):
+                    return v
     return None
 
 
