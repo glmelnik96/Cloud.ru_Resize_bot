@@ -1,5 +1,12 @@
 # Figma template spec (M3.2+)
 
+> **STATUS 2026-06-05 — ARCHITECTURALLY BROKEN.** The MCP write flow this
+> spec assumes (`upload_assets`, `use_figma`) does not exist on the local
+> Desktop MCP and is closed to third-party bots on the cloud MCP. Every
+> per-format call falls back to PIL. See [M3.2_BROKEN.md](./M3.2_BROKEN.md)
+> for root cause and redesign options. Keeping this document for repo
+> archaeology; do **not** treat it as current.
+
 Resize_bot renders ads by reusing master frames the design team already builds
 in Figma. Layer names stay free; the bot finds slots through a JSON manifest
 in this repo.
