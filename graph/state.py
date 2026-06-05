@@ -26,7 +26,7 @@ class AdBrief(BaseModel):
     channel: str = Field(description="tg_post | vk_ad | ig_story | yandex_promo | ...")
     formats: list[str] = Field(
         default_factory=list,
-        description="Slugs Figma-фреймов, например tg_post_1080x1350",
+        description="Slugs шаблонов из config/templates.json, например banner_240x400",
     )
     tone_hints: str | None = None
     constraints: list[str] = Field(
@@ -34,6 +34,10 @@ class AdBrief(BaseModel):
         description="Дисклеймеры, обязательные слова, запреты",
     )
     cta_preference: str | None = None
+    age_rating: str = Field(
+        default="0+",
+        description="Возрастная маркировка: 0+ | 6+ | 12+ | 16+ | 18+",
+    )
 
 
 # ----- Persona --------------------------------------------------------------
