@@ -29,6 +29,80 @@ from bot.sessions import Session, drop, get_active, put
 log = structlog.get_logger(__name__)
 
 
+# Per-node label shown to the user as the graph advances. Ordering here
+# matches builder.py wiring (parse_brief → derive_persona → … → render_all).
+# HITL nodes are absent because the runner replaces the status message with
+# the dedicated text/image approve prompt instead.
+_NODE_LABELS: dict[str, str] = {
+    "parse_brief": "Разбираю бриф",
+    "derive_persona": "Готовлю персон ЦА",
+    "generate_message_candidates": "Генерирую варианты текста",
+    "evaluate_as_persona_loop": "Оцениваю варианты глазами персон",
+    "route_image_style": "Подбираю стиль картинки",
+    "generate_image": "Генерирую hero-изображение",
+    "fill_templates_per_format": "Накладываю в Figma-фреймы",
+    "render_all": "Собираю ZIP",
+}
+_NODE_ORDER: list[str] = list(_NODE_LABELS.keys())
+
+
+async def _ensure_progress_message(app: Application, session: Session) -> None:
+    """Create the persistent 'Этап N/M: …' message on first use. We keep its
+    message_id on the Session so resume calls can keep editing the same one
+    instead of spamming new messages."""
+    if session.progress_message_id is not None:
+        return
+    msg = await app.bot.send_message(
+        chat_id=session.chat_id, text="Готовлюсь к генерации..."
+    )
+    session.progress_message_id = msg.message_id
+    put(app.bot_data, session)
+
+
+async def _edit_progress(app: Application, session: Session, node_name: str) -> None:
+    """Edit the status message to reflect the freshly-completed node.
+    Silently skips unknown nodes (HITL interrupts) and absorbs edit errors —
+    progress UI is best-effort, must never break the run."""
+    label = _NODE_LABELS.get(node_name)
+    if label is None or session.progress_message_id is None:
+        return
+    try:
+        idx = _NODE_ORDER.index(node_name) + 1
+    except ValueError:
+        return
+    text = f"Этап {idx}/{len(_NODE_ORDER)}: {label}…"
+    try:
+        await app.bot.edit_message_text(
+            chat_id=session.chat_id,
+            message_id=session.progress_message_id,
+            text=text,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.debug("progress_edit_failed", error=str(exc), node=node_name)
+
+
+async def _run_graph_with_progress(
+    app: Application, session: Session, payload, config: dict
+) -> dict:
+    """Stream the graph for one segment (initial run or resume) and feed each
+    completed node into _edit_progress. Returns an accumulated 'final' dict
+    that mirrors what ainvoke would have produced for the keys we care about
+    in _handle_terminal_or_interrupt."""
+    await _ensure_progress_message(app, session)
+    final: dict = {}
+    async for chunk in _graph(app).astream(payload, config=config, stream_mode="updates"):
+        if not isinstance(chunk, dict):
+            continue
+        if "__interrupt__" in chunk:
+            final["__interrupt__"] = chunk["__interrupt__"]
+            continue
+        for node_name, update in chunk.items():
+            if isinstance(update, dict):
+                final.update(update)
+            await _edit_progress(app, session, node_name)
+    return final
+
+
 # ----- bootstrap: compiled graph holder -------------------------------------
 
 
@@ -90,7 +164,7 @@ async def start_session(app: Application, session: Session) -> None:
     }
     put(app.bot_data, session)
     try:
-        final = await _graph(app).ainvoke(initial, config=_config(session))
+        final = await _run_graph_with_progress(app, session, initial, _config(session))
         await _handle_terminal_or_interrupt(app, session, final)
     except Exception as exc:  # noqa: BLE001
         log.exception("graph_start_failed", thread_id=session.thread_id)
@@ -103,8 +177,8 @@ async def start_session(app: Application, session: Session) -> None:
 
 async def _resume(app: Application, session: Session, decision: dict) -> None:
     try:
-        final = await _graph(app).ainvoke(
-            Command(resume=decision), config=_config(session)
+        final = await _run_graph_with_progress(
+            app, session, Command(resume=decision), _config(session)
         )
         await _handle_terminal_or_interrupt(app, session, final)
     except Exception as exc:  # noqa: BLE001

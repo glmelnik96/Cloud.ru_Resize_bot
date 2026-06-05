@@ -242,7 +242,11 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # run
-    await q.edit_message_text("Бриф принят. Запускаю генерацию (может занять 1–3 минуты)...")
+    await q.edit_message_text(
+        "Бриф принят. Запускаю генерацию.\n"
+        "Реальное время — 4–8 минут на компьютерные шаги плюс паузы на твои подтверждения "
+        "(текст + картинка). Отдельным сообщением буду отмечать пройденные этапы."
+    )
     session.status = "running"
     session.wizard_data["raw_brief"] = _render_raw_brief(session.wizard_data)
 

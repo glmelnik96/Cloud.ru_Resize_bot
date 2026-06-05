@@ -172,10 +172,19 @@ async def start_figma_mcp_client() -> FigmaMCPClient | None:
         log.info("figma_mcp_disabled", reason="FIGMA_MCP_URL empty")
         return None
     client = FigmaMCPClient(url)
+    # Hard 5s ceiling: if Figma Desktop is closed or the MCP handshake stalls
+    # (TCP accepted but no init reply), we must not block app boot. Without
+    # this wait_for, a hung session.initialize() takes down the whole bot
+    # because PTB's network loop cancels it and CancelledError doesn't
+    # inherit from Exception.
     try:
-        await client.connect()
-    except Exception as exc:  # noqa: BLE001 — boot must never crash on MCP
+        await asyncio.wait_for(client.connect(), timeout=5.0)
+    except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001 — boot must never crash on MCP
         log.warning("figma_mcp_unavailable", url=url, error=str(exc), error_type=type(exc).__name__)
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
         return None
     _client_handle = client
     log.info("figma_mcp_ready", url=url)

@@ -25,6 +25,7 @@ COPY graph/ ./graph/
 COPY agents/ ./agents/
 COPY prompts/ ./prompts/
 COPY infra/ ./infra/
+COPY config/ ./config/
 COPY phygital_vendor/ ./phygital_vendor/
 
 RUN mkdir -p /data/user_data /data/traces /data/images /data/renders /data/zips /data/phygital_storage

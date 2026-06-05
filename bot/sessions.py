@@ -22,6 +22,8 @@ class Session:
     status: str = "wizard"  # wizard | running | awaiting_hitl | awaiting_refine | awaiting_image_hitl | awaiting_image_refine | done | cancelled
     wizard_data: dict[str, Any] = field(default_factory=dict)
     hitl_message_id: int | None = None
+    # Single message we keep edit'ing through the run to show "Этап N/M: ..." to user.
+    progress_message_id: int | None = None
     prior_variant: dict[str, Any] | None = None
 
 
