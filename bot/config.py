@@ -13,6 +13,12 @@ def _parse_user_ids(raw: str) -> frozenset[int]:
     return frozenset(int(x.strip()) for x in raw.split(",") if x.strip())
 
 
+def _parse_bool(raw: str | None, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -26,6 +32,13 @@ class Settings:
 
     log_level: str
     traces_dir: str
+
+    # M3.4: bot-to-bot delegation of hero image generation to @Cloud_Phygital_bot.
+    # When use_phygital_render is False, the legacy HITL upload path is used.
+    # phygital_bot_username is the @-handle without the leading @.
+    use_phygital_render: bool
+    phygital_bot_username: str
+    phygital_request_timeout_s: int
 
 
 @lru_cache(maxsize=1)
@@ -43,4 +56,7 @@ def get_settings() -> Settings:
         redis_url=os.environ.get("REDIS_URL", "redis://redis:6379/0"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         traces_dir=os.environ.get("TRACES_DIR", "/data/traces"),
+        use_phygital_render=_parse_bool(os.environ.get("USE_PHYGITAL_RENDER"), default=False),
+        phygital_bot_username=os.environ.get("PHYGITAL_BOT_USERNAME", "Cloud_Phygital_bot").lstrip("@"),
+        phygital_request_timeout_s=int(os.environ.get("PHYGITAL_REQUEST_TIMEOUT_S", "600")),
     )

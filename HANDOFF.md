@@ -8,7 +8,7 @@ Telegram-бот для **audience-driven генерации рекламных �
 
 **Объёмы:** 10/день MVP → 100/день целевой.
 
-**Статус (2026-06-05):** M3.3 — Phygital и Figma MCP **выкинуты** (см. `docs/archive/M3.2_BROKEN-2026-06-05.md` про тупик с Figma MCP write-flow). Hero рисует юзер вручную, бот только пишет prompt и компонует макет.
+**Статус (2026-06-07):** **M3.4 done** — hero-картинка делегируется в @Cloud_Phygital_bot через **bot-to-bot Telegram API 10.0** (Render 3:4 @2K на Gemini+Nano Banana). Юзер видит только «Запрашиваю hero…» и получает готовый ZIP — никаких копипастов промпта в чужие генераторы. При любой ошибке/таймауте — fallback на старый HITL upload-флоу. Поведение управляется флагом `USE_PHYGITAL_RENDER`. Если он `false`, работает M3.3-флоу: юзер сам генерит hero и шлёт в чат.
 
 ## 2. Стек
 
@@ -34,7 +34,10 @@ Telegram-бот для **audience-driven генерации рекламных �
 5. `hitl_text_approve` — `interrupt()`, inline `[OK, делать картинку]/[Перегенерить]/[Доработать]/[Отменить]`.
 6. `route_image_style` — детерминированный routing по brief (photo / render / isometric).
 7. `generate_image_prompt` — GLM-5.1 thinking-OFF, temp=0.5. Outputs EN-paragraph (40-90 слов) под image_style. Soft validators: word-count band, cyrillic guard, "no text/no letters" required phrase. Юзеру отдаётся в TG как markdown-code-block для копи-паста.
-8. `hitl_image_upload` — `interrupt()`. Ждёт PHOTO или Document с `image/*` MIME (latest-wins, status flip → "running" перед resume). 24-часовой timeout → cancel + TG msg "Время истекло, запусти /new". Resume contract: `{action: upload, local_path}` / `{action: cancel}` / `{action: timeout}`.
+8. `hitl_image_upload` — `interrupt()`. Двойная диспетчеризация в `bot/graph_runner.py:_handle_terminal_or_interrupt`:
+   - **`USE_PHYGITAL_RENDER=true` (M3.4 default):** `_request_phygital_render` шлёт `@b2b render 3:4 k2 corr=<8hex>\n\n<EN prompt>` на `@{PHYGITAL_BOT_USERNAME}`. Ждёт `reply_photo` с caption `@b2b OK corr=<id>` (`PHYGITAL_REQUEST_TIMEOUT_S`, дефолт 1200с / 20 мин). На успех — сохраняет bytes в `/data/heroes/<thread>_<ts>_b2b.jpg` и резюмит граф как при ручной загрузке. На `@b2b ERROR corr=<id> reason=<code>`, таймаут, send-failure — fallback в HITL upload (юзер шлёт hero руками). Pending Future-ы лежат в `app.bot_data[B2B_PENDING_KEY]`, ключ — corr id.
+   - **`USE_PHYGITAL_RENDER=false`:** старый M3.3-флоу — `_render_image_upload` показывает EN prompt в чате, юзер генерит сам, шлёт PHOTO или Document с `image/*` MIME (latest-wins, status flip → "running" перед resume). 24-часовой timeout → cancel + TG msg.
+   - Resume contract одинаков для обоих путей: `{action: upload, local_path, style?, prompt?}` / `{action: cancel}` / `{action: timeout}`.
 9. `fill_templates_per_format` — локальный PIL композер. Для каждого slug из `brief.formats` зовёт `infra.composer.compose(template, hero, slogan, cta, age_rating)` → PNG. Один глобальный `winner.slogan`, авто-shrink текста при overflow.
 10. `render_all` — собирает PNG'и в `state.renders` (без удалённого rendering — композер уже отдал bytes).
 11. `zip_and_send` — ZIP + summary + `[Сделать вариант B (A/B)]`.
@@ -183,6 +186,17 @@ Resize_bot/
   - deps выкинуты: `playwright`, `loguru`, `langchain-mcp-adapters`, `mcp`
 
 **DoD M3.3:** реальный brief → winner → EN prompt в чат → юзер шлёт PNG → PIL композер → ZIP с N форматами → TG. 76 unit+agent тестов зелёные.
+
+- **M3.4 (current, done 2026-06-07):** **bot-to-bot Telegram-делегация hero-картинки в @Cloud_Phygital_bot** через Bot API 10.0 (8 мая 2026). Оба бота включают «Bot-to-Bot Communication Mode» в BotFather, наш слышит ответы соседнего через carve-out в `whitelist_gate` (user.is_bot + username == `PHYGITAL_BOT_USERNAME`).
+  - **Wire-протокол:** request `@b2b render 3:4 k2 corr=<8hex>\n\n<EN prompt>` → success `reply_photo` с caption `@b2b OK corr=<id>` → error `@b2b ERROR corr=<id> reason=<short_code>`. `corr` — 4-байтовый hex, обязательно эхо в ответе.
+  - **Реализация на нашей стороне:** `bot/graph_runner.py` — `_request_phygital_render` (отправка запроса, ожидание Future через `asyncio.wait_for`), `on_phygital_reply` (MessageHandler на group=-2, строго ДО `whitelist_gate`), `B2BError`, `B2B_PENDING_KEY` registry. `bot/config.py` — `use_phygital_render`/`phygital_bot_username`/`phygital_request_timeout_s`. `bot/app.py` — `whitelist_gate` carve-out + глобальный `cmd_cancel` (поднят на app-level, чтобы работал из любого состояния — раньше был только fallback внутри wizard ConversationHandler).
+  - **Реализация на стороне Phygital-bot:** `bot/b2b.py` (b2b_handler с regex-парсером, semaphore-ограниченный пул, `run_brand_text2img(variant="render", model_name="v3_1", ratio="3:4", resolution="k2")`, retry-loop для safety scrubbing уже встроен в workflow). Регистрация на `group=-1` с `ApplicationHandlerStop`, чтобы не утечь в menu/conv handlers. Whitelist через `B2B_BOT_WHITELIST` env-var.
+  - **Aspect ratio выбор:** 3:4 @ 2K — компромисс между вертикальными баннерами (240×400 ≈ 0.6, 300×500 ≈ 0.6) и горизонтальным 300×250 (≈ 1.2). Hero рисует abstract environment, обрезка по бокам не критична. Один hero на креатив, PIL потом ресайзит в 7 форматов.
+  - **Структурные логи** (structlog) с corr/thread_id/elapsed_ms: `b2b_sent` / `b2b_ok` / `b2b_error` / `b2b_timeout` / `b2b_send_failed` / `b2b_save_failed` / `b2b_reply_unknown_corr` / `b2b_skip_empty_prompt`.
+  - **Тесты:** `tests/unit/test_b2b_phygital.py` — 10 тестов на regex (OK/ERROR happy + corner cases) и handler-coroutine (happy path с Future-resolution, timeout, B2BError, empty prompt). Все 60 unit-тестов зелёные.
+  - **Что НЕ сделано в M3.4 и не нужно:** ни REST, ни sidecar, ни MCP — всё через TG. Не сохраняем recipe на стороне Phygital — это служебный одноразовый канал.
+
+**DoD M3.4:** floor — `/new` с включённым `USE_PHYGITAL_RENDER=true` → wizard → text approve → бот сам отправляет запрос соседнему боту → получает hero в течение 20 мин → накладывает → ZIP. Если что-то отвалится (timeout, ERROR, send-fail) — пользователь не теряет сессию, видит «Переключаюсь на ручную загрузку» и старый EN-prompt в чате. **Подтверждено в проде 2026-06-07.**
 
 ### M4 — A/B + drafts + admin
 

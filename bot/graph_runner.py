@@ -14,6 +14,9 @@ Lifecycle:
 from __future__ import annotations
 
 import asyncio
+import re
+import secrets
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -22,17 +25,36 @@ from langgraph.types import Command
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
+from bot.config import get_settings
 from bot.sessions import Session, drop, get_active, put
 
 _HEROES_DIR = Path("/data/heroes")
 _IMAGE_UPLOAD_TIMEOUT_S = 86400  # 24h
 _IMAGE_UPLOAD_TIMEOUTS_KEY = "_image_upload_timeouts"
+
+# M3.4 bot-to-bot delegation to @Cloud_Phygital_bot. Keyed by 8-hex corr id.
+B2B_PENDING_KEY = "b2b_pending"
+_B2B_OK_RE = re.compile(r"^@b2b\s+OK\s+corr=(?P<corr>[a-f0-9]{4,16})\s*$")
+_B2B_ERROR_RE = re.compile(
+    r"^@b2b\s+ERROR\s+corr=(?P<corr>[a-f0-9]{4,16}|unknown)"
+    r"(?:\s+reason=(?P<reason>\S+))?\s*$"
+)
+
+
+class B2BError(Exception):
+    """Raised when the Phygital bot returns @b2b ERROR for our request."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
 
 log = structlog.get_logger(__name__)
 
@@ -206,7 +228,16 @@ async def _handle_terminal_or_interrupt(
         payload = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
         kind = payload.get("kind") if isinstance(payload, dict) else None
         if kind == "image_upload":
-            await _render_image_upload(app, session, payload)
+            if get_settings().use_phygital_render:
+                # Delegate to @Cloud_Phygital_bot in the background; the task
+                # itself resumes the graph on success or falls back to manual
+                # HITL upload on error/timeout. We do not await here — the
+                # runner returns to PTB's event loop.
+                app.create_task(
+                    _request_phygital_render(app, session, payload)
+                )
+            else:
+                await _render_image_upload(app, session, payload)
         else:
             await _render_text_approve(app, session, payload)
         return
@@ -396,6 +427,167 @@ async def _render_image_upload(
 
     # schedule 24h timeout
     _schedule_image_upload_timeout(app, session, image_style, image_prompt)
+
+
+async def _request_phygital_render(
+    app: Application, session: Session, payload: dict
+) -> None:
+    """Bot-to-bot delegation of hero generation to @{phygital_bot_username}.
+
+    Wire protocol (in lockstep with the Phygital-bot b2b handler):
+      Request:  @b2b render 3:4 k2 corr=<8hex>\\n\\n<prompt>
+      Success:  reply_photo with caption "@b2b OK corr=<id>"
+      Error:    text "@b2b ERROR corr=<id> reason=<short_code>"
+
+    On success we save the bytes to /data/heroes and resume the graph as if
+    the user had uploaded manually (action="upload", local_path=...). On any
+    failure (timeout, ERROR reply, send failure) we fall back to the legacy
+    HITL upload prompt — safety_blocked included: per design, the user
+    handles re-prompting by uploading a hero manually rather than running a
+    second LLM cycle.
+    """
+    settings = get_settings()
+    image_prompt = (payload.get("image_prompt") or "").strip()
+    image_style = payload.get("image_style") or "render"
+
+    if not image_prompt:
+        log.warning("b2b_skip_empty_prompt", thread_id=session.thread_id)
+        await _render_image_upload(app, session, payload)
+        return
+
+    corr = secrets.token_hex(4)
+    pending = app.bot_data.setdefault(B2B_PENDING_KEY, {})
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[bytes] = loop.create_future()
+    pending[corr] = {
+        "future": fut,
+        "thread_id": session.thread_id,
+        "user_id": session.user_id,
+    }
+
+    header = f"@b2b render 3:4 k2 corr={corr}"
+    request_text = f"{header}\n\n{image_prompt}"
+    target = f"@{settings.phygital_bot_username}"
+
+    await app.bot.send_message(
+        chat_id=session.chat_id,
+        text=(
+            "Запрашиваю hero-картинку у @"
+            f"{settings.phygital_bot_username} (render 3:4 @2K). "
+            f"Ожидание до {settings.phygital_request_timeout_s // 60} мин. "
+            "Если что-то пойдёт не так — попрошу загрузить вручную."
+        ),
+    )
+
+    started = time.monotonic()
+    try:
+        await app.bot.send_message(chat_id=target, text=request_text)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("b2b_send_failed", thread_id=session.thread_id, corr=corr)
+        pending.pop(corr, None)
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                f"Не удалось отправить запрос боту-генератору ({type(exc).__name__}). "
+                "Переключаюсь на ручную загрузку hero-картинки."
+            ),
+        )
+        await _render_image_upload(app, session, payload)
+        return
+
+    log.info(
+        "b2b_sent",
+        thread_id=session.thread_id,
+        corr=corr,
+        variant="render",
+        ratio="3:4",
+        resolution="k2",
+        target=target,
+        prompt_chars=len(image_prompt),
+    )
+
+    try:
+        image_bytes = await asyncio.wait_for(
+            fut, timeout=settings.phygital_request_timeout_s
+        )
+    except asyncio.TimeoutError:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        log.warning(
+            "b2b_timeout", thread_id=session.thread_id, corr=corr, elapsed_ms=elapsed_ms
+        )
+        pending.pop(corr, None)
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                f"Бот-генератор не ответил за {settings.phygital_request_timeout_s // 60} мин. "
+                "Переключаюсь на ручную загрузку."
+            ),
+        )
+        await _render_image_upload(app, session, payload)
+        return
+    except B2BError as exc:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        log.warning(
+            "b2b_error",
+            thread_id=session.thread_id,
+            corr=corr,
+            reason=exc.reason,
+            elapsed_ms=elapsed_ms,
+        )
+        pending.pop(corr, None)
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                f"Бот-генератор вернул ошибку: {exc.reason}. "
+                "Переключаюсь на ручную загрузку hero-картинки."
+            ),
+        )
+        await _render_image_upload(app, session, payload)
+        return
+    finally:
+        pending.pop(corr, None)
+
+    # Success: persist bytes and resume the graph as if user uploaded.
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    try:
+        _HEROES_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        out = _HEROES_DIR / f"{session.thread_id}_{ts}_b2b.jpg"
+        out.write_bytes(image_bytes)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("b2b_save_failed", thread_id=session.thread_id, corr=corr)
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                f"Картинка пришла, но не удалось сохранить ({type(exc).__name__}). "
+                "Переключаюсь на ручную загрузку."
+            ),
+        )
+        await _render_image_upload(app, session, payload)
+        return
+
+    log.info(
+        "b2b_ok",
+        thread_id=session.thread_id,
+        corr=corr,
+        elapsed_ms=elapsed_ms,
+        bytes=len(image_bytes),
+        path=str(out),
+    )
+    await app.bot.send_message(
+        chat_id=session.chat_id,
+        text="Hero-картинка получена. Накладываю в шаблоны...",
+    )
+
+    session.status = "running"
+    put(app.bot_data, session)
+    decision = {
+        "action": "upload",
+        "local_path": str(out),
+        "style": image_style,
+        "prompt": image_prompt,
+    }
+    await _resume(app, session, decision)
 
 
 def _schedule_image_upload_timeout(
@@ -646,7 +838,86 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # full B-variant orchestration is M4 scope
 
 
+async def on_phygital_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inbound @b2b OK/ERROR from @{phygital_bot_username}.
+
+    Photo reply with caption "@b2b OK corr=<id>" → resolve Future with bytes.
+    Text reply "@b2b ERROR corr=<id> reason=<code>" → set Future exception.
+
+    Anything else from this bot is ignored (defensive — Phygital-bot might
+    in the future drop status pings here even though spec says it must not).
+    """
+    msg = update.message
+    if msg is None:
+        return
+    user = update.effective_user
+    if user is None or not user.is_bot:
+        return
+    settings = get_settings()
+    if (user.username or "").lower() != settings.phygital_bot_username.lower():
+        return
+
+    pending = context.application.bot_data.get(B2B_PENDING_KEY) or {}
+
+    # Photo with @b2b OK caption.
+    if msg.photo:
+        caption = (msg.caption or "").strip()
+        m = _B2B_OK_RE.match(caption)
+        if m is None:
+            log.warning("b2b_reply_photo_no_ok_caption", caption=caption[:120])
+            raise ApplicationHandlerStop
+        corr = m.group("corr")
+        entry = pending.pop(corr, None)
+        if entry is None:
+            log.warning("b2b_reply_unknown_corr", corr=corr, kind="ok")
+            raise ApplicationHandlerStop
+        fut: asyncio.Future = entry["future"]
+        if fut.done():
+            log.debug("b2b_reply_future_already_done", corr=corr)
+            raise ApplicationHandlerStop
+        # Download the largest PhotoSize as raw bytes.
+        try:
+            file_id = msg.photo[-1].file_id
+            tg_file = await context.application.bot.get_file(file_id)
+            buf = await tg_file.download_as_bytearray()
+            fut.set_result(bytes(buf))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("b2b_reply_download_failed", corr=corr)
+            fut.set_exception(B2BError(f"download_failed:{type(exc).__name__}"))
+        raise ApplicationHandlerStop
+
+    # Text @b2b ERROR ...
+    if msg.text:
+        m = _B2B_ERROR_RE.match(msg.text.strip())
+        if m is None:
+            log.warning("b2b_reply_unexpected_text", text=msg.text[:120])
+            raise ApplicationHandlerStop
+        corr = m.group("corr")
+        reason = m.group("reason") or "unspecified"
+        entry = pending.pop(corr, None)
+        if entry is None:
+            log.warning("b2b_reply_unknown_corr", corr=corr, kind="error", reason=reason)
+            raise ApplicationHandlerStop
+        fut = entry["future"]
+        if not fut.done():
+            fut.set_exception(B2BError(reason))
+        raise ApplicationHandlerStop
+
+
 def register_runner_handlers(app: Application) -> None:
+    # b2b reply handler runs at group=-2 — strictly before whitelist_gate
+    # (group=-1). Only one handler per group runs, so adding it to -1
+    # alongside whitelist_gate would mean it never executes. At -2 it gets
+    # first look: returns silently for non-Phygital updates (letting the
+    # gate decide), or processes the @b2b reply and stops propagation via
+    # ApplicationHandlerStop.
+    app.add_handler(
+        MessageHandler(
+            filters.ALL,
+            on_phygital_reply,
+        ),
+        group=-2,
+    )
     app.add_handler(CallbackQueryHandler(on_hitl_callback, pattern=r"^hitl:(approve|regenerate|refine|cancel)$"))
     app.add_handler(CallbackQueryHandler(on_ab_callback, pattern=r"^ab:"))
     app.add_handler(
