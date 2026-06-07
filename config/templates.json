@@ -1,6 +1,6 @@
 {
-  "version": "0.3.0",
-  "comment": "M3.3: PIL composition over layered PNG. Source frames: Gleb's boards (Figma) nodes 3330:10477/10497/10531. brand_area_line PNGs exported manually from Figma.",
+  "version": "0.6.0",
+  "comment": "M3.3: PIL composition over layered PNG. Source frames: Gleb's boards (Figma) nodes 3330:10477/10497/10531. brand_area_line PNGs exported manually from Figma. v0.6.0 — slogan plate follows the SHAPE of each line (per_line_highlight) like the source Cloud.ru design — not a single uniform rect. padding_y is tuned so consecutive plates overlap vertically and look like one continuous black ribbon when lines stack.",
   "templates": {
     "banner_240x400": {
       "width": 240,
@@ -28,50 +28,34 @@
         {
           "type": "text",
           "slot": "slogan",
-          "x": 0,
-          "y": 69,
-          "width": 218,
-          "height": 70,
+          "x": 14,
+          "y": 60,
+          "width": 212,
+          "height": 90,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 20,
+          "font_size_max": 19,
           "font_size_min": 14,
-          "line_height": 1.0,
+          "line_height": 1.05,
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "top",
           "max_lines": 3,
           "per_line_highlight": {
             "color": "#222222",
-            "padding_x": 6,
-            "padding_y": 2,
+            "padding_x": 8,
+            "padding_y": 6,
             "radius": 0
           },
           "z": 30
         },
         {
           "type": "text",
-          "slot": "age_rating",
-          "x": 200,
-          "y": 314,
-          "width": 36,
-          "height": 14,
-          "font_family": "SBSansDisplay",
-          "font_weight": "Regular",
-          "font_size_max": 11,
-          "color": "#222222",
-          "align_h": "right",
-          "align_v": "top",
-          "max_lines": 1,
-          "z": 40
-        },
-        {
-          "type": "text",
           "slot": "cta",
           "x": 13,
-          "y": 352,
+          "y": 360,
           "width": 213,
-          "height": 33,
+          "height": 30,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
           "font_size_max": 15,
@@ -81,9 +65,25 @@
           "max_lines": 1,
           "background": {
             "color": "#CFF500",
-            "radius": 0
+            "radius": 4
           },
           "z": 50
+        },
+        {
+          "type": "text",
+          "slot": "age_rating",
+          "x": 200,
+          "y": 332,
+          "width": 36,
+          "height": 14,
+          "font_family": "SBSansDisplay",
+          "font_weight": "Regular",
+          "font_size_max": 11,
+          "color": "#FFFFFF",
+          "align_h": "right",
+          "align_v": "top",
+          "max_lines": 1,
+          "z": 40
         }
       ]
     },
@@ -113,50 +113,34 @@
         {
           "type": "text",
           "slot": "slogan",
-          "x": 0,
-          "y": 101,
-          "width": 180,
-          "height": 58,
+          "x": 14,
+          "y": 80,
+          "width": 200,
+          "height": 84,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
           "font_size_max": 17,
           "font_size_min": 12,
-          "line_height": 1.0,
+          "line_height": 1.05,
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "top",
           "max_lines": 3,
           "per_line_highlight": {
             "color": "#222222",
-            "padding_x": 6,
-            "padding_y": 2,
+            "padding_x": 8,
+            "padding_y": 5,
             "radius": 0
           },
           "z": 30
         },
         {
           "type": "text",
-          "slot": "age_rating",
-          "x": 260,
-          "y": 168,
-          "width": 36,
-          "height": 14,
-          "font_family": "SBSansDisplay",
-          "font_weight": "Regular",
-          "font_size_max": 11,
-          "color": "#272727",
-          "align_h": "right",
-          "align_v": "top",
-          "max_lines": 1,
-          "z": 40
-        },
-        {
-          "type": "text",
           "slot": "cta",
           "x": 14,
-          "y": 205,
+          "y": 211,
           "width": 272,
-          "height": 35,
+          "height": 32,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
           "font_size_max": 15,
@@ -166,9 +150,25 @@
           "max_lines": 1,
           "background": {
             "color": "#CFF500",
-            "radius": 0
+            "radius": 4
           },
           "z": 50
+        },
+        {
+          "type": "text",
+          "slot": "age_rating",
+          "x": 260,
+          "y": 184,
+          "width": 36,
+          "height": 14,
+          "font_family": "SBSansDisplay",
+          "font_weight": "Regular",
+          "font_size_max": 11,
+          "color": "#FFFFFF",
+          "align_h": "right",
+          "align_v": "top",
+          "max_lines": 1,
+          "z": 40
         }
       ]
     },
@@ -198,62 +198,62 @@
         {
           "type": "text",
           "slot": "slogan",
-          "x": 0,
-          "y": 106,
-          "width": 282,
-          "height": 90,
+          "x": 14,
+          "y": 80,
+          "width": 272,
+          "height": 110,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 26,
-          "font_size_min": 18,
-          "line_height": 1.0,
+          "font_size_max": 22,
+          "font_size_min": 16,
+          "line_height": 1.05,
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "top",
           "max_lines": 3,
           "per_line_highlight": {
             "color": "#222222",
-            "padding_x": 8,
-            "padding_y": 2,
+            "padding_x": 10,
+            "padding_y": 7,
             "radius": 0
           },
           "z": 30
         },
         {
           "type": "text",
-          "slot": "age_rating",
-          "x": 250,
-          "y": 388,
-          "width": 44,
-          "height": 18,
-          "font_family": "SBSansDisplay",
-          "font_weight": "Regular",
-          "font_size_max": 14,
-          "color": "#424242",
-          "align_h": "right",
-          "align_v": "top",
-          "max_lines": 1,
-          "z": 40
-        },
-        {
-          "type": "text",
           "slot": "cta",
           "x": 17,
-          "y": 441,
+          "y": 446,
           "width": 266,
-          "height": 38,
+          "height": 36,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 14,
+          "font_size_max": 16,
           "color": "#252525",
           "align_h": "center",
           "align_v": "middle",
           "max_lines": 1,
           "background": {
             "color": "#CFF500",
-            "radius": 0
+            "radius": 4
           },
           "z": 50
+        },
+        {
+          "type": "text",
+          "slot": "age_rating",
+          "x": 250,
+          "y": 420,
+          "width": 44,
+          "height": 18,
+          "font_family": "SBSansDisplay",
+          "font_weight": "Regular",
+          "font_size_max": 13,
+          "color": "#FFFFFF",
+          "align_h": "right",
+          "align_v": "top",
+          "max_lines": 1,
+          "z": 40
         }
       ]
     }

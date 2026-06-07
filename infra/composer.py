@@ -79,17 +79,23 @@ def _fit_text(
         if layer.font_size_min
         else [layer.font_size_max]
     )
+    # Text is wrapped within the inner padding of the layer (and, if a
+    # per-line highlight is also drawn, further inset by the highlight's
+    # padding so the plate cannot spill outside).
+    h_pad = layer.per_line_highlight.padding_x if layer.per_line_highlight else 0
+    wrap_width = max(1, layer.width - 2 * layer.padding_x - 2 * h_pad)
+    inner_h = max(1, layer.height - 2 * layer.padding_y)
     last_font = None
     last_lines: list[str] = []
     for size in sizes:
         font = ImageFont.truetype(str(fp), size=size)
-        lines = _wrap_to_width(text, font, layer.width)
+        lines = _wrap_to_width(text, font, wrap_width)
         last_font = font
         last_lines = lines
         if len(lines) <= layer.max_lines:
             # Also need vertical fit
             line_h = size * layer.line_height
-            if line_h * len(lines) <= layer.height + 1:
+            if line_h * len(lines) <= inner_h + 1:
                 return font, lines, size
     # Did not fit fully; return smallest we tried, clipped lines.
     assert last_font is not None
@@ -146,15 +152,13 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> None:
     line_h = used_size * layer.line_height
     block_h = line_h * len(lines)
 
-    # vertical placement
-    if layer.align_v == "top":
-        y0 = layer.y
-    elif layer.align_v == "middle":
-        y0 = layer.y + (layer.height - block_h) // 2
-    else:  # bottom
-        y0 = layer.y + layer.height - block_h
+    # Inner content box, inset by padding.
+    inner_x0 = layer.x + layer.padding_x
+    inner_y0 = layer.y + layer.padding_y
+    inner_w = layer.width - 2 * layer.padding_x
+    inner_h = layer.height - 2 * layer.padding_y
 
-    # full-rect background (CTA plate)
+    # full-rect background (CTA plate / slogan plate)
     if layer.background is not None:
         bg = layer.background
         box = (layer.x, layer.y, layer.x + layer.width, layer.y + layer.height)
@@ -163,19 +167,37 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> None:
         else:
             draw.rectangle(box, fill=bg.color)
 
+    # vertical placement within inner box
+    if layer.align_v == "top":
+        y0 = inner_y0
+    elif layer.align_v == "middle":
+        y0 = inner_y0 + (inner_h - block_h) // 2
+    else:  # bottom
+        y0 = inner_y0 + inner_h - block_h
+
+    # Precompute per-line geometry so we can draw ALL plates first and ALL
+    # text afterwards. Otherwise, when `line_height < 1` (or descenders push
+    # plates to overlap), plate N+1 paints over line N's already-drawn text
+    # and chops the bottom off the previous line's glyphs.
+    line_geom: list[tuple[float, float, str]] = []
     for i, line in enumerate(lines):
         line_w = font.getlength(line)
         if layer.align_h == "left":
-            x = layer.x
+            x = inner_x0
         elif layer.align_h == "center":
-            x = layer.x + (layer.width - line_w) // 2
+            x = inner_x0 + (inner_w - line_w) // 2
         else:  # right
-            x = layer.x + layer.width - line_w
+            x = inner_x0 + inner_w - line_w
         y = y0 + i * line_h
+        line_geom.append((x, y, line))
 
-        # per-line highlight rectangle
-        if layer.per_line_highlight is not None and line.strip():
-            h = layer.per_line_highlight
+    # Pass 1: all per-line highlight plates.
+    if layer.per_line_highlight is not None:
+        h = layer.per_line_highlight
+        for x, y, line in line_geom:
+            if not line.strip():
+                continue
+            line_w = font.getlength(line)
             box = (
                 x - h.padding_x,
                 y - h.padding_y,
@@ -187,6 +209,8 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> None:
             else:
                 draw.rectangle(box, fill=h.color)
 
+    # Pass 2: all text glyphs (on top of any plates).
+    for x, y, line in line_geom:
         draw.text((x, y), line, font=font, fill=layer.color)
 
 

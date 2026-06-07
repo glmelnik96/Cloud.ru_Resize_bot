@@ -156,7 +156,7 @@ def test_negative_dimensions_rejected():
 
 def test_real_manifest_loads():
     manifest = load_manifest(REAL_MANIFEST)
-    assert manifest.version == "0.3.0"
+    assert manifest.version == "0.6.0"
     assert set(manifest.templates) == {
         "banner_240x400",
         "banner_300x250",

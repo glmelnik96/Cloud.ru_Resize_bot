@@ -182,7 +182,7 @@ class GraphState(TypedDict, total=False):
     image_prompt: str | None  # EN prompt shown to the user (generate_image_prompt)
     image: dict | None  # GeneratedImage.model_dump(), filled after user upload
     # ----- Render stage (M3) ------------------------------------------------
-    rendered_files: list[dict]  # [{"format": "tg_post_1080x1350", "path": "/data/..."}, ...]
+    rendered_files: list[dict]  # [{"format": "banner_300x250", "path": "/data/..."}, ...]
     rendered_zip_path: str | None
     cancelled: bool
     error: str | None

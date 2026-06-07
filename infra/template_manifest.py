@@ -82,6 +82,16 @@ class TextLayer(BaseModel):
     max_lines: int = Field(default=3, gt=0)
     per_line_highlight: PerLineHighlight | None = None
     background: BoxBackground | None = None
+    padding_x: int = Field(
+        default=0,
+        description="Inner horizontal padding inside the layer rect — text is "
+        "wrapped and aligned within (x+padding_x .. x+width-padding_x).",
+    )
+    padding_y: int = Field(
+        default=0,
+        description="Inner vertical padding inside the layer rect — text block "
+        "is placed within (y+padding_y .. y+height-padding_y).",
+    )
     z: int = 0
 
 

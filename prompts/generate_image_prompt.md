@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.1.0
+version: 0.2.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -21,8 +21,9 @@ status: m3
 > prompt is shown to the user inside Telegram so they can paste it into
 > Midjourney / DALL-E / Stable Diffusion / Nano Banana and upload the
 > resulting PNG back. The image is the visual half of one ad creative; the
-> slogan and CTA are baked in by the PIL composer on top of it later, so the
-> generated image MUST NOT contain any text of its own.
+> slogan, CTA and any brand marks are baked in on top of it later by a
+> separate composition stage, so the generated image MUST stay clean of
+> any text or brand artefacts.
 
 ## System message
 
@@ -34,36 +35,73 @@ style category (photo | render | isometric). Produce ONE single-paragraph
 English prompt that a designer can paste straight into Midjourney,
 DALL-E, Stable Diffusion or Nano Banana.
 
+THE PROMPT IS FOR THE HERO IMAGE ONLY — NOT THE WHOLE AD
+Logos, slogans, CTA buttons, brand bars, age-rating marks, watermarks
+and any other brand-identifying chrome are added by a downstream
+composition stage. Your prompt MUST describe ONLY the visual scene
+behind those overlays. Do not mention Cloud.ru, do not describe a
+logo or text panel, do not lay out a "banner with X in the corner".
+The image is just the photograph / render / illustration that the
+brand strip and copy will later sit on top of.
+
 OUTPUT REQUIREMENTS
-- prompt: one paragraph, English, 40-90 words. No lists, no markdown,
+- prompt: one paragraph, English, 50-100 words. No lists, no markdown,
   no quotes around the prompt.
-- rationale: one sentence, English, explaining why this composition fits
-  the brief. Logged only, not shown to the user.
+- rationale: one sentence, English, explaining why this composition
+  fits the brief. Logged only, not shown to the user.
+
+THE PROMPT MUST READ LIKE AN ADVERTISING VISUAL, NOT A STOCK PHOTO
+The hero must visualise the SELLING MESSAGE of brief.product + the
+winner.hook_angle — not just a generic scene of the persona's office.
+Anchor it in a concrete, specific situation that a viewer would
+instantly read as "this picture is about <product benefit>".
+
+Examples of the kind of specificity expected:
+- A developer's hand pulling a single clean ribbon-cable out of a
+  tangled bundle (for "API без костылей" / removing complexity).
+- A perfectly-stacked tower of identical white server modules vs one
+  module being lifted out and replaced in a single motion (for fast
+  provisioning).
+- An isometric view of three parallel pipelines, each rendering the
+  same shape simultaneously (for parallel compute).
+Never settle for "a developer at a laptop" or "a clean office desk"
+unless that scene visibly carries the product metaphor.
 
 PROMPT MUST INCLUDE
-1. Subject — concrete noun phrase tied to brief.product. Photo: people,
-   workplace scene, or staged real-world setup. Render: a clean 3D
-   object on a studio surface. Isometric: a flat/isometric vector scene
+1. A concrete subject and situation tied to brief.product AND the
+   winner.hook_angle (per the examples above). Photo: real people or
+   objects in a staged scene. Render: a clean 3D still life that
+   embodies the metaphor. Isometric: a flat/isometric vector scene
    of services, flows, or architecture.
 2. Style modifiers consistent with the chosen image_style category.
-   Photo: natural light, documentary, shallow depth of field, 50mm lens.
-   Render: studio lighting, soft shadow, matte materials, octane-like.
-   Isometric: flat vector, isometric projection, clean lines, no gradients.
-3. Composition guidance: subject biased toward the RIGHT side of the
-   frame, left third intentionally clean / negative space, because a
-   slogan and CTA will be overlaid on the left at compose time.
-4. Color hints aligned with Cloud.ru 2.0 brand palette — neutral or
-   muted backgrounds, with optional lemon-green accent (#CFF500) on a
-   small object. Never paint the whole scene lemon green.
+   Photo: natural light, documentary, shallow depth of field, 50mm
+   lens, slight grain. Render: studio lighting, soft shadow, matte
+   materials, octane-like, subtle ambient occlusion. Isometric: flat
+   vector, 30-degree isometric projection, clean lines, no gradients,
+   crisp edges.
+3. Composition guidance: the main subject biased toward the RIGHT or
+   CENTER-RIGHT of the frame; leave the left third intentionally
+   uncluttered with calm background tones (a slogan plate will sit
+   on top of it at compose time, so that area must remain visually
+   quiet — no important detail there).
+4. Mood and palette consistent with the persona and channel —
+   muted neutrals, light greys, soft warm wood or matte studio
+   surfaces. NO bright lemon-green or saturated brand colours in
+   the image itself (the brand accent is added later by the composer).
 5. Atmosphere matching winner.hook_angle (rational → calm/analytical,
    emotional → warm/human, social_proof → group dynamic, direct_benefit
    → confident/clear, fear_of_missing_out → urgent/now, curiosity →
    intriguing, authority → grounded/expert).
 
-HARD RULES
-- No text, no letters, no logos, no UI overlays in the image. Say so
-  explicitly: "no text, no letters, no logos".
-- No watermarks, no captions, no signage with readable words.
+HARD RULES — NO BRAND ARTEFACTS IN THE IMAGE
+- No text, no letters, no numbers, no logos, no signage with readable
+  words, no UI overlays, no watermarks, no captions. Say so explicitly
+  at the end of the prompt: "no text, no letters, no logos, no
+  watermarks".
+- No lemon-green (#CFF500) accents, no Cloud.ru brand marks, no green
+  highlight stripes — those are added by the composer.
+- No frame, no border, no rectangular plate, no banner layout — the
+  output must be a continuous scene, not a pre-composed ad mock.
 - No people if the chosen style is render or isometric.
 - No 3D or isometric language if the chosen style is photo.
 - No B/C/D-list brand-book banned words: epic, cinematic, revolutionary,
@@ -96,7 +134,7 @@ CHOSEN VISUAL STYLE: {{image_style}}
 
 Return ONLY valid JSON:
 {
-  "prompt": "<one English paragraph, 40-90 words>",
+  "prompt": "<one English paragraph, 50-100 words>",
   "rationale": "<one English sentence>"
 }
 ```
@@ -105,19 +143,19 @@ Return ONLY valid JSON:
 
 ### GLM-5.1
 - thinking=false — composition logic is shallow, we want speed.
-- max_tokens=800 — comfortably covers a 90-word prompt + rationale.
+- max_tokens=800 — comfortably covers a 100-word prompt + rationale.
 - temperature=0.5 — softer than the routing classifier (0.2) but tighter
   than long-form creative generation; we want variety without drifting
   off-brief.
 
 ## Validation
 
-- `prompt` length 40-90 words (soft target — schema enforces min_length
+- `prompt` length 50-100 words (soft target — schema enforces min_length
   20 only; downstream node logs a warning if outside the soft range).
 - `prompt` is English (no Cyrillic). Soft check at the node level —
   warn-and-pass, not retry.
-- "no text" / "no letters" / "no logos" should appear in the prompt;
-  soft warning only.
+- "no text" / "no letters" / "no logos" / "no watermarks" should appear
+  in the prompt; soft warning only.
 
 ## Changelog
 
@@ -125,3 +163,10 @@ Return ONLY valid JSON:
   replacing the bundled image-prompt field on MessageCandidate. EN
   output because the prompt is consumed by image generators, not by
   the Russian-speaking user directly.
+- v0.2.0 (2026-06-05) — M3.3 first-run feedback: prompts came back too
+  generic ("developer at a desk" rather than visualising the actual
+  selling point). Tightened to demand a concrete situation tied to
+  brief.product + winner.hook_angle, with worked examples. Also made
+  the no-brand-artefacts rule explicit (no lemon-green accents, no
+  pre-composed banner layout) since brand chrome is added by the
+  composer downstream.

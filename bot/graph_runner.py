@@ -19,7 +19,7 @@ from pathlib import Path
 
 import structlog
 from langgraph.types import Command
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -265,13 +265,47 @@ async def _deliver_zip(
         f"style: {style}\n"
         f"formats: {formats}"
     )
+
+    # Send the rendered PNGs as a media group first so the user gets an
+    # in-chat preview, then deliver the same files bundled as a ZIP.
+    # TG media group cap is 10 — batch if we ever cross that.
+    try:
+        for batch_start in range(0, len(files), 10):
+            batch = files[batch_start : batch_start + 10]
+            media: list[InputMediaPhoto] = []
+            opened: list = []
+            try:
+                for i, rec in enumerate(batch):
+                    fp = open(rec["path"], "rb")
+                    opened.append(fp)
+                    # Caption only on the first item of the first batch.
+                    cap = caption if (batch_start == 0 and i == 0) else None
+                    media.append(InputMediaPhoto(media=fp, caption=cap))
+                await app.bot.send_media_group(
+                    chat_id=session.chat_id, media=media
+                )
+            finally:
+                for fp in opened:
+                    fp.close()
+    except Exception as exc:  # noqa: BLE001
+        log.exception(
+            "media_group_send_failed", thread_id=session.thread_id, count=len(files)
+        )
+        await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                f"Превью картинок не отправилось ({type(exc).__name__}), "
+                "ZIP с рендерами ниже."
+            ),
+        )
+
     try:
         with open(zip_path, "rb") as fh:
             await app.bot.send_document(
                 chat_id=session.chat_id,
                 document=fh,
                 filename=zip_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
-                caption=caption,
+                caption="Все ресайзы одним архивом.",
             )
     except Exception as exc:  # noqa: BLE001
         log.exception("zip_send_failed", thread_id=session.thread_id, zip_path=zip_path)
@@ -448,17 +482,27 @@ async def on_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     session = get_active(context.application.bot_data, user.id)
     if session is None or session.status != "awaiting_hitl":
-        await q.edit_message_text("Эта сессия больше не активна.")
+        # Stale callback — drop the keyboard but keep the original message,
+        # then notify in a separate message so the history isn't rewritten.
+        await q.edit_message_reply_markup(reply_markup=None)
+        if q.message is not None:
+            await q.message.reply_text("Эта сессия больше не активна.")
         return
 
+    # M3.3 testing: don't rewrite the HITL prompt — drop the keyboard
+    # (so the user can't tap a second action) and post the decision /
+    # next-step instruction as a fresh message.
+    await q.edit_message_reply_markup(reply_markup=None)
     action = q.data.split(":", 1)[1]
     if action == "refine":
         session.status = "awaiting_refine"
         put(context.application.bot_data, session)
-        await q.edit_message_text("Опиши одной-двумя фразами, что переделать.")
+        if q.message is not None:
+            await q.message.reply_text("Опиши одной-двумя фразами, что переделать.")
         return
 
-    await q.edit_message_text(f"Выбрано: {action}. Возобновляю граф...")
+    if q.message is not None:
+        await q.message.reply_text(f"Выбрано: {action}. Возобновляю граф...")
     decision = {"action": action, "comment": None}
     context.application.create_task(_resume(context.application, session, decision))
 
@@ -515,16 +559,15 @@ async def on_image_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         return  # neither photo nor doc — let other handlers see it
 
-    notice = await msg.reply_text("Скачиваю картинку...")
+    # M3.3 testing: post each status as its own message instead of editing
+    # the "Скачиваю..." notice in place — keeps the message log readable.
+    await msg.reply_text("Скачиваю картинку...")
 
     path = await _save_uploaded_hero(
         context.application, session, file_id=file_id, suffix=suffix
     )
     if path is None:
-        try:
-            await notice.edit_text("Не удалось скачать файл. Попробуй ещё раз.")
-        except Exception:  # noqa: BLE001
-            pass
+        await msg.reply_text("Не удалось скачать файл. Попробуй ещё раз.")
         return
 
     # Mark the session as running BEFORE creating the resume task — this
@@ -534,10 +577,7 @@ async def on_image_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     put(context.application.bot_data, session)
     _cancel_image_upload_timeout(context.application, session.thread_id)
 
-    try:
-        await notice.edit_text("Картинка принята. Накладываю в шаблоны...")
-    except Exception:  # noqa: BLE001
-        pass
+    await msg.reply_text("Картинка принята. Накладываю в шаблоны...")
 
     decision = {
         "action": "upload",
@@ -574,16 +614,23 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat = update.effective_chat
     if user is None or chat is None:
         return
+    # M3.3 testing: don't rewrite the [Сделать вариант B] button — drop the
+    # keyboard and post status as a new message.
+    await q.edit_message_reply_markup(reply_markup=None)
+    reply = q.message.reply_text if q.message is not None else (
+        lambda t: context.bot.send_message(chat_id=chat.id, text=t)
+    )
+
     existing = get_active(context.application.bot_data, user.id)
     if existing is not None and existing.status not in {"done", "cancelled"}:
-        await q.edit_message_text("Сначала заверши текущую сессию.")
+        await reply("Сначала заверши текущую сессию.")
         return
 
     _, prev_thread = q.data.split(":", 1)
     ab_store = context.application.bot_data.get("ab_prior", {})
     prior = ab_store.get(prev_thread)
     if prior is None:
-        await q.edit_message_text("Данные A-варианта потеряны — запусти /new заново.")
+        await reply("Данные A-варианта потеряны — запусти /new заново.")
         return
 
     # spawn a B-variant session reusing the same wizard_data — but raw_brief
@@ -591,11 +638,11 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # if there are >=2 personas. Image isn't built yet, so for M2 B-variant
     # only diversifies text axis.
     if existing is None:
-        await q.edit_message_text(
+        await reply(
             "Для варианта B нужен исходный бриф. Запусти /new и пройди мастер ещё раз — он подхватит prior_variant."
         )
         return
-    await q.edit_message_text("M2: вариант B пока запускается только тем же /new — сохраню prior_variant в bot_data.")
+    await reply("M2: вариант B пока запускается только тем же /new — сохраню prior_variant в bot_data.")
     # full B-variant orchestration is M4 scope
 
 

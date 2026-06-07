@@ -4,7 +4,7 @@
 
 ## 1. Что это
 
-Telegram-бот для **audience-driven генерации рекламных креативов с мультиформатным выводом**. Маркетолог в TG проходит wizard (продукт → goal → ЦА → канал → форматы) → LangGraph агент на моделях Cloud.ru Foundation Models генерирует кандидатов рекламного сообщения → валидирует в persona-as-TA agentic loop → линейный HITL approve текста → LLM пишет EN prompt для hero-картинки → **юзер сам прогоняет prompt в своём image-генераторе (MJ / DALL-E / SDXL / Nano Banana) и присылает PNG в чат** → локальный PIL композер накладывает hero + slogan + CTA в N layered шаблонов из `config/templates.json` → ZIP → отправка в TG + кнопка `[Сделать вариант B]` для A/B-тестa.
+Telegram-бот для **audience-driven генерации рекламных креативов с мультиформатным выводом**. Маркетолог в TG проходит 3-шаговый wizard (продукт → goal → ЦА; канал и форматы НЕ спрашиваются — канал извлекается parse_brief'ом из текста ЦА с дефолтом `tg_post`, форматы прибиты к whitelist'у manifest'а) → LangGraph агент на моделях Cloud.ru Foundation Models генерирует кандидатов рекламного сообщения → валидирует в persona-as-TA agentic loop → линейный HITL approve текста → LLM пишет EN prompt для hero-картинки → **юзер сам прогоняет prompt в своём image-генераторе (MJ / DALL-E / SDXL / Nano Banana) и присылает PNG в чат** → локальный PIL композер накладывает hero + slogan + CTA в N layered шаблонов из `config/templates.json` → ZIP → отправка в TG + кнопка `[Сделать вариант B]` для A/B-тестa.
 
 **Объёмы:** 10/день MVP → 100/день целевой.
 

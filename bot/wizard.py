@@ -1,8 +1,16 @@
-"""5-step brief wizard.
+"""3-step brief wizard.
 
-Conversation states: PRODUCT -> GOAL -> AUDIENCE -> CHANNEL -> FORMATS -> CONFIRM.
-Goals, channels, formats are inline keyboards (controlled vocabulary).
-Product, audience, formats-extra are free-form text.
+Conversation states: PRODUCT -> GOAL -> AUDIENCE -> CONFIRM.
+Goal is an inline keyboard (controlled vocabulary). Product and audience
+are free-form text.
+
+Channel is NOT asked explicitly — parse_brief extracts it from the audience
+free-text (if the marketer mentions "ЦА в VK / TG / IG") and defaults to
+``tg_post`` otherwise (M3.3: one less click in the wizard).
+
+Formats are NOT asked either — they are hard-wired to the full slug
+whitelist from ``config/templates.json`` (M3.3: every brief produces all
+banners the composer knows how to render).
 
 On confirm: serialize wizard_data to ``raw_brief`` (text dump fed to parse_brief
 node) and hand off to graph_runner.start. Wizard exits the ConversationHandler.
@@ -10,6 +18,7 @@ node) and hand off to graph_runner.start. Wizard exits the ConversationHandler.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -28,11 +37,12 @@ from telegram.ext import (
 )
 
 from bot.sessions import Session, drop, get_active, put
+from infra.template_manifest import load_manifest
 
 log = structlog.get_logger(__name__)
 
 # --- states
-PRODUCT, GOAL, AUDIENCE, CHANNEL, FORMATS, CONFIRM = range(6)
+PRODUCT, GOAL, AUDIENCE, CONFIRM = range(4)
 
 # --- controlled vocab
 _GOALS = [
@@ -42,22 +52,20 @@ _GOALS = [
     ("engagement", "Вовлечение"),
     ("retention", "Удержание"),
 ]
-_CHANNELS = [
-    ("tg_post", "TG пост"),
-    ("tg_story", "TG сторис"),
-    ("vk_ad", "VK реклама"),
-    ("ig_story", "IG сторис"),
-    ("ig_post", "IG пост"),
-    ("web_banner", "Веб-баннер"),
-]
-_DEFAULT_FORMATS = {
-    "tg_post": ["tg_post_1080x1350"],
-    "tg_story": ["tg_story_1080x1920"],
-    "vk_ad": ["vk_ad_1080x1080"],
-    "ig_story": ["ig_story_1080x1920"],
-    "ig_post": ["ig_post_1080x1350"],
-    "web_banner": ["web_banner_1200x628"],
-}
+
+# --- formats: hard-wired to manifest slugs (M3.3)
+_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "config" / "templates.json"
+_MANIFEST_SLUGS_CACHE: list[str] | None = None
+
+
+def _manifest_slugs() -> list[str]:
+    """Load manifest slugs once per process. Cached because the manifest
+    doesn't change at runtime — a code change to templates.json requires a
+    container rebuild anyway."""
+    global _MANIFEST_SLUGS_CACHE
+    if _MANIFEST_SLUGS_CACHE is None:
+        _MANIFEST_SLUGS_CACHE = list(load_manifest(_MANIFEST_PATH).templates.keys())
+    return _MANIFEST_SLUGS_CACHE
 
 
 def _kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
@@ -88,7 +96,7 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     await update.message.reply_text(
         "Сессия запущена.\n\n"
-        "Шаг 1/5. Что рекламируем? Опиши продукт в 1–2 предложениях."
+        "Шаг 1/3. Что рекламируем? Опиши продукт в 1–2 предложениях."
     )
     return PRODUCT
 
@@ -105,7 +113,7 @@ async def on_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     kb = _kb([[(d, t)] for d, t in _GOALS])
     await update.message.reply_text(
-        "Шаг 2/5. Цель кампании?", reply_markup=kb
+        "Шаг 2/3. Цель кампании?", reply_markup=kb
     )
     return GOAL
 
@@ -120,11 +128,20 @@ async def on_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if session is None:
         return ConversationHandler.END
     session.wizard_data["goal"] = q.data
-    await q.edit_message_text(f"Цель: {_label(_GOALS, q.data)}")
+    # M3.3 testing: don't rewrite the question — drop the keyboard and append
+    # the chosen value as a new message so the wizard history stays readable.
+    await q.edit_message_reply_markup(reply_markup=None)
+    await context.bot.send_message(
+        chat_id=session.chat_id,
+        text=f"Выбрано: {_label(_GOALS, q.data)}",
+    )
 
     await context.bot.send_message(
         chat_id=session.chat_id,
-        text="Шаг 3/5. Опиши целевую аудиторию: кто это, какие у них боли, чем мотивированы.",
+        text=(
+            "Шаг 3/3. Опиши целевую аудиторию: кто это, какие у них боли, чем мотивированы. "
+            "Если знаешь канал размещения (TG / VK / IG / web) — упомяни его здесь же."
+        ),
     )
     return AUDIENCE
 
@@ -139,72 +156,11 @@ async def on_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
     session.wizard_data["audience"] = text
 
-    kb = _kb([[(d, t)] for d, t in _CHANNELS])
-    await update.message.reply_text("Шаг 4/5. Канал размещения?", reply_markup=kb)
-    return CHANNEL
-
-
-async def on_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    q = update.callback_query
-    if q is None:
-        return CHANNEL
-    await q.answer()
-    user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
-    if session is None:
-        return ConversationHandler.END
-    session.wizard_data["channel"] = q.data
-    await q.edit_message_text(f"Канал: {_label(_CHANNELS, q.data)}")
-
-    default_fmts = _DEFAULT_FORMATS.get(q.data, [])
-    fmt_label = ", ".join(default_fmts) if default_fmts else "не определены"
-    kb = _kb(
-        [
-            [("formats:default", f"Дефолт ({fmt_label})")],
-            [("formats:custom", "Указать вручную")],
-        ]
-    )
-    await context.bot.send_message(
-        chat_id=session.chat_id,
-        text="Шаг 5/5. Форматы выходных мастер-фреймов?",
-        reply_markup=kb,
-    )
-    return FORMATS
-
-
-async def on_formats_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    q = update.callback_query
-    if q is None:
-        return FORMATS
-    await q.answer()
-    user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
-    if session is None:
-        return ConversationHandler.END
-
-    if q.data == "formats:default":
-        session.wizard_data["formats"] = _DEFAULT_FORMATS.get(
-            session.wizard_data.get("channel", ""), []
-        )
-        await q.edit_message_text(
-            "Форматы: " + (", ".join(session.wizard_data["formats"]) or "не заданы")
-        )
-        return await _show_confirm(update, context, session)
-    # custom
-    await q.edit_message_text("Перечисли форматы через запятую (например tg_post_1080x1350, tg_story_1080x1920).")
-    return FORMATS
-
-
-async def on_formats_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = (update.message.text or "").strip() if update.message else ""
-    if not text:
-        return FORMATS
-    user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
-    if session is None:
-        return ConversationHandler.END
-    formats = [f.strip() for f in text.split(",") if f.strip()]
-    session.wizard_data["formats"] = formats
+    # M3.3: formats are hard-wired to the full manifest slug list — every
+    # brief renders all known banners. No question for the marketer.
+    # Channel is inferred by parse_brief from the audience free-text
+    # (default tg_post if not mentioned) — no explicit step either.
+    session.wizard_data["formats"] = _manifest_slugs()
     return await _show_confirm(update, context, session)
 
 
@@ -237,15 +193,22 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     if q.data == "confirm:cancel":
-        await q.edit_message_text("Отменено.")
+        # M3.3 testing: keep the original brief summary visible, just drop the
+        # keyboard and append the decision as a new message.
+        await q.edit_message_reply_markup(reply_markup=None)
+        await context.bot.send_message(chat_id=session.chat_id, text="Отменено.")
         drop(context.application.bot_data, user.id)
         return ConversationHandler.END
 
     # run
-    await q.edit_message_text(
-        "Бриф принят. Запускаю генерацию.\n"
-        "Реальное время — 4–8 минут на компьютерные шаги плюс паузы на твои подтверждения "
-        "(текст + картинка). Отдельным сообщением буду отмечать пройденные этапы."
+    await q.edit_message_reply_markup(reply_markup=None)
+    await context.bot.send_message(
+        chat_id=session.chat_id,
+        text=(
+            "Бриф принят. Запускаю генерацию.\n"
+            "Реальное время — 4–8 минут на компьютерные шаги плюс паузы на твои подтверждения "
+            "(текст + картинка). Отдельным сообщением буду отмечать пройденные этапы."
+        ),
     )
     session.status = "running"
     session.wizard_data["raw_brief"] = _render_raw_brief(session.wizard_data)
@@ -283,18 +246,19 @@ def _render_brief_summary(d: dict[str, Any]) -> str:
         f"Продукт: {d.get('product')}\n"
         f"Цель: {_label(_GOALS, d.get('goal', ''))}\n"
         f"ЦА: {d.get('audience')}\n"
-        f"Канал: {_label(_CHANNELS, d.get('channel', ''))}\n"
         f"Форматы: {fmts}"
     )
 
 
 def _render_raw_brief(d: dict[str, Any]) -> str:
-    """Plain-text dump for parse_brief node."""
+    """Plain-text dump for parse_brief node.
+
+    Channel is intentionally not surfaced here — parse_brief infers it from
+    the audience free-text (or defaults to tg_post). See parse_brief.md."""
     return (
         f"Продукт: {d.get('product')}\n"
         f"Цель: {d.get('goal')}\n"
         f"ЦА: {d.get('audience')}\n"
-        f"Канал: {d.get('channel')}\n"
         f"Форматы: {', '.join(d.get('formats') or [])}\n"
     )
 
@@ -309,11 +273,6 @@ def build_wizard_handler() -> ConversationHandler:
             PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_product)],
             GOAL: [CallbackQueryHandler(on_goal, pattern=r"^(awareness|consideration|conversion|engagement|retention)$")],
             AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_audience)],
-            CHANNEL: [CallbackQueryHandler(on_channel, pattern=r"^(tg_post|tg_story|vk_ad|ig_story|ig_post|web_banner)$")],
-            FORMATS: [
-                CallbackQueryHandler(on_formats_choice, pattern=r"^formats:(default|custom)$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, on_formats_text),
-            ],
             CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^confirm:(run|cancel)$")],
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
