@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import structlog
 from PIL import Image, ImageDraw, ImageFont
 
 from infra.template_manifest import (
@@ -24,9 +25,13 @@ from infra.template_manifest import (
     TextLayer,
 )
 
+log = structlog.get_logger(__name__)
+
 
 # Fonts live in assets/fonts/ as SBSansDisplay-<Weight>.otf
 _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+
+_ELLIPSIS = "\u2026"
 
 
 def _font_path(family: str, weight: str) -> Path:
@@ -62,16 +67,33 @@ def _wrap_to_width(
     return out
 
 
+def _ellipsize(
+    line: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> str:
+    """Trim the line's tail so that line + ellipsis fits max_width."""
+    if font.getlength(line + _ELLIPSIS) <= max_width:
+        return line + _ELLIPSIS
+    trimmed = line
+    while trimmed:
+        trimmed = trimmed[:-1].rstrip()
+        if font.getlength(trimmed + _ELLIPSIS) <= max_width:
+            return trimmed + _ELLIPSIS
+    return _ELLIPSIS
+
+
 def _fit_text(
     text: str,
     *,
     layer: TextLayer,
-) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
-    """Try font_size_max..font_size_min, return (font, lines, used_size).
+) -> tuple[ImageFont.FreeTypeFont, list[str], int, bool]:
+    """Try font_size_max..font_size_min, return (font, lines, used_size, truncated).
 
     Returns the largest size at which text fits both width (via wrap) and
-    max_lines. If even font_size_min doesn't fit, returns min anyway and
-    the lines list may be truncated to max_lines (caller renders as-is).
+    max_lines. If even font_size_min doesn't fit, returns min anyway, the
+    lines list is clipped to max_lines with the last line ellipsized, and
+    truncated=True.
     """
     fp = _font_path(layer.font_family, layer.font_weight)
     sizes = (
@@ -96,10 +118,15 @@ def _fit_text(
             # Also need vertical fit
             line_h = size * layer.line_height
             if line_h * len(lines) <= inner_h + 1:
-                return font, lines, size
-    # Did not fit fully; return smallest we tried, clipped lines.
+                return font, lines, size, False
+    # Did not fit fully; return smallest we tried, clipped lines with an
+    # ellipsis on the last visible line instead of silently dropping text.
     assert last_font is not None
-    return last_font, last_lines[: layer.max_lines], sizes[-1]
+    truncated = len(last_lines) > layer.max_lines
+    clipped = last_lines[: layer.max_lines]
+    if truncated and clipped:
+        clipped[-1] = _ellipsize(clipped[-1], last_font, wrap_width)
+    return last_font, clipped, sizes[-1], truncated
 
 
 def _draw_image_layer(
@@ -141,10 +168,11 @@ def _draw_hero_layer(
         canvas.paste(resized, (x, y))
 
 
-def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> None:
+def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
+    """Draw one text layer. Returns True if the text was truncated."""
     if not text:
-        return
-    font, lines, used_size = _fit_text(text, layer=layer)
+        return False
+    font, lines, used_size, truncated = _fit_text(text, layer=layer)
     draw = ImageDraw.Draw(canvas)
     # Use real font metrics so highlight covers descenders (р, д, у, etc).
     ascent, descent = font.getmetrics()
@@ -213,6 +241,8 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> None:
     for x, y, line in line_geom:
         draw.text((x, y), line, font=font, fill=layer.color)
 
+    return truncated
+
 
 def compose(
     spec: TemplateSpec,
@@ -220,6 +250,7 @@ def compose(
     hero: Image.Image | Path | bytes,
     texts: dict[str, str],
     assets_root: Path,
+    slug: str | None = None,
 ) -> Image.Image:
     """Render one PNG from spec + hero + slot texts.
 
@@ -228,6 +259,7 @@ def compose(
         hero: PIL Image, path to file, or raw bytes (PNG/JPEG).
         texts: dict mapping slot name (slogan/cta/age_rating) to string.
         assets_root: project root (used to resolve ImageLayer.path).
+        slug: optional format slug, used only in text_truncated logging.
 
     Returns:
         PIL.Image.Image in RGBA mode, caller is responsible for saving.
@@ -251,6 +283,12 @@ def compose(
             _draw_hero_layer(canvas, layer, hero=hero_img)
         elif isinstance(layer, TextLayer):
             text = texts.get(layer.slot, "")
-            _draw_text_layer(canvas, layer, text)
+            if _draw_text_layer(canvas, layer, text):
+                log.warning(
+                    "text_truncated",
+                    slug=slug,
+                    slot=layer.slot,
+                    format_size=f"{spec.width}x{spec.height}",
+                )
 
     return canvas

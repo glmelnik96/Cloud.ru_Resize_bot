@@ -28,6 +28,7 @@ from llm.cloudru import (  # noqa: PLC2701  intentional cross-module use
     ModelCall,
     ModelName,
     _strip_json_fences,
+    get_shared_client,
 )
 
 log = structlog.get_logger(__name__)
@@ -51,7 +52,7 @@ async def run_agent(
 ) -> T:
     """Run an agent end-to-end. Returns the validated Pydantic result."""
     card = load_agent(agent_id)
-    client = client or CloudRuClient()
+    client = client or get_shared_client()
     model = _MODEL_MAP[card.model]
     cfg = card.model_config
 

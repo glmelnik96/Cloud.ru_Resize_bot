@@ -88,6 +88,28 @@ async def test_node_compose_error_isolated_per_format(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_node_parallel_render_preserves_format_order(monkeypatch, tmp_path):
+    """Formats are rendered in parallel threads; rendered_files must still
+    follow the requested order. We force the first format to be the slowest
+    so any order-by-completion bug would surface."""
+    import time
+
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+    real_compose = mod.compose
+    delays = {"banner_300x500": 0.2, "banner_240x400": 0.05, "banner_300x250": 0.0}
+
+    def _slow_compose(spec, **kwargs):
+        time.sleep(delays.get(kwargs.get("slug"), 0.0))
+        return real_compose(spec, **kwargs)
+
+    monkeypatch.setattr(mod, "compose", _slow_compose)
+    formats = ["banner_300x500", "banner_240x400", "banner_300x250"]
+    state = _seed_state(tmp_path, formats)
+    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
+    assert [r["format"] for r in out["rendered_files"]] == formats
+
+
+@pytest.mark.asyncio
 async def test_node_no_image_raises(tmp_path):
     state = _seed_state(tmp_path, ["banner_240x400"])
     state["image"] = None

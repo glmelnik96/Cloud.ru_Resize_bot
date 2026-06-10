@@ -14,6 +14,7 @@ Skipped if CLOUDRU_API_KEY not set (real network calls — costs tokens).
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -23,10 +24,19 @@ from graph.builder import build_text_graph
 from graph.state import AdBrief, MessageCandidate, Persona, Verdict
 
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("CLOUDRU_API_KEY"),
-    reason="CLOUDRU_API_KEY not set; graph pipeline test skipped",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not os.environ.get("CLOUDRU_API_KEY"),
+        reason="CLOUDRU_API_KEY not set; graph pipeline test skipped",
+    ),
+    pytest.mark.skipif(
+        sys.version_info < (3, 11),
+        reason=(
+            "langgraph interrupt() in async nodes needs asyncio.Task(context=...) "
+            "(Python 3.11+); runs in Docker (3.11), not on local 3.10"
+        ),
+    ),
+]
 
 
 _RAW_BRIEF = """

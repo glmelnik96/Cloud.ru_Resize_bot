@@ -83,21 +83,93 @@ def _slogan_layer(width: int = 200, height: int = 90) -> TextLayer:
 
 def test_fit_text_uses_max_when_fits():
     layer = _slogan_layer(width=2000, height=2000)
-    _, lines, size = _fit_text("Hi", layer=layer)
+    _, lines, size, truncated = _fit_text("Hi", layer=layer)
     assert size == 30
     assert lines == ["Hi"]
+    assert truncated is False
 
 
 def test_fit_text_shrinks_when_too_long():
     layer = _slogan_layer(width=80, height=50)
-    _, _, size = _fit_text("Very long slogan that needs shrinking", layer=layer)
+    _, _, size, _ = _fit_text(
+        "Very long slogan that needs shrinking", layer=layer
+    )
     assert size < 30
 
 
 def test_fit_text_respects_min_floor():
     layer = _slogan_layer(width=10, height=10)
-    _, _, size = _fit_text("Impossible text length here", layer=layer)
+    _, _, size, _ = _fit_text("Impossible text length here", layer=layer)
     assert size == 10  # font_size_min
+
+
+# ----- Truncation + ellipsis ---------------------------------------------------
+
+
+def test_fit_text_truncates_with_ellipsis():
+    """Slogan that can't fit even at font_size_min: lines are clipped to
+    max_lines, the last visible line ends with a single U+2026 and still
+    fits the wrap width."""
+    layer = _slogan_layer(width=120, height=40)
+    text = (
+        "Очень длинный слоган который никогда не поместится в такой "
+        "крошечный блок даже на минимальном размере шрифта"
+    )
+    font, lines, size, truncated = _fit_text(text, layer=layer)
+    assert truncated is True
+    assert size == 10  # font_size_min
+    assert len(lines) == layer.max_lines
+    assert lines[-1].endswith("\u2026")
+    assert lines[-1].count("\u2026") == 1
+    wrap_width = layer.width - 2 * layer.padding_x
+    assert font.getlength(lines[-1]) <= wrap_width
+
+
+def test_compose_logs_text_truncated_with_slug():
+    import structlog.testing
+
+    spec = TemplateSpec(
+        width=140,
+        height=60,
+        background_color="#000000",
+        layers=[_slogan_layer(width=120, height=40)],
+    )
+    long_slogan = (
+        "Очень длинный слоган который никогда не поместится в такой "
+        "крошечный блок даже на минимальном размере шрифта"
+    )
+    with structlog.testing.capture_logs() as logs:
+        compose(
+            spec,
+            hero=_solid_hero(),
+            texts={"slogan": long_slogan},
+            assets_root=REPO_ROOT,
+            slug="banner_test_140x60",
+        )
+    truncated_events = [e for e in logs if e["event"] == "text_truncated"]
+    assert truncated_events, "text_truncated warning not logged"
+    assert truncated_events[0]["slug"] == "banner_test_140x60"
+    assert truncated_events[0]["slot"] == "slogan"
+
+
+def test_compose_no_truncation_no_warning():
+    spec = TemplateSpec(
+        width=2000,
+        height=2000,
+        background_color="#000000",
+        layers=[_slogan_layer(width=1900, height=1900)],
+    )
+    import structlog.testing
+
+    with structlog.testing.capture_logs() as logs:
+        compose(
+            spec,
+            hero=_solid_hero(),
+            texts={"slogan": "Hi"},
+            assets_root=REPO_ROOT,
+            slug="big",
+        )
+    assert not [e for e in logs if e["event"] == "text_truncated"]
 
 
 # ----- Canvas + z-order -------------------------------------------------------

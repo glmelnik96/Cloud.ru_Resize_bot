@@ -40,6 +40,13 @@ class Settings:
     phygital_bot_username: str
     phygital_request_timeout_s: int
 
+    # Speculative hero prefetch: start style→prompt→b2b render in the
+    # background while the user is still looking at the text-approve prompt.
+    # prefetch_delay_s is the hedge window — an instant "Перегенерить" tap
+    # within it costs nothing.
+    prefetch_hero: bool
+    prefetch_delay_s: int
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -59,4 +66,6 @@ def get_settings() -> Settings:
         use_phygital_render=_parse_bool(os.environ.get("USE_PHYGITAL_RENDER"), default=False),
         phygital_bot_username=os.environ.get("PHYGITAL_BOT_USERNAME", "Cloud_Phygital_bot").lstrip("@"),
         phygital_request_timeout_s=int(os.environ.get("PHYGITAL_REQUEST_TIMEOUT_S", "600")),
+        prefetch_hero=_parse_bool(os.environ.get("PREFETCH_HERO"), default=True),
+        prefetch_delay_s=int(os.environ.get("PREFETCH_DELAY_S", "10")),
     )

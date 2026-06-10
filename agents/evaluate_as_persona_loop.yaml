@@ -12,7 +12,7 @@ post_hooks: []
 # concurrency.semaphore is consumed by the node, not by run_agent —
 # each per-(candidate × persona) call is a single agent run wrapped by sem.
 concurrency:
-  semaphore: 3
+  semaphore: 6
 revise:
   threshold: 6.5
   max_rounds: 2

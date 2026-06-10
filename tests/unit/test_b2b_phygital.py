@@ -75,6 +75,10 @@ class _FakeBot:
 
     async def send_message(self, *, chat_id, text, **kwargs):
         self.sent.append({"chat_id": chat_id, "text": text})
+        return SimpleNamespace(message_id=len(self.sent))
+
+    async def edit_message_text(self, **kwargs):
+        return None
 
 
 class _FakeApp:
@@ -93,11 +97,13 @@ def _session() -> Session:
     return Session(user_id=42, chat_id=42, thread_id="t" * 32)
 
 
-def _settings_stub(timeout_s: int = 600):
+def _settings_stub(timeout_s: int = 600, prefetch: bool = True, prefetch_delay_s: int = 0):
     return SimpleNamespace(
         use_phygital_render=True,
         phygital_bot_username="Cloud_Phygital_bot",
         phygital_request_timeout_s=timeout_s,
+        prefetch_hero=prefetch,
+        prefetch_delay_s=prefetch_delay_s,
     )
 
 
@@ -245,3 +251,185 @@ async def test_request_phygital_render_empty_prompt_falls_back(monkeypatch, tmp_
     assert not app.bot_data.get(B2B_PENDING_KEY)
     # Did not try to send any TG messages.
     assert app.bot.sent == []
+
+
+# -------- speculative hero prefetch --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prefetch_consumed_on_approve(monkeypatch, tmp_path):
+    """A finished prefetch task short-circuits _request_phygital_render:
+    resume with the prefetched file, no fresh b2b request."""
+    from bot.graph_runner import PREFETCH_KEY
+
+    monkeypatch.setattr("bot.graph_runner.get_settings", lambda: _settings_stub())
+    monkeypatch.setattr(
+        "bot.graph_runner._render_image_upload",
+        lambda *a, **kw: pytest.fail("HITL fallback must not fire when prefetch hit"),
+    )
+    resume_calls: list[dict] = []
+
+    async def _fake_resume(app, session, decision):
+        resume_calls.append(decision)
+
+    monkeypatch.setattr("bot.graph_runner._resume", _fake_resume)
+
+    app = _FakeApp()
+    session = _session()
+
+    hero = tmp_path / "prefetched.jpg"
+    hero.write_bytes(b"JPEGDATA")
+
+    async def _done_prefetch():
+        return {"path": str(hero), "prompt": "prefetched EN prompt", "style": "render"}
+
+    task = asyncio.get_event_loop().create_task(_done_prefetch())
+    await asyncio.sleep(0)
+    app.bot_data[PREFETCH_KEY] = {session.thread_id: task}
+
+    payload = {"image_prompt": "graph-generated prompt", "image_style": "photo"}
+    await asyncio.wait_for(_request_phygital_render(app, session, payload), timeout=2.0)
+
+    assert len(resume_calls) == 1
+    decision = resume_calls[0]
+    assert decision["action"] == "upload"
+    assert decision["local_path"] == str(hero)
+    # State gets the prompt/style the image was ACTUALLY rendered with.
+    assert decision["prompt"] == "prefetched EN prompt"
+    assert decision["style"] == "render"
+    # No fresh request left the building.
+    assert all(m["chat_id"] != "@Cloud_Phygital_bot" for m in app.bot.sent)
+    # Entry consumed.
+    assert session.thread_id not in app.bot_data.get(PREFETCH_KEY, {})
+
+
+@pytest.mark.asyncio
+async def test_prefetch_failure_falls_back_to_fresh_request(monkeypatch, tmp_path):
+    """A failed prefetch is transparent: the regular b2b request proceeds."""
+    from bot.graph_runner import PREFETCH_KEY
+
+    monkeypatch.setattr("bot.graph_runner.get_settings", lambda: _settings_stub())
+    monkeypatch.setattr("bot.graph_runner._HEROES_DIR", tmp_path)
+    monkeypatch.setattr(
+        "bot.graph_runner._render_image_upload",
+        lambda *a, **kw: pytest.fail("HITL fallback should not fire on happy path"),
+    )
+    resume_calls: list[dict] = []
+
+    async def _fake_resume(app, session, decision):
+        resume_calls.append(decision)
+
+    monkeypatch.setattr("bot.graph_runner._resume", _fake_resume)
+
+    app = _FakeApp()
+    session = _session()
+
+    async def _failing_prefetch():
+        raise B2BError("safety_blocked")
+
+    task = asyncio.get_event_loop().create_task(_failing_prefetch())
+    await asyncio.sleep(0)
+    app.bot_data[PREFETCH_KEY] = {session.thread_id: task}
+
+    payload = {"image_prompt": "graph prompt, no text", "image_style": "render"}
+    run = asyncio.create_task(_request_phygital_render(app, session, payload))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    pending = app.bot_data.get(B2B_PENDING_KEY) or {}
+    assert len(pending) == 1
+    _, entry = next(iter(pending.items()))
+    entry["future"].set_result(b"\x89PNGDATA")
+
+    await asyncio.wait_for(run, timeout=2.0)
+    assert len(resume_calls) == 1
+    assert resume_calls[0]["action"] == "upload"
+
+
+@pytest.mark.asyncio
+async def test_cancel_hero_prefetch_cancels_task():
+    from bot.graph_runner import PREFETCH_KEY, cancel_hero_prefetch
+
+    app = _FakeApp()
+    session = _session()
+
+    async def _never():
+        await asyncio.sleep(3600)
+
+    task = asyncio.get_event_loop().create_task(_never())
+    await asyncio.sleep(0)
+    app.bot_data[PREFETCH_KEY] = {session.thread_id: task}
+
+    cancel_hero_prefetch(app, session.thread_id)
+    await asyncio.sleep(0)
+
+    assert task.cancelled()
+    assert session.thread_id not in app.bot_data[PREFETCH_KEY]
+
+
+@pytest.mark.asyncio
+async def test_start_hero_prefetch_noop_when_disabled(monkeypatch):
+    from bot.graph_runner import PREFETCH_KEY, start_hero_prefetch
+
+    monkeypatch.setattr(
+        "bot.graph_runner.get_settings",
+        lambda: _settings_stub(prefetch=False),
+    )
+    app = _FakeApp()
+    session = _session()
+    start_hero_prefetch(app, session)
+    assert not app.bot_data.get(PREFETCH_KEY)
+
+
+@pytest.mark.asyncio
+async def test_prefetch_hero_full_chain(monkeypatch, tmp_path):
+    """_prefetch_hero: snapshot -> style -> prompt -> b2b -> file on disk."""
+    from bot.graph_runner import PREFETCH_KEY, _prefetch_hero
+
+    monkeypatch.setattr("bot.graph_runner.get_settings", lambda: _settings_stub())
+    monkeypatch.setattr("bot.graph_runner._HEROES_DIR", tmp_path)
+
+    snapshot = SimpleNamespace(values={"winner": {"slogan": "s"}, "session_id": "x"})
+
+    class _FakeGraph:
+        async def aget_state(self, config):
+            return snapshot
+
+    monkeypatch.setattr("bot.graph_runner._graph", lambda app: _FakeGraph())
+
+    async def _fake_style(state):
+        return {"image_style": "isometric"}
+
+    async def _fake_prompt(state):
+        assert state["image_style"] == "isometric"
+        return {"image_prompt": "EN prompt, no text"}
+
+    monkeypatch.setattr("graph.nodes.route_image_style.route_image_style", _fake_style)
+    monkeypatch.setattr(
+        "graph.nodes.generate_image_prompt.generate_image_prompt", _fake_prompt
+    )
+
+    app = _FakeApp()
+    session = _session()
+
+    run = asyncio.create_task(_prefetch_hero(app, session))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    pending = app.bot_data.get(B2B_PENDING_KEY) or {}
+    assert len(pending) == 1
+    corr, entry = next(iter(pending.items()))
+    assert entry["thread_id"] == session.thread_id
+    entry["future"].set_result(b"\x89PNGPREFETCH")
+
+    result = await asyncio.wait_for(run, timeout=2.0)
+    assert result["style"] == "isometric"
+    assert result["prompt"] == "EN prompt, no text"
+    assert result["path"].endswith("_b2b_prefetch.jpg")
+    # Request really went to the Phygital bot with the corr header.
+    req = next(m for m in app.bot.sent if m["chat_id"] == "@Cloud_Phygital_bot")
+    assert req["text"].startswith(f"@b2b render 3:4 k2 corr={corr}")
+    # Pending entry cleaned up.
+    assert corr not in (app.bot_data.get(B2B_PENDING_KEY) or {})

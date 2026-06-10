@@ -11,6 +11,11 @@ The aggregation:
 
 For B-variant (state.persona_priority == 1) and >=2 personas, weights shift:
     persona[1].score weight = 0.6, persona[0].score weight = 0.4
+
+Consultant-mode guard (non_consultant_rate metric, prompts/persona_eval.md):
+verdicts whose free-text fields contain advisory/marketing-consultant phrasing
+are detected via graph.hooks.is_consultant_mode and enter the aggregation with
+CONSULTANT_MODE_WEIGHT instead of being dropped.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import structlog
 
 from agents.registry import load_agent
 from graph.agent_runner import run_agent
+from graph.hooks import is_consultant_mode
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
@@ -32,12 +38,19 @@ from graph.state import (
     Persona,
     Verdict,
 )
-from llm.cloudru import CloudRuClient
+from llm.cloudru import get_shared_client
 
 log = structlog.get_logger(__name__)
 
 _AGENT_ID = "evaluate_as_persona_loop"
 _SKILL_NAME = "persona_eval"
+
+# Weight applied to a verdict whose text fields show consultant-mode phrasing
+# (the LLM slipped out of persona role into "marketing advisor" speech).
+# 0.5 = the verdict still participates in ranking but contributes half of its
+# score; we deliberately do NOT drop it — scores may still carry signal even
+# when the free-form text broke role.
+CONSULTANT_MODE_WEIGHT = 0.5
 
 
 async def evaluate_as_persona_loop(state: GraphState) -> dict:
@@ -60,7 +73,7 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
     revise_threshold = float(revise_cfg.get("threshold", 6.5))
     max_revise_rounds = int(revise_cfg.get("max_rounds", 2))
 
-    client = CloudRuClient()
+    client = get_shared_client()
     sem = asyncio.Semaphore(max_concurrency)
 
     async def one_verdict(candidate: MessageCandidate, persona: Persona) -> Verdict:
@@ -108,6 +121,18 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
     tasks = [one_verdict(c, p) for c in candidates for p in personas]
     verdicts: list[Verdict] = await asyncio.gather(*tasks)
 
+    for v in verdicts:
+        if _verdict_weight(v) < 1.0:
+            log.info(
+                "consultant_mode_detected",
+                agent=_AGENT_ID,
+                session_id=state.get("session_id"),
+                candidate_id=v.candidate_id,
+                persona_segment=v.persona_segment,
+                weight=CONSULTANT_MODE_WEIGHT,
+                free_form_reaction=v.free_form_reaction,
+            )
+
     scores = _aggregate(verdicts, candidates, personas, persona_priority)
     winner_id = max(scores, key=lambda k: scores[k])
     winner = next(c for c in candidates if c.id == winner_id)
@@ -138,6 +163,20 @@ async def evaluate_as_persona_loop(state: GraphState) -> dict:
     }
 
 
+def _verdict_weight(verdict: Verdict) -> float:
+    """Trust weight of a single verdict in the aggregation.
+
+    Consultant-mode verdicts (advisory phrasing in free_form_reaction or
+    main_friction instead of persona speech) get CONSULTANT_MODE_WEIGHT,
+    everything else gets 1.0.
+    """
+    if is_consultant_mode(verdict.free_form_reaction) or is_consultant_mode(
+        verdict.main_friction
+    ):
+        return CONSULTANT_MODE_WEIGHT
+    return 1.0
+
+
 def _aggregate(
     verdicts: list[Verdict],
     candidates: list[MessageCandidate],
@@ -159,10 +198,15 @@ def _aggregate(
             vs = by_cand[c.id].get(p.segment, [])
             if not vs:
                 continue
-            mean_score = (
-                0.4 * statistics.mean(v.resonance for v in vs)
-                + 0.3 * statistics.mean(v.action_intent for v in vs)
-                + 0.3 * statistics.mean(v.clarity for v in vs)
+            # Each verdict contributes its score scaled by its trust weight
+            # but keeps a full slot in the denominator: a consultant-mode
+            # verdict actively lowers the candidate's score instead of being
+            # silently renormalized away (which would make the downweight a
+            # no-op in the common 1-verdict-per-(candidate, persona) case).
+            mean_score = statistics.mean(
+                _verdict_weight(v)
+                * (0.4 * v.resonance + 0.3 * v.action_intent + 0.3 * v.clarity)
+                for v in vs
             )
             per_persona_scores.append((persona_weights[p.segment], mean_score))
 

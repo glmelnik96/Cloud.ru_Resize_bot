@@ -179,6 +179,22 @@ class CloudRuClient:
         raise last_err
 
 
+_shared_client: CloudRuClient | None = None
+
+
+def get_shared_client() -> CloudRuClient:
+    """Process-wide CloudRuClient singleton.
+
+    AsyncOpenAI keeps an httpx connection pool per instance; creating a fresh
+    client per agent run forces a new TCP+TLS handshake on every LLM call
+    (8-20 calls per /new). Sharing one instance reuses connections.
+    """
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = CloudRuClient()
+    return _shared_client
+
+
 def _strip_json_fences(s: str) -> str:
     """Strip ```json ... ``` fences if model wrapped output in markdown."""
     s = s.strip()

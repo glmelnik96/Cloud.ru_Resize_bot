@@ -16,6 +16,7 @@ Contract unchanged from M3.0/M3.2:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -61,9 +62,15 @@ async def fill_templates_per_format(state: GraphState) -> dict:
         "age_rating": age_rating,
     }
 
-    out: list[dict] = []
     start = datetime.utcnow()
 
+    # Filter unknown slugs first, then render the known ones in parallel:
+    # compose() is CPU-bound PIL work, so each format goes to a worker
+    # thread via asyncio.to_thread and the event loop stays responsive.
+    # Hero is passed as bytes — each thread opens its own PIL.Image from
+    # them, so no Image object is shared across threads. gather() keeps
+    # the result order equal to the formats order.
+    known: list[str] = []
     for fmt in formats:
         spec = manifest.templates.get(fmt)
         if spec is None:
@@ -74,33 +81,23 @@ async def fill_templates_per_format(state: GraphState) -> dict:
                 known=list(manifest.templates),
             )
             continue
-        fmt_start = datetime.utcnow()
-        try:
-            canvas = compose(
-                spec,
-                hero=hero_bytes,
-                texts=texts,
-                assets_root=_REPO_ROOT,
+        known.append(fmt)
+
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(
+                _render_one_sync,
+                manifest.templates[fmt],
+                fmt,
+                hero_bytes,
+                texts,
+                session_id,
+                ts,
             )
-            path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
-            canvas.save(path, format="PNG", optimize=True)
-            out.append({"format": fmt, "path": str(path)})
-            log.info(
-                "compose_format_ok",
-                session_id=session_id,
-                slug=fmt,
-                latency_ms=int(
-                    (datetime.utcnow() - fmt_start).total_seconds() * 1000
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 — single-format isolation
-            log.error(
-                "compose_format_error",
-                session_id=session_id,
-                slug=fmt,
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
+            for fmt in known
+        )
+    )
+    out: list[dict] = [r for r in results if r is not None]
 
     log.info(
         "compose_node_done",
@@ -110,6 +107,50 @@ async def fill_templates_per_format(state: GraphState) -> dict:
         node_latency_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
     )
     return {"rendered_files": out}
+
+
+def _render_one_sync(
+    spec,
+    fmt: str,
+    hero_bytes: bytes,
+    texts: dict[str, str],
+    session_id: str,
+    ts: str,
+) -> dict | None:
+    """Compose + save one format. Runs in a worker thread.
+
+    Returns {format, path} on success, None on failure (per-format
+    isolation: one bad slug never kills the rest).
+    """
+    fmt_start = datetime.utcnow()
+    try:
+        canvas = compose(
+            spec,
+            hero=hero_bytes,
+            texts=texts,
+            assets_root=_REPO_ROOT,
+            slug=fmt,
+        )
+        path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
+        canvas.save(path, format="PNG", optimize=True)
+        log.info(
+            "compose_format_ok",
+            session_id=session_id,
+            slug=fmt,
+            latency_ms=int(
+                (datetime.utcnow() - fmt_start).total_seconds() * 1000
+            ),
+        )
+        return {"format": fmt, "path": str(path)}
+    except Exception as exc:  # noqa: BLE001 — single-format isolation
+        log.error(
+            "compose_format_error",
+            session_id=session_id,
+            slug=fmt,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
 
 
 def _coerce(obj: object, model: type, label: str):

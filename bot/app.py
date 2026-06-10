@@ -135,9 +135,11 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         B2B_PENDING_KEY,
         B2BError,
         _cancel_image_upload_timeout,
+        cancel_hero_prefetch,
     )
 
     _cancel_image_upload_timeout(context.application, session.thread_id)
+    cancel_hero_prefetch(context.application, session.thread_id)
 
     # Wake any waiting b2b request for this thread.
     pending = context.application.bot_data.get(B2B_PENDING_KEY) or {}
@@ -157,9 +159,9 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_ping(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
         return
-    from llm.cloudru import CloudRuClient, ModelCall, ModelName
+    from llm.cloudru import ModelCall, ModelName, get_shared_client
 
-    client = CloudRuClient()
+    client = get_shared_client()
     await update.message.reply_text("Пингую Cloud.ru FM...")
     results: list[str] = []
     for model in (ModelName.GLM, ModelName.DEEPSEEK, ModelName.KIMI):

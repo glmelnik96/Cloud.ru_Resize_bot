@@ -17,12 +17,14 @@ import asyncio
 import re
 import secrets
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 import structlog
 from langgraph.types import Command
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -41,6 +43,8 @@ _IMAGE_UPLOAD_TIMEOUTS_KEY = "_image_upload_timeouts"
 
 # M3.4 bot-to-bot delegation to @Cloud_Phygital_bot. Keyed by 8-hex corr id.
 B2B_PENDING_KEY = "b2b_pending"
+# Speculative hero prefetch tasks, keyed by thread_id (see start_hero_prefetch).
+PREFETCH_KEY = "hero_prefetch"
 _B2B_OK_RE = re.compile(r"^@b2b\s+OK\s+corr=(?P<corr>[a-f0-9]{4,16})\s*$")
 _B2B_ERROR_RE = re.compile(
     r"^@b2b\s+ERROR\s+corr=(?P<corr>[a-f0-9]{4,16}|unknown)"
@@ -111,6 +115,28 @@ async def _edit_progress(app: Application, session: Session, node_name: str) -> 
         log.debug("progress_edit_failed", error=str(exc), node=node_name)
 
 
+@asynccontextmanager
+async def _typing_pulse(app: Application, chat_id: int):
+    """Keep the 'typing…' chat action alive while a long segment runs.
+
+    TG drops the action after ~5s, so we re-send it on a loop. Best-effort:
+    failures are swallowed — presence UI must never break the run."""
+
+    async def _pulse() -> None:
+        while True:
+            try:
+                await app.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("typing_pulse_failed", error=str(exc))
+            await asyncio.sleep(5)
+
+    task = asyncio.create_task(_pulse())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
 async def _run_graph_with_progress(
     app: Application, session: Session, payload, config: dict
 ) -> dict:
@@ -120,16 +146,17 @@ async def _run_graph_with_progress(
     in _handle_terminal_or_interrupt."""
     await _ensure_progress_message(app, session)
     final: dict = {}
-    async for chunk in _graph(app).astream(payload, config=config, stream_mode="updates"):
-        if not isinstance(chunk, dict):
-            continue
-        if "__interrupt__" in chunk:
-            final["__interrupt__"] = chunk["__interrupt__"]
-            continue
-        for node_name, update in chunk.items():
-            if isinstance(update, dict):
-                final.update(update)
-            await _edit_progress(app, session, node_name)
+    async with _typing_pulse(app, session.chat_id):
+        async for chunk in _graph(app).astream(payload, config=config, stream_mode="updates"):
+            if not isinstance(chunk, dict):
+                continue
+            if "__interrupt__" in chunk:
+                final["__interrupt__"] = chunk["__interrupt__"]
+                continue
+            for node_name, update in chunk.items():
+                if isinstance(update, dict):
+                    final.update(update)
+                await _edit_progress(app, session, node_name)
     return final
 
 
@@ -387,6 +414,8 @@ async def _render_text_approve(
     session.hitl_message_id = msg.message_id
     session.status = "awaiting_hitl"
     put(app.bot_data, session)
+    # Speculative bet: start the hero chain while the user reads the text.
+    start_hero_prefetch(app, session)
 
 
 async def _render_image_upload(
@@ -429,6 +458,135 @@ async def _render_image_upload(
     _schedule_image_upload_timeout(app, session, image_style, image_prompt)
 
 
+def _b2b_progress_task(
+    app: Application, chat_id: int, message_id: int, started: float, timeout_s: int
+) -> asyncio.Task:
+    """Once a minute edit the b2b wait notice with elapsed time so the user
+    sees the bot is alive during a minutes-long render. Best-effort."""
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(60)
+            mins = int(time.monotonic() - started) // 60
+            try:
+                await app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=(
+                        f"Жду hero-картинку от бота-генератора... прошло {mins} мин "
+                        f"(лимит {timeout_s // 60} мин)."
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("b2b_progress_edit_failed", error=str(exc))
+
+    return asyncio.create_task(_loop())
+
+
+# ----- speculative hero prefetch ---------------------------------------------
+#
+# The winner candidate is already final when hitl_text_approve interrupts, but
+# route_image_style → generate_image_prompt → Phygital render (minutes!) only
+# start after the user taps "OK". Prefetch runs that chain in the background
+# while the user reads the approve prompt, so on approve the hero is already
+# in flight or done. On regenerate/refine/cancel the bet is cancelled; a
+# render already requested from Phygital is simply dropped (late reply hits
+# an unknown corr and is ignored).
+
+
+def start_hero_prefetch(app: Application, session: Session) -> None:
+    """Kick off the speculative hero chain for this thread (if enabled)."""
+    settings = get_settings()
+    if not (settings.use_phygital_render and settings.prefetch_hero):
+        return
+    store = app.bot_data.setdefault(PREFETCH_KEY, {})
+    old = store.pop(session.thread_id, None)
+    if old is not None and not old.done():
+        old.cancel()
+    store[session.thread_id] = asyncio.create_task(_prefetch_hero(app, session))
+    log.info("b2b_prefetch_scheduled", thread_id=session.thread_id)
+
+
+async def _prefetch_hero(app: Application, session: Session) -> dict:
+    """Speculative chain: style → EN prompt → b2b render → file on disk.
+
+    Returns {"path": str, "prompt": str, "style": str}. Raises on any failure
+    (incl. CancelledError when the bet is called off) — the consumer in
+    _request_phygital_render falls back to the regular flow.
+
+    The initial delay is a cheap hedge: a user who instantly taps
+    "Перегенерить" costs us nothing, not even the two LLM calls.
+    """
+    settings = get_settings()
+    await asyncio.sleep(settings.prefetch_delay_s)
+
+    snapshot = await _graph(app).aget_state(_config(session))
+    values = dict(snapshot.values or {})
+
+    # Node functions are pure async(state)->update — safe to call outside the
+    # graph. The graph will re-run them after approve (cheap, ~4s) and we
+    # override its prompt/style in the resume decision so state matches the
+    # image actually rendered.
+    from graph.nodes.generate_image_prompt import generate_image_prompt
+    from graph.nodes.route_image_style import route_image_style
+
+    style = (await route_image_style(values))["image_style"]
+    values["image_style"] = style
+    prompt = (await generate_image_prompt(values))["image_prompt"]
+
+    corr = secrets.token_hex(4)
+    pending = app.bot_data.setdefault(B2B_PENDING_KEY, {})
+    fut: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+    pending[corr] = {
+        "future": fut,
+        "thread_id": session.thread_id,
+        "user_id": session.user_id,
+    }
+    target = f"@{settings.phygital_bot_username}"
+    log.info(
+        "b2b_prefetch_sent",
+        thread_id=session.thread_id,
+        corr=corr,
+        style=style,
+        prompt_chars=len(prompt),
+    )
+    try:
+        await app.bot.send_message(
+            chat_id=target, text=f"@b2b render 3:4 k2 corr={corr}\n\n{prompt}"
+        )
+        image_bytes = await asyncio.wait_for(
+            fut, timeout=settings.phygital_request_timeout_s
+        )
+    finally:
+        pending.pop(corr, None)
+
+    _HEROES_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    out = _HEROES_DIR / f"{session.thread_id}_{ts}_b2b_prefetch.jpg"
+    out.write_bytes(image_bytes)
+    log.info(
+        "b2b_prefetch_ok",
+        thread_id=session.thread_id,
+        corr=corr,
+        bytes=len(image_bytes),
+        path=str(out),
+    )
+    return {"path": str(out), "prompt": prompt, "style": style}
+
+
+def pop_hero_prefetch(app: Application, thread_id: str) -> asyncio.Task | None:
+    store = app.bot_data.get(PREFETCH_KEY) or {}
+    return store.pop(thread_id, None)
+
+
+def cancel_hero_prefetch(app: Application, thread_id: str) -> None:
+    """Call off the speculative bet (regenerate/refine/cancel paths)."""
+    task = pop_hero_prefetch(app, thread_id)
+    if task is not None and not task.done():
+        task.cancel()
+        log.info("b2b_prefetch_cancelled", thread_id=thread_id)
+
+
 async def _request_phygital_render(
     app: Application, session: Session, payload: dict
 ) -> None:
@@ -450,6 +608,57 @@ async def _request_phygital_render(
     image_prompt = (payload.get("image_prompt") or "").strip()
     image_style = payload.get("image_style") or "render"
 
+    # 0. Speculative prefetch: if a bet for this thread is done or in flight,
+    # ride it instead of starting a fresh render. Any failure → regular flow.
+    prefetch_task = pop_hero_prefetch(app, session.thread_id)
+    if prefetch_task is not None:
+        progress: asyncio.Task | None = None
+        try:
+            if not prefetch_task.done():
+                status_msg = await app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text=(
+                        "Hero-картинка уже генерится в фоне — запустил её, пока "
+                        "ты смотрел текст. Жду результат..."
+                    ),
+                )
+                progress = _b2b_progress_task(
+                    app,
+                    session.chat_id,
+                    status_msg.message_id,
+                    time.monotonic(),
+                    settings.phygital_request_timeout_s,
+                )
+            pre = await prefetch_task
+        except asyncio.CancelledError:
+            if not prefetch_task.cancelled():
+                raise  # we were cancelled, not the prefetch
+            log.info("b2b_prefetch_was_cancelled", thread_id=session.thread_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "b2b_prefetch_failed_fallback",
+                thread_id=session.thread_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        else:
+            await app.bot.send_message(
+                chat_id=session.chat_id,
+                text="Hero-картинка получена (сгенерирована заранее). Накладываю в шаблоны...",
+            )
+            session.status = "running"
+            put(app.bot_data, session)
+            decision = {
+                "action": "upload",
+                "local_path": pre["path"],
+                "style": pre["style"],
+                "prompt": pre["prompt"],
+            }
+            await _resume(app, session, decision)
+            return
+        finally:
+            if progress is not None:
+                progress.cancel()
+
     if not image_prompt:
         log.warning("b2b_skip_empty_prompt", thread_id=session.thread_id)
         await _render_image_upload(app, session, payload)
@@ -469,7 +678,7 @@ async def _request_phygital_render(
     request_text = f"{header}\n\n{image_prompt}"
     target = f"@{settings.phygital_bot_username}"
 
-    await app.bot.send_message(
+    status_msg = await app.bot.send_message(
         chat_id=session.chat_id,
         text=(
             "Запрашиваю hero-картинку у @"
@@ -506,6 +715,13 @@ async def _request_phygital_render(
         prompt_chars=len(image_prompt),
     )
 
+    progress = _b2b_progress_task(
+        app,
+        session.chat_id,
+        status_msg.message_id,
+        started,
+        settings.phygital_request_timeout_s,
+    )
     try:
         image_bytes = await asyncio.wait_for(
             fut, timeout=settings.phygital_request_timeout_s
@@ -545,6 +761,7 @@ async def _request_phygital_render(
         await _render_image_upload(app, session, payload)
         return
     finally:
+        progress.cancel()
         pending.pop(corr, None)
 
     # Success: persist bytes and resume the graph as if user uploaded.
@@ -686,6 +903,9 @@ async def on_hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # next-step instruction as a fresh message.
     await q.edit_message_reply_markup(reply_markup=None)
     action = q.data.split(":", 1)[1]
+    if action != "approve":
+        # Winner is about to change (or session ends) — call off the bet.
+        cancel_hero_prefetch(context.application, session.thread_id)
     if action == "refine":
         session.status = "awaiting_refine"
         put(context.application.bot_data, session)
