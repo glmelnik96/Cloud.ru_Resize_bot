@@ -88,12 +88,34 @@ def _ask_key(scenario_id: str, formats: list[str] | None) -> str:
 
 
 def _scenario_needs_hero(scenario_id: str, formats: list[str] | None) -> bool:
+    """True if any rendered format has a hero slot (cutout OR framed cover)."""
     manifest = load_banner_manifest()
     fmts = formats or manifest.scenarios[scenario_id].formats
     for f in fmts:
-        if any(isinstance(l, HeroCutoutLayer) for l in manifest.templates[f].layers):
+        if any(l.type in ("hero", "hero_cutout") for l in manifest.templates[f].layers):
             return True
     return False
+
+
+# Hero source override per SMM archetype: speaker faces are real people — never
+# generated, upload only. Webinars / visual covers fall back to the scenario's
+# HeroPolicy.source. Keys are format slugs (SMM archetypes).
+_HERO_SOURCE_OVERRIDE = {
+    "smm_cover_speaker": "upload",
+    "smm_cover_announce": "upload",
+    "smm_cover_visual": "both",
+}
+
+
+def _hero_source(scenario_id: str, formats: list[str] | None) -> str:
+    """Resolve the hero source (generate | upload | both) for this run."""
+    if scenario_id == "smm_covers" and formats:
+        override = _HERO_SOURCE_OVERRIDE.get(formats[0])
+        if override:
+            return override
+    manifest = load_banner_manifest()
+    policy = manifest.scenarios[scenario_id].hero
+    return policy.source if policy else "upload"
 
 
 # ----- entry & steps --------------------------------------------------------
@@ -196,9 +218,7 @@ async def on_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not _scenario_needs_hero(scenario_id, formats):
         return await _show_confirm(context, session)
 
-    manifest = load_banner_manifest()
-    hero_policy = manifest.scenarios[scenario_id].hero
-    source = hero_policy.source if hero_policy else "upload"
+    source = _hero_source(scenario_id, formats)
     put(context.application.bot_data, session)
     if source in ("generate", "both"):
         await update.message.reply_text(
@@ -225,19 +245,80 @@ async def on_hero_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     choice = q.data.split(":", 1)[1]
     await q.edit_message_reply_markup(reply_markup=None)
     if choice == "generate":
-        await context.bot.send_message(
-            chat_id=session.chat_id,
-            text=(
-                "Опиши картинку для генерации (англоязычный промпт работает лучше). "
-                "Без текста/логотипов — их наложит композер."
-            ),
-        )
-        return B_HERO_PROMPT
+        return await _propose_prompt(context, session)
     await context.bot.send_message(
         chat_id=session.chat_id,
         text="Пришли изображение — фото или файл (PNG/JPEG). Фон уберу автоматически.",
     )
     return B_HERO
+
+
+async def _propose_prompt(context: ContextTypes.DEFAULT_TYPE, session: Session) -> int:
+    """Auto-write an EN image prompt from the banner title, show it for the user
+    to confirm or edit."""
+    from infra.banner_image_prompt import generate_banner_image_prompt
+
+    title = session.wizard_data.get("texts", {}).get("title", "").strip()
+    if not title:
+        await context.bot.send_message(
+            chat_id=session.chat_id,
+            text="Опиши картинку для генерации (можно по-английски). Без текста и логотипов.",
+        )
+        return B_HERO_PROMPT
+
+    cutout = _scenario_is_cutout(session)
+    await context.bot.send_message(chat_id=session.chat_id, text="Придумываю промпт по теме…")
+    try:
+        prompt = await generate_banner_image_prompt(title, cutout=cutout)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("banner_prompt_gen_failed", thread_id=session.thread_id, error=str(exc))
+        await context.bot.send_message(
+            chat_id=session.chat_id,
+            text="Не получилось придумать промпт. Напиши его сам (можно по-английски):",
+        )
+        return B_HERO_PROMPT
+
+    session.wizard_data["gen_prompt"] = prompt
+    put(context.application.bot_data, session)
+    await context.bot.send_message(
+        chat_id=session.chat_id,
+        text=(
+            "Предлагаю такой промпт для картинки:\n\n"
+            f"{prompt}\n\n"
+            "Можешь прислать свой вариант текстом, либо подтвердить."
+        ),
+        reply_markup=_kb([[("bprompt:ok", "Сгенерировать с этим"), ("bprompt:cancel", "Отмена")]]),
+    )
+    return B_HERO_PROMPT
+
+
+def _scenario_is_cutout(session: Session) -> bool:
+    """True if the chosen format(s) use a hero_cutout (→ generate with rmbg)."""
+    manifest = load_banner_manifest()
+    wd = session.wizard_data
+    fmts = wd.get("formats") or manifest.scenarios[wd["scenario_id"]].formats
+    for f in fmts:
+        if any(isinstance(l, HeroCutoutLayer) for l in manifest.templates[f].layers):
+            return True
+    return False
+
+
+async def on_prompt_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    if q is None or q.data is None:
+        return B_HERO_PROMPT
+    await q.answer()
+    user = update.effective_user
+    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    if session is None:
+        return ConversationHandler.END
+    await q.edit_message_reply_markup(reply_markup=None)
+    if q.data.endswith(":cancel"):
+        drop(context.application.bot_data, user.id)
+        await context.bot.send_message(chat_id=session.chat_id, text="Отменено.")
+        return ConversationHandler.END
+    # ok → prompt already stored in wizard_data
+    return await _show_confirm(context, session)
 
 
 async def on_hero_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -359,7 +440,10 @@ def build_banner_handler() -> ConversationHandler:
                 CallbackQueryHandler(on_hero_choice, pattern=r"^bhero:"),
                 MessageHandler(filters.PHOTO | filters.Document.IMAGE, on_hero_upload),
             ],
-            B_HERO_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_hero_prompt)],
+            B_HERO_PROMPT: [
+                CallbackQueryHandler(on_prompt_decision, pattern=r"^bprompt:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_hero_prompt),
+            ],
             B_CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^bconf:")],
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],

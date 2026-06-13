@@ -97,14 +97,17 @@ def _formats_need_cutout(manifest, scenario_id: str, formats: list[str] | None) 
     return False
 
 
-async def request_generate_cutout(
-    app: Application, session: Session, prompt: str
+async def request_generate(
+    app: Application, session: Session, prompt: str, *, cutout: bool
 ) -> bytes:
-    """Chained Phygital generate + remove-bg (rmbg=1).
+    """Phygital image generation.
 
-    One request — ``@b2b render 3:4 k2 rmbg=1 corr=<hex>\\n\\n<prompt>`` — and
-    Phygital runs the generated image through Photoroom before replying with a
-    Document (PNG with alpha). Returns the cutout bytes.
+    cutout=True  → chained generate + remove-bg: ``@b2b render 3:4 k2 rmbg=1
+        corr=<hex>\\n\\n<prompt>`` → reply Document (PNG with alpha).
+    cutout=False → plain render for a framed cover photo: ``@b2b render 4:3 k2
+        corr=<hex>\\n\\n<prompt>`` → reply photo.
+
+    Returns the image bytes. Raises B2BError / asyncio.TimeoutError on failure.
     """
     settings = get_settings()
     corr = secrets.token_hex(4)
@@ -117,23 +120,29 @@ async def request_generate_cutout(
         "user_id": session.user_id,
     }
     target = f"@{settings.phygital_bot_username}"
+    if cutout:
+        header = f"@b2b render 3:4 k2 rmbg=1 corr={corr}"
+    else:
+        header = f"@b2b render 4:3 k2 corr={corr}"
     started = time.monotonic()
     async with _REMOVEBG_SEMAPHORE:
         try:
             await app.bot.send_message(
-                chat_id=target,
-                text=f"@b2b render 3:4 k2 rmbg=1 corr={corr}\n\n{prompt}",
+                chat_id=target, text=f"{header}\n\n{prompt}"
             )
-            log.info("b2b_gen_cutout_sent", thread_id=session.thread_id, corr=corr)
+            log.info(
+                "b2b_gen_sent", thread_id=session.thread_id, corr=corr, cutout=cutout
+            )
             return await asyncio.wait_for(
                 fut, timeout=settings.phygital_request_timeout_s
             )
         finally:
             pending.pop(corr, None)
             log.info(
-                "b2b_gen_cutout_done",
+                "b2b_gen_done",
                 thread_id=session.thread_id,
                 corr=corr,
+                cutout=cutout,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
 
@@ -157,14 +166,30 @@ async def run_banner(app: Application, session: Session) -> None:
     manifest = load_banner_manifest()
     scenario = manifest.scenarios[scenario_id]
 
+    need_cutout = _formats_need_cutout(manifest, scenario_id, formats)
+
     hero_bytes: bytes | None = None
     if gen_prompt:
-        # Generated hero already comes back as a remove-bg cutout (rmbg=1).
+        settings = get_settings()
+        status = await app.bot.send_message(
+            chat_id=session.chat_id,
+            text=(
+                "Генерирую изображение через @"
+                f"{settings.phygital_bot_username}… "
+                f"до {settings.phygital_request_timeout_s // 60} мин."
+            ),
+        )
+        progress = _b2b_progress_task(
+            app, session.chat_id, status.message_id, time.monotonic(),
+            settings.phygital_request_timeout_s,
+        )
         try:
-            hero_bytes = await request_generate_cutout(app, session, gen_prompt)
+            hero_bytes = await request_generate(
+                app, session, gen_prompt, cutout=need_cutout
+            )
         except Exception as exc:  # noqa: BLE001
             reason = getattr(exc, "reason", type(exc).__name__)
-            log.warning("gen_cutout_failed", thread_id=session.thread_id, reason=reason)
+            log.warning("gen_failed", thread_id=session.thread_id, reason=reason)
             await app.bot.send_message(
                 chat_id=session.chat_id,
                 text=(
@@ -174,13 +199,11 @@ async def run_banner(app: Application, session: Session) -> None:
             )
             drop(app.bot_data, session.user_id)
             return
+        finally:
+            progress.cancel()
     elif hero_path:
         hero_bytes = Path(hero_path).read_bytes()
-        if (
-            scenario.hero is not None
-            and scenario.hero.remove_bg
-            and _formats_need_cutout(manifest, scenario_id, formats)
-        ):
+        if scenario.hero is not None and scenario.hero.remove_bg and need_cutout:
             hero_bytes = await _maybe_removebg(app, session, hero_bytes)
 
     out_dir = _BANNER_OUT / session.thread_id
