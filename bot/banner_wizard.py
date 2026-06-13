@@ -80,6 +80,16 @@ def _kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     )
 
 
+def _banner_session(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Session | None:
+    """Active session iff it belongs to the /banner pipeline. Returns None for a
+    /new (brief) session so a lingering banner ConversationHandler never writes
+    into someone else's flow."""
+    s = get_active(context.application.bot_data, user_id)
+    if s is None or s.kind != "banner":
+        return None
+    return s
+
+
 def _ask_key(scenario_id: str, formats: list[str] | None) -> str:
     """Key into _ASK: SMM archetypes vary per chosen format, webinars per scenario."""
     if scenario_id == "smm_covers" and formats:
@@ -133,7 +143,9 @@ async def cmd_banner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
 
-    session = Session(user_id=user.id, chat_id=chat.id, status="banner_wizard")
+    session = Session(
+        user_id=user.id, chat_id=chat.id, status="banner_wizard", kind="banner"
+    )
     put(context.application.bot_data, session)
     log.info("banner_wizard_start", user_id=user.id, thread_id=session.thread_id)
     await update.message.reply_text(
@@ -149,7 +161,7 @@ async def on_scenario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return B_SCENARIO
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     scenario_id = q.data.split(":", 1)[1]
@@ -174,7 +186,7 @@ async def on_archetype(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return B_ARCHETYPE
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     fmt = q.data.split(":", 1)[1]
@@ -201,7 +213,7 @@ async def on_slot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not text:
         return B_SLOT
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     queue: list[str] = session.wizard_data["ask_queue"]
@@ -239,7 +251,7 @@ async def on_hero_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return B_HERO
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     choice = q.data.split(":", 1)[1]
@@ -309,7 +321,7 @@ async def on_prompt_decision(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return B_HERO_PROMPT
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     await q.edit_message_reply_markup(reply_markup=None)
@@ -326,7 +338,7 @@ async def on_hero_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return B_HERO_PROMPT
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     session.wizard_data["gen_prompt"] = text
@@ -339,7 +351,7 @@ async def on_hero_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if msg is None:
         return B_HERO
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
 
@@ -400,7 +412,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return B_CONFIRM
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _banner_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     await q.edit_message_reply_markup(reply_markup=None)

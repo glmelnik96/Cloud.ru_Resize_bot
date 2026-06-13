@@ -81,9 +81,14 @@ class HeroCutoutLayer(BaseModel):
     """Alpha-cutout hero (background removed) composited into a rect.
 
     M4: webinar mockups place the cutout (speaker / 3D object) on the
-    green panel with its bottom edge flush to the panel bottom. The
-    cutout is scaled to fit inside the rect (contain, aspect preserved)
-    and anchored, then alpha-composited so transparency survives.
+    green panel. The cutout is scaled into the rect and anchored, then
+    alpha-composited so transparency survives.
+
+    ``fit`` controls scaling:
+      - "contain": scale to fit entirely inside the rect (no clipping,
+        may leave empty margins) — good for portraits that must stay whole.
+      - "cover": scale to fill the rect (clips overflow against the rect
+        edges) — fills the panel like the Figma mockups, no green voids.
     """
 
     type: Literal["hero_cutout"]
@@ -92,6 +97,7 @@ class HeroCutoutLayer(BaseModel):
     y: int
     width: int = Field(gt=0)
     height: int = Field(gt=0)
+    fit: Literal["cover", "contain"] = "contain"
     anchor_h: Literal["left", "center", "right"] = "center"
     anchor_v: Literal["top", "middle", "bottom"] = "bottom"
     allow_upscale: bool = Field(

@@ -311,6 +311,34 @@ def test_hero_cutout_anchor_left_top():
     assert out.getpixel((95, 95)) == (0, 0, 255, 255)  # bottom-right: canvas bg
 
 
+def test_hero_cutout_cover_fills_rect_no_voids():
+    """cover-fit scales an opaque square to fill the whole rect — every
+    corner is covered, no canvas bg (#0000FF) showing inside the rect."""
+    hero = Image.new("RGBA", (50, 30), (255, 0, 0, 255))  # landscape opaque
+    spec = _cutout_spec(fit="cover")
+    out = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    for x, y in [(2, 2), (98, 2), (2, 98), (98, 98), (50, 50)]:
+        assert out.getpixel((x, y)) == (255, 0, 0, 255), (x, y)
+
+
+def test_hero_cutout_cover_clips_overflow_to_rect():
+    """cover-fit must not paint outside its own rect (overflow clipped)."""
+    hero = Image.new("RGBA", (50, 30), (255, 0, 0, 255))
+    layer = {
+        "type": "hero_cutout", "x": 20, "y": 20, "width": 40, "height": 40,
+        "fit": "cover",
+    }
+    spec = TemplateSpec.model_validate(
+        {"width": 100, "height": 100, "background_color": "#0000FF", "layers": [layer]}
+    )
+    out = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # inside the 20..59 rect → red; outside → canvas bg, not overpainted
+    assert out.getpixel((40, 40)) == (255, 0, 0, 255)
+    assert out.getpixel((5, 5)) == (0, 0, 255, 255)
+    assert out.getpixel((90, 90)) == (0, 0, 255, 255)
+    assert out.getpixel((10, 40)) == (0, 0, 255, 255)  # just left of rect
+
+
 # ----- composer: fixed_content + optional hero --------------------------------
 
 

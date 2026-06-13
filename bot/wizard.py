@@ -74,6 +74,16 @@ def _kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
     )
 
 
+def _brief_session(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Session | None:
+    """Active session iff it belongs to the /new (brief) pipeline. Returns None
+    for a /banner session so a lingering brief ConversationHandler never writes
+    into the banner flow (and vice-versa)."""
+    s = get_active(context.application.bot_data, user_id)
+    if s is None or s.kind != "brief":
+        return None
+    return s
+
+
 # ----- entry & steps --------------------------------------------------------
 
 
@@ -106,7 +116,7 @@ async def on_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not text:
         return PRODUCT
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _brief_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     session.wizard_data["product"] = text
@@ -124,7 +134,7 @@ async def on_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return GOAL
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _brief_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     session.wizard_data["goal"] = q.data
@@ -151,7 +161,7 @@ async def on_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if not text:
         return AUDIENCE
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _brief_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
     session.wizard_data["audience"] = text
@@ -188,7 +198,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return CONFIRM
     await q.answer()
     user = update.effective_user
-    session = get_active(context.application.bot_data, user.id)  # type: ignore[union-attr]
+    session = _brief_session(context, user.id)  # type: ignore[union-attr]
     if session is None:
         return ConversationHandler.END
 

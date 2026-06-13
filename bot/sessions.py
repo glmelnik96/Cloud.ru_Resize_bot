@@ -20,6 +20,11 @@ class Session:
     chat_id: int
     thread_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     status: str = "wizard"  # wizard | running | awaiting_hitl | awaiting_refine | awaiting_image_upload | done | cancelled
+    # Which pipeline owns this session: "brief" (/new LangGraph) or "banner"
+    # (/banner scenario). Handlers from the other pipeline must ignore a
+    # session whose kind isn't theirs — prevents a lingering ConversationHandler
+    # from one flow stealing text input meant for the other.
+    kind: str = "brief"
     wizard_data: dict[str, Any] = field(default_factory=dict)
     hitl_message_id: int | None = None
     # Single message we keep edit'ing through the run to show "Этап N/M: ..." to user.

@@ -208,11 +208,19 @@ def _draw_hero_cutout_layer(
     *,
     hero: Image.Image,
 ) -> None:
-    """Contain-scale the alpha cutout into the rect, anchor it, and
-    alpha-composite (paste would discard the hero's own transparency)."""
+    """Scale the alpha cutout into the rect and alpha-composite it.
+
+    fit="contain": whole cutout fits inside the rect (may leave margins).
+    fit="cover": cutout fills the rect; overflow is clipped against the rect
+    edges (anchor decides which side bleeds off). Cover keeps the green panel
+    full like the Figma mockups instead of floating a small object in voids.
+    """
     target_w, target_h = layer.width, layer.height
     src_w, src_h = hero.size
-    scale = min(target_w / src_w, target_h / src_h)
+    if layer.fit == "cover":
+        scale = max(target_w / src_w, target_h / src_h)
+    else:
+        scale = min(target_w / src_w, target_h / src_h)
     if scale > 1.0 and not layer.allow_upscale:
         scale = 1.0
     new_w = max(1, round(src_w * scale))
@@ -223,6 +231,7 @@ def _draw_hero_cutout_layer(
         else hero.resize((new_w, new_h), Image.LANCZOS)
     )
 
+    # Position the (possibly oversized) cutout within the rect by anchor.
     if layer.anchor_h == "left":
         x = layer.x
     elif layer.anchor_h == "center":
@@ -236,6 +245,20 @@ def _draw_hero_cutout_layer(
         y = layer.y + (target_h - new_h) // 2
     else:  # bottom
         y = layer.y + target_h - new_h
+
+    if layer.fit == "cover":
+        # Clip the cutout to the rect so overflow doesn't paint over other
+        # zones (logo, text, neighbouring panels).
+        crop_l = max(0, layer.x - x)
+        crop_t = max(0, layer.y - y)
+        crop_r = min(new_w, layer.x + target_w - x)
+        crop_b = min(new_h, layer.y + target_h - y)
+        if crop_r <= crop_l or crop_b <= crop_t:
+            return
+        if (crop_l, crop_t, crop_r, crop_b) != (0, 0, new_w, new_h):
+            resized = resized.crop((crop_l, crop_t, crop_r, crop_b))
+            x += crop_l
+            y += crop_t
 
     canvas.alpha_composite(resized, (x, y))
 
