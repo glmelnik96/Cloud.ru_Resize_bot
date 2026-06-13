@@ -117,27 +117,30 @@ def test_unknown_layer_type_rejected():
         )
 
 
-def test_unknown_text_slot_rejected():
-    with pytest.raises(ValidationError):
-        TemplateSpec.model_validate(
-            {
-                "width": 100,
-                "height": 100,
-                "layers": [
-                    {
-                        "type": "text",
-                        "slot": "footnote",
-                        "x": 0,
-                        "y": 0,
-                        "width": 10,
-                        "height": 10,
-                        "font_family": "SBSansDisplay",
-                        "font_size_max": 12,
-                        "color": "#000",
-                    }
-                ],
-            }
-        )
+def test_arbitrary_text_slot_accepted():
+    # M4.0: slot is a free string (title/date/speaker_* in banner
+    # scenarios), no longer a closed Literal. Typo protection moved to
+    # the scenario level (wizard collects only declared slots).
+    spec = TemplateSpec.model_validate(
+        {
+            "width": 100,
+            "height": 100,
+            "layers": [
+                {
+                    "type": "text",
+                    "slot": "speaker_role",
+                    "x": 0,
+                    "y": 0,
+                    "width": 10,
+                    "height": 10,
+                    "font_family": "SBSansDisplay",
+                    "font_size_max": 12,
+                    "color": "#000",
+                }
+            ],
+        }
+    )
+    assert spec.layers[0].slot == "speaker_role"
 
 
 def test_negative_dimensions_rejected():

@@ -19,6 +19,7 @@ import structlog
 from PIL import Image, ImageDraw, ImageFont
 
 from infra.template_manifest import (
+    HeroCutoutLayer,
     HeroLayer,
     ImageLayer,
     TemplateSpec,
@@ -168,6 +169,44 @@ def _draw_hero_layer(
         canvas.paste(resized, (x, y))
 
 
+def _draw_hero_cutout_layer(
+    canvas: Image.Image,
+    layer: HeroCutoutLayer,
+    *,
+    hero: Image.Image,
+) -> None:
+    """Contain-scale the alpha cutout into the rect, anchor it, and
+    alpha-composite (paste would discard the hero's own transparency)."""
+    target_w, target_h = layer.width, layer.height
+    src_w, src_h = hero.size
+    scale = min(target_w / src_w, target_h / src_h)
+    if scale > 1.0 and not layer.allow_upscale:
+        scale = 1.0
+    new_w = max(1, round(src_w * scale))
+    new_h = max(1, round(src_h * scale))
+    resized = (
+        hero
+        if (new_w, new_h) == (src_w, src_h)
+        else hero.resize((new_w, new_h), Image.LANCZOS)
+    )
+
+    if layer.anchor_h == "left":
+        x = layer.x
+    elif layer.anchor_h == "center":
+        x = layer.x + (target_w - new_w) // 2
+    else:  # right
+        x = layer.x + target_w - new_w
+
+    if layer.anchor_v == "top":
+        y = layer.y
+    elif layer.anchor_v == "middle":
+        y = layer.y + (target_h - new_h) // 2
+    else:  # bottom
+        y = layer.y + target_h - new_h
+
+    canvas.alpha_composite(resized, (x, y))
+
+
 def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     """Draw one text layer. Returns True if the text was truncated."""
     if not text:
@@ -247,7 +286,7 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
 def compose(
     spec: TemplateSpec,
     *,
-    hero: Image.Image | Path | bytes,
+    hero: Image.Image | Path | bytes | None = None,
     texts: dict[str, str],
     assets_root: Path,
     slug: str | None = None,
@@ -256,15 +295,20 @@ def compose(
 
     Args:
         spec: parsed TemplateSpec.
-        hero: PIL Image, path to file, or raw bytes (PNG/JPEG).
-        texts: dict mapping slot name (slogan/cta/age_rating) to string.
+        hero: PIL Image, path to file, or raw bytes (PNG/JPEG). May be
+            None for templates without hero/hero_cutout layers (M4
+            text-only covers); a hero layer with hero=None raises.
+        texts: dict mapping slot name (slogan/cta/age_rating in M3,
+            title/date/speaker_* in M4) to string.
         assets_root: project root (used to resolve ImageLayer.path).
         slug: optional format slug, used only in text_truncated logging.
 
     Returns:
         PIL.Image.Image in RGBA mode, caller is responsible for saving.
     """
-    if isinstance(hero, Path):
+    if hero is None:
+        hero_img = None
+    elif isinstance(hero, Path):
         hero_img = Image.open(hero).convert("RGBA")
     elif isinstance(hero, (bytes, bytearray)):
         hero_img = Image.open(io.BytesIO(hero)).convert("RGBA")
@@ -279,10 +323,21 @@ def compose(
     for _, layer in layers:
         if isinstance(layer, ImageLayer):
             _draw_image_layer(canvas, layer, assets_root=assets_root)
-        elif isinstance(layer, HeroLayer):
-            _draw_hero_layer(canvas, layer, hero=hero_img)
+        elif isinstance(layer, (HeroLayer, HeroCutoutLayer)):
+            if hero_img is None:
+                raise ValueError(
+                    f"spec ({slug or 'unknown'}) has a {layer.type} layer "
+                    "but compose() was called with hero=None"
+                )
+            if isinstance(layer, HeroLayer):
+                _draw_hero_layer(canvas, layer, hero=hero_img)
+            else:
+                _draw_hero_cutout_layer(canvas, layer, hero=hero_img)
         elif isinstance(layer, TextLayer):
-            text = texts.get(layer.slot, "")
+            if layer.fixed_content is not None:
+                text = layer.fixed_content
+            else:
+                text = texts.get(layer.slot or "", "")
             if _draw_text_layer(canvas, layer, text):
                 log.warning(
                     "text_truncated",

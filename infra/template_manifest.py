@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PerLineHighlight(BaseModel):
@@ -39,6 +39,10 @@ class ImageLayer(BaseModel):
     """Static PNG placed at (x, y) with explicit (width, height)."""
 
     type: Literal["image"]
+    name: str | None = Field(
+        default=None,
+        description="Optional layer id used by scenario variant overrides.",
+    )
     path: str = Field(description="Path relative to project root")
     x: int
     y: int
@@ -51,6 +55,7 @@ class HeroLayer(BaseModel):
     """User-uploaded PNG drawn into a rect with fit policy."""
 
     type: Literal["hero"]
+    name: str | None = None
     x: int
     y: int
     width: int = Field(gt=0)
@@ -59,11 +64,50 @@ class HeroLayer(BaseModel):
     z: int = 0
 
 
+class HeroCutoutLayer(BaseModel):
+    """Alpha-cutout hero (background removed) composited into a rect.
+
+    M4: webinar mockups place the cutout (speaker / 3D object) on the
+    green panel with its bottom edge flush to the panel bottom. The
+    cutout is scaled to fit inside the rect (contain, aspect preserved)
+    and anchored, then alpha-composited so transparency survives.
+    """
+
+    type: Literal["hero_cutout"]
+    name: str | None = None
+    x: int
+    y: int
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    anchor_h: Literal["left", "center", "right"] = "center"
+    anchor_v: Literal["top", "middle", "bottom"] = "bottom"
+    allow_upscale: bool = Field(
+        default=True,
+        description="If False, a cutout smaller than the rect is not "
+        "enlarged (avoids blurring small portraits).",
+    )
+    z: int = 0
+
+
 class TextLayer(BaseModel):
-    """Auto-shrinking text in a rect, optional highlight backgrounds."""
+    """Auto-shrinking text in a rect, optional highlight backgrounds.
+
+    Either ``slot`` (runtime text from the texts dict) or
+    ``fixed_content`` (label baked into the template, e.g. per-format
+    button captions in M4 webinar banners) must be set.
+    """
 
     type: Literal["text"]
-    slot: Literal["slogan", "cta", "age_rating"]
+    name: str | None = None
+    slot: str | None = Field(
+        default=None,
+        description="Slot key looked up in the runtime texts dict "
+        "(slogan/cta/age_rating in M3, title/date/speaker_* in M4).",
+    )
+    fixed_content: str | None = Field(
+        default=None,
+        description="Baked-in text; takes precedence over slot.",
+    )
     x: int
     y: int
     width: int = Field(gt=0)
@@ -94,8 +138,17 @@ class TextLayer(BaseModel):
     )
     z: int = 0
 
+    @model_validator(mode="after")
+    def _slot_or_fixed(self) -> "TextLayer":
+        if self.slot is None and self.fixed_content is None:
+            raise ValueError("text layer needs either slot or fixed_content")
+        return self
 
-Layer = Annotated[ImageLayer | HeroLayer | TextLayer, Field(discriminator="type")]
+
+Layer = Annotated[
+    ImageLayer | HeroLayer | HeroCutoutLayer | TextLayer,
+    Field(discriminator="type"),
+]
 
 
 class TemplateSpec(BaseModel):
@@ -107,12 +160,89 @@ class TemplateSpec(BaseModel):
     layers: list[Layer]
 
 
+class HeroPolicy(BaseModel):
+    """How a scenario obtains its hero image."""
+
+    source: Literal["generate", "upload", "both"] = "both"
+    remove_bg: bool = Field(
+        default=False,
+        description="Run the hero through Phygital Remove Background "
+        "(b2b removebg / rmbg=1) before composing.",
+    )
+
+
+class VariantSpec(BaseModel):
+    """Named color/composition tweak inside a scenario.
+
+    ``overrides`` maps a layer ``name`` to a partial layer dict that is
+    deep-merged into every layer with that name across the scenario's
+    formats (e.g. swap accent strip color or pattern asset path).
+    """
+
+    id: str
+    title: str | None = None
+    overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class ScenarioSpec(BaseModel):
+    """One /banner scenario: formats + wizard slots + hero policy + variants."""
+
+    title: str
+    formats: list[str] = Field(min_length=1)
+    slots: list[str] = Field(
+        default_factory=list,
+        description="Slot keys the wizard must collect (title, date, ...).",
+    )
+    hero: HeroPolicy | None = Field(
+        default=None,
+        description="None means the scenario composes without a hero "
+        "(e.g. text-only TG cover).",
+    )
+    variants: list[VariantSpec] = Field(default_factory=list)
+
+
 class TemplateManifest(BaseModel):
-    """Top-level manifest: version + slug -> template."""
+    """Top-level manifest: version + slug -> template (+ M4 scenarios)."""
 
     version: str
     comment: str | None = None
     templates: dict[str, TemplateSpec]
+    scenarios: dict[str, ScenarioSpec] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _scenario_formats_exist(self) -> "TemplateManifest":
+        for sid, sc in self.scenarios.items():
+            unknown = [f for f in sc.formats if f not in self.templates]
+            if unknown:
+                raise ValueError(
+                    f"scenario {sid!r} references unknown formats: {unknown}"
+                )
+        return self
+
+
+def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def apply_variant(spec: TemplateSpec, variant: VariantSpec) -> TemplateSpec:
+    """Return a new TemplateSpec with the variant's overrides merged into
+    every layer whose ``name`` appears in ``variant.overrides``. Layers
+    without a matching name are kept as-is. The result is re-validated, so
+    a bad override fails loudly instead of producing a broken render."""
+    if not variant.overrides:
+        return spec
+    raw = spec.model_dump()
+    for layer in raw["layers"]:
+        patch = variant.overrides.get(layer.get("name") or "")
+        if patch:
+            layer.update(_deep_merge(layer, patch))
+    return TemplateSpec.model_validate(raw)
 
 
 def load_manifest(path: Path) -> TemplateManifest:
