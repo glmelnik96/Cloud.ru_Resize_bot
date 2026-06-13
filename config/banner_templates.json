@@ -1210,9 +1210,9 @@
           "name": "title",
           "slot": "title",
           "x": 40,
-          "y": 36,
+          "y": 30,
           "width": 831,
-          "height": 177,
+          "height": 166,
           "font_family": "SBSansDisplay",
           "font_weight": "Regular",
           "font_size_max": 80,
@@ -1229,9 +1229,9 @@
           "name": "subtitle",
           "slot": "subtitle",
           "x": 40,
-          "y": 219,
+          "y": 218,
           "width": 846,
-          "height": 100,
+          "height": 90,
           "font_family": "SBSansDisplay",
           "font_weight": "Regular",
           "font_size_max": 35,
@@ -1240,7 +1240,7 @@
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "top",
-          "max_lines": 3,
+          "max_lines": 2,
           "z": 30
         }
       ]
