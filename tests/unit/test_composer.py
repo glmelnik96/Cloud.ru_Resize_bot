@@ -58,6 +58,25 @@ def test_wrap_preserves_explicit_newlines():
     assert lines == ["foo", "bar"]
 
 
+def test_wrap_hard_breaks_overlong_word():
+    """A single word wider than the rect is broken at the character level so
+    it never overflows (long URLs / glued-together compound words)."""
+    font = ImageFont.truetype(str(FONT_DIR / "SBSansDisplay-Regular.otf"), 40)
+    max_width = 200
+    word = "Импортозамещаемостьинфраструктуры"
+    lines = _wrap_to_width(word, font, max_width)
+    assert len(lines) >= 2
+    assert all(font.getlength(ln) <= max_width for ln in lines)
+    assert "".join(lines) == word  # no characters lost
+
+
+def test_wrap_breaks_overlong_word_mixed_with_normal():
+    font = ImageFont.truetype(str(FONT_DIR / "SBSansDisplay-Regular.otf"), 40)
+    max_width = 200
+    lines = _wrap_to_width("ок " + "x" * 80, font, max_width)
+    assert all(font.getlength(ln) <= max_width for ln in lines)
+
+
 # ----- Auto-shrink ------------------------------------------------------------
 
 

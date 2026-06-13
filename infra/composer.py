@@ -44,26 +44,59 @@ def _font_path(family: str, weight: str) -> Path:
     return path
 
 
+def _break_long_word(
+    word: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> list[str]:
+    """Hard-break a single word that is wider than max_width at the character
+    level so it never overflows the layer rect (long URLs, compound nouns,
+    glued-together words). Returns >=1 chunks, each <= max_width (except a lone
+    over-wide character, which is unavoidable)."""
+    chunks: list[str] = []
+    cur = ""
+    for ch in word:
+        if not cur or font.getlength(cur + ch) <= max_width:
+            cur += ch
+        else:
+            chunks.append(cur)
+            cur = ch
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def _wrap_to_width(
     text: str,
     font: ImageFont.FreeTypeFont,
     max_width: int,
 ) -> list[str]:
-    """Greedy word-wrap. Respects existing newlines in text."""
+    """Greedy word-wrap. Respects existing newlines; words wider than
+    max_width are hard-broken at the character level so text never spills
+    outside the rect."""
     out: list[str] = []
     for paragraph in text.split("\n"):
         words = paragraph.split()
         if not words:
             out.append("")
             continue
-        line = words[0]
-        for word in words[1:]:
-            candidate = f"{line} {word}"
+        line = ""
+        for word in words:
+            candidate = f"{line} {word}".strip()
             if font.getlength(candidate) <= max_width:
                 line = candidate
-            else:
+                continue
+            # word doesn't fit on the current line
+            if line:
                 out.append(line)
+                line = ""
+            if font.getlength(word) <= max_width:
                 line = word
+            else:
+                # word itself is wider than the rect — hard-break it
+                parts = _break_long_word(word, font, max_width)
+                out.extend(parts[:-1])
+                line = parts[-1]
         out.append(line)
     return out
 
