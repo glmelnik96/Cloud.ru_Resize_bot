@@ -31,3 +31,4 @@ Thumbs.db
 
 # M4 banner manual render output (throwaway)
 tests/manual/_banner_out/
+tests/manual/_heroes/
