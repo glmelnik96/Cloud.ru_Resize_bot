@@ -225,14 +225,18 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     inner_w = layer.width - 2 * layer.padding_x
     inner_h = layer.height - 2 * layer.padding_y
 
-    # full-rect background (CTA plate / slogan plate)
+    # full-rect background (CTA plate / slogan plate / outlined badge)
     if layer.background is not None:
         bg = layer.background
         box = (layer.x, layer.y, layer.x + layer.width, layer.y + layer.height)
+        outline = bg.border_color if (bg.border_color and bg.border_width) else None
+        width = bg.border_width if outline else 1
         if bg.radius > 0:
-            draw.rounded_rectangle(box, radius=bg.radius, fill=bg.color)
+            draw.rounded_rectangle(
+                box, radius=bg.radius, fill=bg.color, outline=outline, width=width
+            )
         else:
-            draw.rectangle(box, fill=bg.color)
+            draw.rectangle(box, fill=bg.color, outline=outline, width=width)
 
     # vertical placement within inner box
     if layer.align_v == "top":

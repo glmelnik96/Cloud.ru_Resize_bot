@@ -29,10 +29,23 @@ class PerLineHighlight(BaseModel):
 
 
 class BoxBackground(BaseModel):
-    """One rectangle filling the whole text-slot rect (CTA plate)."""
+    """One rectangle filling the whole text-slot rect (CTA plate / badge).
 
-    color: str
+    ``color`` is the fill; set it to None for an outline-only badge (the
+    webinar "Вебинар" pill is a 2px border with no fill). ``border_color`` +
+    ``border_width`` draw a stroke on top of (or instead of) the fill.
+    """
+
+    color: str | None = None
     radius: int = 0
+    border_color: str | None = None
+    border_width: int = 0
+
+    @model_validator(mode="after")
+    def _fill_or_border(self) -> "BoxBackground":
+        if self.color is None and not (self.border_color and self.border_width):
+            raise ValueError("BoxBackground needs a fill color or a border")
+        return self
 
 
 class ImageLayer(BaseModel):

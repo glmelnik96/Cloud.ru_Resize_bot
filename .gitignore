@@ -28,3 +28,6 @@ storage_state.json
 # OS
 .DS_Store
 Thumbs.db
+
+# M4 banner manual render output (throwaway)
+tests/manual/_banner_out/

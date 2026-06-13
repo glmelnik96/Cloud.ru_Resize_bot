@@ -79,6 +79,45 @@ def test_text_layer_requires_slot_or_fixed_content():
         )
 
 
+def test_box_background_outline_only():
+    """Webinar 'Вебинар' badge: 2px border, no fill."""
+    layer = TextLayer.model_validate(
+        {
+            "type": "text",
+            "fixed_content": "Вебинар",
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 40,
+            "font_family": "SBSansDisplay",
+            "font_size_max": 20,
+            "color": "#222222",
+            "background": {"border_color": "#222222", "border_width": 2},
+        }
+    )
+    assert layer.background is not None
+    assert layer.background.color is None
+    assert layer.background.border_width == 2
+
+
+def test_box_background_needs_fill_or_border():
+    with pytest.raises(ValidationError, match="fill color or a border"):
+        TextLayer.model_validate(
+            {
+                "type": "text",
+                "fixed_content": "x",
+                "x": 0,
+                "y": 0,
+                "width": 100,
+                "height": 40,
+                "font_family": "SBSansDisplay",
+                "font_size_max": 20,
+                "color": "#222222",
+                "background": {"radius": 4},
+            }
+        )
+
+
 def _minimal_template() -> dict:
     return {
         "width": 100,

@@ -62,6 +62,7 @@ _MENU_TEXT = (
     "\n"
     "Команды:\n"
     "/new — новый бриф (3 шага: продукт, цель, аудитория) и запуск генерации\n"
+    "/banner — сценарные баннеры под вебинар/SMM без генерации текста\n"
     "/status — что сейчас происходит с моей сессией\n"
     "/cancel — отменить текущую сессию\n"
     "/help — показать это меню\n"
@@ -202,6 +203,7 @@ async def _post_init(app: Application) -> None:
     await app.bot.set_my_commands(
         [
             BotCommand("new", "Новый бриф и запуск генерации"),
+            BotCommand("banner", "Сценарные баннеры (вебинар/SMM)"),
             BotCommand("status", "Что сейчас происходит с моей сессией"),
             BotCommand("cancel", "Отменить текущую сессию"),
             BotCommand("help", "Показать меню и описание"),
@@ -224,6 +226,7 @@ async def _post_shutdown(app: Application) -> None:
 
 
 def build_application() -> Application:
+    from bot.banner_wizard import build_banner_handler
     from bot.graph_runner import register_runner_handlers
     from bot.wizard import build_wizard_handler
 
@@ -248,6 +251,7 @@ def build_application() -> Application:
     # work in any state (running, awaiting_image_upload, awaiting_hitl, etc).
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(build_wizard_handler())
+    app.add_handler(build_banner_handler())
     register_runner_handlers(app)
     app.add_error_handler(_on_error)
     return app

@@ -1061,7 +1061,11 @@ async def on_ab_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def on_phygital_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Inbound @b2b OK/ERROR from @{phygital_bot_username}.
 
-    Photo reply with caption "@b2b OK corr=<id>" → resolve Future with bytes.
+    Photo reply with caption "@b2b OK corr=<id>" → resolve Future with bytes
+        (legacy hero render).
+    Document reply with caption "@b2b OK corr=<id>" → resolve Future with the
+        document bytes (background-removed cutout / rmbg=1 chained render —
+        sent as a Document so TG keeps the PNG alpha channel intact).
     Text reply "@b2b ERROR corr=<id> reason=<code>" → set Future exception.
 
     Anything else from this bot is ignored (defensive — Phygital-bot might
@@ -1103,6 +1107,31 @@ async def on_phygital_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             fut.set_result(bytes(buf))
         except Exception as exc:  # noqa: BLE001
             log.exception("b2b_reply_download_failed", corr=corr)
+            fut.set_exception(B2BError(f"download_failed:{type(exc).__name__}"))
+        raise ApplicationHandlerStop
+
+    # Document with @b2b OK caption (background-removed cutout / rmbg=1).
+    if msg.document is not None:
+        caption = (msg.caption or "").strip()
+        m = _B2B_OK_RE.match(caption)
+        if m is None:
+            log.warning("b2b_reply_doc_no_ok_caption", caption=caption[:120])
+            raise ApplicationHandlerStop
+        corr = m.group("corr")
+        entry = pending.pop(corr, None)
+        if entry is None:
+            log.warning("b2b_reply_unknown_corr", corr=corr, kind="ok_doc")
+            raise ApplicationHandlerStop
+        fut = entry["future"]
+        if fut.done():
+            log.debug("b2b_reply_future_already_done", corr=corr)
+            raise ApplicationHandlerStop
+        try:
+            tg_file = await context.application.bot.get_file(msg.document.file_id)
+            buf = await tg_file.download_as_bytearray()
+            fut.set_result(bytes(buf))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("b2b_reply_doc_download_failed", corr=corr)
             fut.set_exception(B2BError(f"download_failed:{type(exc).__name__}"))
         raise ApplicationHandlerStop
 
