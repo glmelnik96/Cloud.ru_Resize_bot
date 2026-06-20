@@ -1,7 +1,7 @@
 """Pydantic response/request schemas for the App3 API."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,4 +27,11 @@ class TaskOut(BaseModel):
     result_url: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class TextDecisionIn(BaseModel):
+    """Resume the text-approve interrupt (HITL pause #1)."""
+
+    action: Literal["approve", "regenerate", "refine", "cancel"]
+    comment: Optional[str] = None
 

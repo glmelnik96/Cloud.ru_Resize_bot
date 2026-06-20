@@ -29,6 +29,11 @@ class _FakeInterrupt:
         self.value = value
 
 
+class _FakeState:
+    def __init__(self, values):
+        self.values = values
+
+
 class _FakeGraph:
     """astream: emit a couple node updates, then park at a text interrupt."""
 
@@ -39,6 +44,33 @@ class _FakeGraph:
         yield {"parse_brief": {"brief": {"product": "x"}}}
         yield {"generate_message_candidates": {"candidates": []}}
         yield {"__interrupt__": [_FakeInterrupt(self._iv)]}
+
+
+class _ResumableGraph:
+    """Branches on the input: initial → text interrupt; Command(resume=approve)
+    → image interrupt; Command(resume=cancel) → terminal cancelled."""
+
+    def __init__(self):
+        self.values = {"winner": {"slogan": "S"}, "image_prompt": "P", "image_style": "render"}
+
+    async def astream(self, payload, config=None, stream_mode=None):
+        resume = getattr(payload, "resume", None)
+        if resume is None:
+            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidate": {"slogan": "S"}})]}
+            return
+        action = resume.get("action")
+        if action == "approve":
+            yield {"route_image_style": {"image_style": "render"}}
+            yield {"__interrupt__": [_FakeInterrupt(
+                {"kind": "image_upload", "image_prompt": "P", "image_style": "render"}
+            )]}
+        elif action == "cancel":
+            yield {"hitl_text_approve": {"cancelled": True}}
+        else:  # regenerate/refine → back to a fresh text interrupt
+            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidate": {"slogan": "S2"}})]}
+
+    async def aget_state(self, config):
+        return _FakeState(self.values)
 
 
 async def _sessionmaker(tmp_path):
@@ -132,3 +164,103 @@ async def test_create_rejects_when_too_many_open(tmp_path):
         await s.commit()
     with pytest.raises(CapacityError):
         await svc.create("1", {"product": "p", "goal": "g", "audience": "a"})
+
+
+@pytest.mark.asyncio
+async def test_approve_advances_to_awaiting_image(tmp_path):
+    """Resuming a parked text task with approve runs the next segment and parks
+    at awaiting_image, publishing the image_prompt for the UI."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(Session, _ResumableGraph(), bus=bus, tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="t2", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    q = bus.subscribe("t2")
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="t2", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "t2", "1", Command(resume={"action": "approve", "comment": None}), reporter
+    )
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "t2"))
+        task = res.scalar_one()
+    assert task.status == "awaiting_image"
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    awaiting = [e for e in events if e["kind"] == "awaiting_input"]
+    assert awaiting and awaiting[0]["phase"] == "image_upload"
+    assert awaiting[0]["image_prompt"] == "P"
+    assert awaiting[0]["can_generate"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_reaches_terminal_cancelled(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(Session, _ResumableGraph(), bus=bus, tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="t3", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    q = bus.subscribe("t3")
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="t3", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "t3", "1", Command(resume={"action": "cancel", "comment": None}), reporter
+    )
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "t3"))
+        task = res.scalar_one()
+    assert task.status == "cancelled"
+    assert task.finished_at is not None
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert any(e["kind"] == "cancelled" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_pending_rehydrates_from_checkpoint(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
+    text_payload = await svc.pending("tX", "awaiting_text")
+    assert text_payload["phase"] == "text_approve"
+    assert text_payload["candidate"] == {"slogan": "S"}
+    img_payload = await svc.pending("tX", "awaiting_image")
+    assert img_payload["phase"] == "image_upload"
+    assert img_payload["image_prompt"] == "P"
+    assert await svc.pending("tX", "done") is None
+
+
+@pytest.mark.asyncio
+async def test_submit_decision_flips_to_running_then_enqueues(tmp_path, monkeypatch):
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="t4", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    submitted = {}
+
+    async def fake_submit(user_id, runner):
+        submitted["called"] = True
+        return True
+
+    monkeypatch.setattr(svc.manager, "submit", fake_submit)
+    await svc.submit_decision("t4", "1", {"action": "approve", "comment": None})
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "t4"))
+        task = res.scalar_one()
+    # status flips to running synchronously (closes the double-submit window)
+    assert task.status == "running"
+    assert submitted.get("called") is True

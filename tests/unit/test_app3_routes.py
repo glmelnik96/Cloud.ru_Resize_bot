@@ -60,3 +60,78 @@ def test_list_and_get_task_isolation(tmp_path, monkeypatch):
         # unknown uid → 404
         r2 = c.get("/api/tasks/nope", headers=_HDR)
         assert r2.status_code == 404
+
+
+def _seed_task(db_path, uid, status, user_id):
+    """Insert a task row via a separate async engine to the same sqlite file
+    (the TestClient runs the app loop in a worker thread, so we can't reuse
+    its sessionmaker from the test thread)."""
+    import asyncio
+
+    from sqlalchemy import insert
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db import models
+
+    async def _ins():
+        eng = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        try:
+            async with async_sessionmaker(eng)() as s:
+                await s.execute(
+                    insert(models.Task).values(
+                        task_uid=uid, user_id=user_id, workflow="creatives", status=status
+                    )
+                )
+                await s.commit()
+        finally:
+            await eng.dispose()
+
+    asyncio.run(_ins())
+
+
+def test_decision_text_409_when_not_awaiting(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()  # ensures user row exists
+
+        class _Stub:
+            async def submit_decision(self, *a, **k):
+                self.called = True
+
+        app.state.creatives = _Stub()
+        _seed_task(db, "rt", "running", me["id"])
+        r = c.post("/api/tasks/rt/decision/text", json={"action": "approve"}, headers=_HDR)
+        assert r.status_code == 409
+
+
+def test_decision_text_accepts_when_awaiting(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        seen = {}
+
+        class _Stub:
+            async def submit_decision(self, uid, user_id, decision):
+                seen["uid"] = uid
+                seen["decision"] = decision
+
+        app.state.creatives = _Stub()
+        _seed_task(db, "at", "awaiting_text", me["id"])
+        r = c.post(
+            "/api/tasks/at/decision/text",
+            json={"action": "refine", "comment": "короче"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert seen["uid"] == "at"
+        assert seen["decision"] == {"action": "refine", "comment": "короче"}
+
+
+def test_decision_text_rejects_bad_action(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        c.get("/api/me", headers=_HDR)
+        r = c.post("/api/tasks/x/decision/text", json={"action": "nope"}, headers=_HDR)
+        assert r.status_code == 422  # pydantic Literal rejects unknown action

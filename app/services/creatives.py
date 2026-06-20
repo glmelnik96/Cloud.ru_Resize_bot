@@ -126,7 +126,10 @@ class CreativesService:
         }
 
         async def runner() -> None:
-            await self._run_segment(task_uid, user_id, payload, reporter)
+            await self._run_segment(
+                task_uid, user_id, payload, reporter,
+                first_label=_NODE_LABELS["parse_brief"],
+            )
 
         if not await self.manager.submit(user_id, runner):
             await reporter.error("queue full")
@@ -134,14 +137,56 @@ class CreativesService:
             raise CapacityError("queue full")
         return task_uid
 
+    # ── resume (HITL decision) ────────────────────────────────
+    async def submit_decision(self, task_uid: str, user_id: str, decision: dict) -> None:
+        """Resume a parked graph with the user's decision as the next segment.
+
+        Flips status → running synchronously to close the double-submit window
+        (a second POST then sees running, not awaiting_*, → 409 upstream).
+        """
+        from langgraph.types import Command
+
+        await self._set_status(task_uid, "running")
+        reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
+        payload = Command(resume=decision)
+
+        async def runner() -> None:
+            await self._run_segment(
+                task_uid, user_id, payload, reporter, first_label="Продолжаю"
+            )
+
+        await self.manager.submit(user_id, runner)
+
+    async def pending(self, task_uid: str, status: str) -> Optional[dict]:
+        """Re-fetch the parked interrupt payload from the checkpoint, so a
+        reconnecting browser can re-render the decision UI."""
+        snapshot = await self.graph.aget_state(self._config(task_uid))
+        values = dict(snapshot.values or {})
+        if status == "awaiting_text":
+            return {"phase": "text_approve", "candidate": values.get("winner")}
+        if status == "awaiting_image":
+            return {
+                "phase": "image_upload",
+                "image_prompt": values.get("image_prompt", ""),
+                "image_style": values.get("image_style", ""),
+                "can_generate": True,
+            }
+        return None
+
     # ── segment driver ────────────────────────────────────────
     async def _run_segment(
-        self, task_uid: str, user_id: str, payload: Any, reporter: WebStatusReporter
+        self,
+        task_uid: str,
+        user_id: str,
+        payload: Any,
+        reporter: WebStatusReporter,
+        *,
+        first_label: str = "Запуск",
     ) -> None:
         """Run one compute segment to the next interrupt or to the terminal.
         Holds global_sem only while computing; releases at park."""
         await self._set_status(task_uid, "running", started=True)
-        await reporter.start(_NODE_LABELS.get("parse_brief", "Запуск"))
+        await reporter.start(first_label)
         try:
             async with self.manager.global_sem:
                 final = await self._stream(task_uid, payload, reporter)
@@ -197,7 +242,13 @@ class CreativesService:
         log.info("task_parked", task_uid=task_uid, phase=kind or "text_approve")
 
     async def _finish_terminal(self, task_uid: str, reporter: WebStatusReporter, final: dict) -> None:
-        # Phase 4 will move rendered files into results/ and set result_url.
+        # Graph reached END. Either the user cancelled at an interrupt, or the
+        # pipeline completed. Phase 4 will move rendered files into results/.
+        if final.get("cancelled"):
+            await self._finish(task_uid, "cancelled")
+            await reporter.cancelled(reason="user")
+            log.info("task_cancelled", task_uid=task_uid)
+            return
         await reporter.done(result_url=None)
         await self._finish(task_uid, "done")
 

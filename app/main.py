@@ -76,10 +76,12 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     app.state.settings = cfg
 
     from app.api.routes_auth import router as auth_router
+    from app.api.routes_stream import router as stream_router
     from app.api.routes_tasks import router as tasks_router
 
     app.include_router(auth_router)
     app.include_router(tasks_router)
+    app.include_router(stream_router)
 
     results_dir = Path(cfg["results_dir"])
     results_dir.mkdir(parents=True, exist_ok=True)
