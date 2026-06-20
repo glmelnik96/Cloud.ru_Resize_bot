@@ -47,6 +47,15 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
         app.state.manager = manager
         app.state.bus = bus
 
+        # Point the graph nodes' scratch dirs under our WorkingDirectory (no
+        # /data on the VM). Must be set BEFORE init_graph imports the nodes,
+        # which read these env vars at module load.
+        import os
+
+        os.environ.setdefault("RENDERS_DIR", str(cfg["renders_dir"]))
+        os.environ.setdefault("ZIPS_DIR", str(cfg["zips_dir"]))
+        os.environ.setdefault("HEROES_DIR", str(cfg["heroes_dir"]))
+
         # Compile the /new graph with the Redis checkpointer. If Redis is down,
         # the skeleton still boots (auth/me works); task creation returns 503.
         cm = None
@@ -57,6 +66,7 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
             graph, cm = await init_graph(cfg["redis_url"])
             app.state.creatives = CreativesService(
                 manager=manager, bus=bus, sessionmaker=Session, graph=graph,
+                results_dir=cfg["results_dir"],
                 max_open_per_user=cfg["user_queue_limit"],
             )
             log.info("app3 orchestrator ready")
@@ -94,6 +104,9 @@ def _resolve_settings(test_settings: dict | None) -> dict:
         "db_url": settings.db_url,
         "results_dir": str(settings.results_dir),
         "tmp_root": str(settings.tmp_root),
+        "renders_dir": str(settings.renders_dir),
+        "zips_dir": str(settings.zips_dir),
+        "heroes_dir": str(settings.heroes_dir),
         "redis_url": settings.redis_url,
         "max_concurrency": settings.max_concurrency,
         "max_per_user_inflight": settings.max_per_user_inflight,

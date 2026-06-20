@@ -17,6 +17,7 @@ Contract unchanged from M3.0/M3.2:
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -29,7 +30,8 @@ from infra.template_manifest import TemplateManifest, load_manifest
 log = structlog.get_logger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_RENDER_DIR = Path("/data/renders")
+# Default to the Docker bot's /data/renders; App3 overrides via RENDERS_DIR.
+_RENDER_DIR = Path(os.environ.get("RENDERS_DIR", "/data/renders"))
 _MANIFEST_PATH = _REPO_ROOT / "config" / "templates.json"
 _DEFAULT_FORMAT = "banner_300x250"
 

@@ -12,6 +12,7 @@ This is the terminal artifact the bot ships to TG via send_document.
 from __future__ import annotations
 
 import asyncio
+import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +23,9 @@ from graph.state import GraphState
 
 log = structlog.get_logger(__name__)
 
-_ZIP_DIR = Path("/data/zips")
+# Default to the Docker bot's bind-mounted /data/zips; App3 (web sub-app on the
+# VM, no /data) overrides via ZIPS_DIR so outputs land under its WorkingDirectory.
+_ZIP_DIR = Path(os.environ.get("ZIPS_DIR", "/data/zips"))
 
 
 async def render_all(state: GraphState) -> dict:

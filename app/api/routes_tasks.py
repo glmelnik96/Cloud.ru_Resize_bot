@@ -4,7 +4,9 @@ Decision (HITL) and SSE routes are added in Phase 3+.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from pathlib import Path
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select
 
 from app.api.schemas import CreateTaskIn, TaskOut, TextDecisionIn
@@ -102,3 +104,53 @@ async def decide_text(uid: str, body: TextDecisionIn, request: Request):
     decision = {"action": body.action, "comment": body.comment}
     await service.submit_decision(uid, str(user.id), decision)
     return {"ok": True, "action": body.action}
+
+
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _safe_suffix(filename: str) -> str:
+    ext = Path(filename or "").suffix.lower()
+    return ext if ext in _IMAGE_EXT else ".png"
+
+
+@router.post("/tasks/{uid}/decision/image")
+async def decide_image(
+    uid: str,
+    request: Request,
+    action: str = Form("upload"),
+    file: UploadFile | None = File(None),
+):
+    """Resume HITL pause #2 (hero image).
+
+    multipart form:
+      - action=upload + file  → save the browser upload, resume with local_path
+      - action=cancel         → cancel the task
+      - action=generate       → web Phygital generation (Phase 5; 501 for now)
+    """
+    user = await get_current_user(request)
+    task = await _load_owned(request, uid, user)
+    if task.status != "awaiting_image":
+        raise HTTPException(409, f"task not awaiting image (status={task.status})")
+    service = request.app.state.creatives
+    if service is None:
+        raise HTTPException(503, "service unavailable")
+
+    if action == "cancel":
+        await service.submit_decision(uid, str(user.id), {"action": "cancel"})
+        return {"ok": True, "action": "cancel"}
+
+    if action == "generate":
+        raise HTTPException(501, "web generation not enabled yet")
+
+    # upload
+    if file is None:
+        raise HTTPException(422, "no file provided for upload")
+    manager = request.app.state.manager
+    dest_dir = manager.task_tmp(str(user.id), uid)
+    dest = Path(dest_dir) / f"hero{_safe_suffix(file.filename)}"
+    data = await file.read()
+    dest.write_bytes(data)
+    decision = {"action": "upload", "local_path": str(dest)}
+    await service.submit_decision(uid, str(user.id), decision)
+    return {"ok": True, "action": "upload"}

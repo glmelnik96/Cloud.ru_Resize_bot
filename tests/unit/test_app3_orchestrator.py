@@ -73,6 +73,18 @@ class _ResumableGraph:
         return _FakeState(self.values)
 
 
+class _TerminalGraph:
+    """Resume(upload) → terminal with rendered files + zip."""
+
+    def __init__(self, files, zip_path):
+        self._files = files
+        self._zip = zip_path
+
+    async def astream(self, payload, config=None, stream_mode=None):
+        yield {"fill_templates_per_format": {"rendered_files": self._files}}
+        yield {"render_all": {"rendered_zip_path": self._zip}}
+
+
 async def _sessionmaker(tmp_path):
     engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'orch.db'}")
     await init_db(engine)
@@ -85,6 +97,7 @@ def _service(Session, graph, **kw):
         bus=kw.get("bus", EventBus()),
         sessionmaker=Session,
         graph=graph,
+        results_dir=kw.get("results_dir", "./data/results_test"),
         max_open_per_user=kw.get("max_open", 5),
     )
 
@@ -239,6 +252,56 @@ async def test_pending_rehydrates_from_checkpoint(tmp_path):
     assert img_payload["phase"] == "image_upload"
     assert img_payload["image_prompt"] == "P"
     assert await svc.pending("tX", "done") is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_collects_results_to_results_dir(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    # fake rendered outputs on disk
+    src = tmp_path / "renders"
+    src.mkdir()
+    png = src / "banner_300x250.png"
+    png.write_bytes(b"\x89PNG-fake")
+    zp = tmp_path / "out.zip"
+    zp.write_bytes(b"PK-fake-zip")
+
+    results = tmp_path / "results"
+    svc = _service(
+        Session,
+        _TerminalGraph([{"format": "banner_300x250", "path": str(png)}], str(zp)),
+        bus=bus, tmp=tmp_path / "tmp", results_dir=results,
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="t5", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="t5", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "t5", "1", Command(resume={"action": "upload", "local_path": "x"}), reporter
+    )
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "t5"))
+        task = res.scalar_one()
+    assert task.status == "done"
+    assert task.result_url == "/results/t5/t5.zip"
+    assert (results / "t5" / "t5.zip").exists()
+    assert (results / "t5" / "banner_300x250.png").exists()
+
+
+@pytest.mark.asyncio
+async def test_collect_results_png_fallback_when_no_zip(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    png = tmp_path / "a.png"
+    png.write_bytes(b"x")
+    url = svc._collect_results("u1", {"rendered_files": [{"format": "f1", "path": str(png)}]})
+    assert url == "/results/u1/f1.png"
+    assert (tmp_path / "res" / "u1" / "f1.png").exists()
 
 
 @pytest.mark.asyncio

@@ -12,8 +12,10 @@ in later phases.
 """
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -85,12 +87,15 @@ class CreativesService:
         bus: EventBus,
         sessionmaker,
         graph,
+        results_dir: Path | str = "./data/results",
         max_open_per_user: int = 5,
     ) -> None:
         self.manager = manager
         self.bus = bus
         self.Session = sessionmaker
         self.graph = graph
+        self.results_dir = Path(results_dir)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
         self.max_open_per_user = max_open_per_user
 
     # ── create ────────────────────────────────────────────────
@@ -242,15 +247,46 @@ class CreativesService:
         log.info("task_parked", task_uid=task_uid, phase=kind or "text_approve")
 
     async def _finish_terminal(self, task_uid: str, reporter: WebStatusReporter, final: dict) -> None:
-        # Graph reached END. Either the user cancelled at an interrupt, or the
-        # pipeline completed. Phase 4 will move rendered files into results/.
+        # Graph reached END: user cancelled at an interrupt, or pipeline done.
         if final.get("cancelled"):
+            reason = "timeout" if final.get("error") == "image_upload_timeout" else "user"
             await self._finish(task_uid, "cancelled")
-            await reporter.cancelled(reason="user")
-            log.info("task_cancelled", task_uid=task_uid)
+            await reporter.cancelled(reason=reason)
+            log.info("task_cancelled", task_uid=task_uid, reason=reason)
             return
-        await reporter.done(result_url=None)
-        await self._finish(task_uid, "done")
+
+        result_url = self._collect_results(task_uid, final)
+        await reporter.done(result_url=result_url)
+        await self._finish(task_uid, "done", result_url=result_url)
+        log.info("task_done", task_uid=task_uid, result_url=result_url)
+
+    def _collect_results(self, task_uid: str, final: dict) -> Optional[str]:
+        """Move the graph's per-format PNGs + ZIP into results/<uid>/ and return
+        the prefix-relative URL of the ZIP (served via the gateway prefix).
+        Files may be missing if the render path changed — copy what exists."""
+        dest_dir = self.results_dir / task_uid
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        zip_url: Optional[str] = None
+
+        zip_path = final.get("rendered_zip_path")
+        if zip_path and Path(zip_path).exists():
+            dest = dest_dir / f"{task_uid}.zip"
+            shutil.copy(zip_path, dest)
+            zip_url = f"/results/{task_uid}/{task_uid}.zip"
+
+        for rec in final.get("rendered_files") or []:
+            src = rec.get("path")
+            fmt = rec.get("format", "format")
+            if src and Path(src).exists():
+                ext = Path(src).suffix or ".png"
+                shutil.copy(src, dest_dir / f"{fmt}{ext}")
+
+        # No ZIP but PNGs exist → point at the dir listing fallback (first PNG).
+        if zip_url is None:
+            pngs = sorted(dest_dir.glob("*.png"))
+            if pngs:
+                zip_url = f"/results/{task_uid}/{pngs[0].name}"
+        return zip_url
 
     # ── helpers ───────────────────────────────────────────────
     def _config(self, task_uid: str) -> dict:

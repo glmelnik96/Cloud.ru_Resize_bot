@@ -135,3 +135,67 @@ def test_decision_text_rejects_bad_action(tmp_path, monkeypatch):
         c.get("/api/me", headers=_HDR)
         r = c.post("/api/tasks/x/decision/text", json={"action": "nope"}, headers=_HDR)
         assert r.status_code == 422  # pydantic Literal rejects unknown action
+
+
+def test_decision_image_upload_saves_and_resumes(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        seen = {}
+
+        class _Stub:
+            async def submit_decision(self, uid, user_id, decision):
+                seen["decision"] = decision
+
+        app.state.creatives = _Stub()
+        _seed_task(db, "im", "awaiting_image", me["id"])
+        r = c.post(
+            "/api/tasks/im/decision/image",
+            data={"action": "upload"},
+            files={"file": ("hero.png", b"\x89PNG", "image/png")},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert seen["decision"]["action"] == "upload"
+        assert seen["decision"]["local_path"].endswith("hero.png")
+
+
+def test_decision_image_cancel(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        seen = {}
+
+        class _Stub:
+            async def submit_decision(self, uid, user_id, decision):
+                seen["decision"] = decision
+
+        app.state.creatives = _Stub()
+        _seed_task(db, "ic", "awaiting_image", me["id"])
+        r = c.post("/api/tasks/ic/decision/image", data={"action": "cancel"}, headers=_HDR)
+        assert r.status_code == 200
+        assert seen["decision"] == {"action": "cancel"}
+
+
+def test_decision_image_409_when_not_awaiting_image(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        app.state.creatives = type("S", (), {"submit_decision": None})()
+        _seed_task(db, "iw", "awaiting_text", me["id"])
+        r = c.post("/api/tasks/iw/decision/image", data={"action": "cancel"}, headers=_HDR)
+        assert r.status_code == 409
+
+
+def test_decision_image_generate_501(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        app.state.creatives = type("S", (), {"submit_decision": None})()
+        _seed_task(db, "ig", "awaiting_image", me["id"])
+        r = c.post("/api/tasks/ig/decision/image", data={"action": "generate"}, headers=_HDR)
+        assert r.status_code == 501
