@@ -1,0 +1,246 @@
+"""Creatives orchestrator — the Telegram-free port of bot/graph_runner.
+
+Drives the compiled /new LangGraph as a chain of short SEGMENTS glued by the
+langgraph checkpoint (Redis). A segment runs from one parking point to the
+next interrupt (or to the terminal), acquiring the global semaphore only while
+computing and releasing it the moment the graph parks. Parked tasks (awaiting
+user input) hold no concurrency slot.
+
+Phase 2 scope: create() + the first segment, which always parks at
+``hitl_text_approve`` (status → awaiting_text). Resume + image + finalize land
+in later phases.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+import structlog
+from sqlalchemy import func, select
+
+from app.db import models
+from app.tasks.events import EventBus
+from app.tasks.manager import TaskManager
+from app.tasks.status import WebStatusReporter
+
+log = structlog.get_logger(__name__)
+
+# Per-node label for SSE "step" events (mirrors bot/graph_runner._NODE_LABELS).
+_NODE_LABELS: dict[str, str] = {
+    "parse_brief": "Разбираю бриф",
+    "derive_persona": "Готовлю персон ЦА",
+    "generate_message_candidates": "Генерирую варианты текста",
+    "evaluate_as_persona_loop": "Оцениваю варианты глазами персон",
+    "route_image_style": "Подбираю стиль картинки",
+    "generate_image_prompt": "Пишу промпт для hero-картинки",
+    "fill_templates_per_format": "Накладываю в шаблоны",
+    "render_all": "Собираю ZIP",
+}
+
+# Non-terminal statuses count toward a user's open-session budget. App3 gates
+# create() by a DB count of these (not TaskManager.has_capacity) because parked
+# tasks legitimately sit open for a long time.
+_OPEN_STATUSES = ("queued", "running", "awaiting_text", "awaiting_image")
+
+
+class CapacityError(Exception):
+    """Raised when a user already has too many open creatives tasks."""
+
+
+async def init_graph(redis_url: str):
+    """Open AsyncRedisSaver + compile the /new graph once at startup.
+
+    Returns (compiled_graph, checkpointer_cm). The cm must be __aexit__'d on
+    shutdown. Ported from bot/graph_runner.init_compiled_graph, minus PTB.
+    """
+    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+
+    from graph.builder import build_text_graph
+
+    cm = AsyncRedisSaver.from_conn_string(redis_url)
+    saver = await cm.__aenter__()
+    await saver.asetup()
+    compiled = build_text_graph().compile(checkpointer=saver)
+    log.info("creatives_graph_ready", redis_url=redis_url)
+    return compiled, cm
+
+
+def build_raw_brief(fields: dict[str, str]) -> str:
+    """Serialize the wizard fields into the raw_brief text parse_brief expects.
+    Mirrors bot/wizard._render_raw_brief. Channel/formats are inferred
+    downstream (parse_brief), so only the three collected fields are emitted."""
+    return (
+        f"Продукт: {fields.get('product', '')}\n"
+        f"Цель: {fields.get('goal', '')}\n"
+        f"ЦА: {fields.get('audience', '')}\n"
+    )
+
+
+class CreativesService:
+    def __init__(
+        self,
+        *,
+        manager: TaskManager,
+        bus: EventBus,
+        sessionmaker,
+        graph,
+        max_open_per_user: int = 5,
+    ) -> None:
+        self.manager = manager
+        self.bus = bus
+        self.Session = sessionmaker
+        self.graph = graph
+        self.max_open_per_user = max_open_per_user
+
+    # ── create ────────────────────────────────────────────────
+    async def create(self, user_id: str, fields: dict[str, str]) -> str:
+        """Persist a queued task, enqueue segment 1, return task_uid."""
+        if await self._open_count(int(user_id)) >= self.max_open_per_user:
+            raise CapacityError("too many open tasks")
+
+        task_uid = uuid.uuid4().hex[:12]
+        async with self.Session() as s:
+            s.add(
+                models.Task(
+                    task_uid=task_uid,
+                    user_id=int(user_id),
+                    workflow="creatives",
+                    prompt=fields.get("product", ""),
+                    params=dict(fields),
+                    status="queued",
+                )
+            )
+            await s.commit()
+
+        reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
+        _, queued = self.manager.user_load(user_id)
+        await reporter.queued(queue_pos=queued + 1)
+
+        payload = {
+            "session_id": task_uid,
+            "user_id": int(user_id),
+            "raw_brief": build_raw_brief(fields),
+            "revise_round": 0,
+            "prior_variant": None,
+        }
+
+        async def runner() -> None:
+            await self._run_segment(task_uid, user_id, payload, reporter)
+
+        if not await self.manager.submit(user_id, runner):
+            await reporter.error("queue full")
+            await self._finish(task_uid, "failed", error="queue full")
+            raise CapacityError("queue full")
+        return task_uid
+
+    # ── segment driver ────────────────────────────────────────
+    async def _run_segment(
+        self, task_uid: str, user_id: str, payload: Any, reporter: WebStatusReporter
+    ) -> None:
+        """Run one compute segment to the next interrupt or to the terminal.
+        Holds global_sem only while computing; releases at park."""
+        await self._set_status(task_uid, "running", started=True)
+        await reporter.start(_NODE_LABELS.get("parse_brief", "Запуск"))
+        try:
+            async with self.manager.global_sem:
+                final = await self._stream(task_uid, payload, reporter)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("segment_failed", task_uid=task_uid)
+            await reporter.error(f"{type(exc).__name__}: {exc}")
+            await self._finish(task_uid, "failed", error=str(exc))
+            return
+
+        interrupts = final.get("__interrupt__")
+        if interrupts:
+            value = interrupts[0].value if hasattr(interrupts[0], "value") else interrupts[0]
+            await self._park(task_uid, reporter, value)
+            return
+
+        # Terminal handling (ZIP delivery) lands in Phase 4.
+        await self._finish_terminal(task_uid, reporter, final)
+
+    async def _stream(self, task_uid: str, payload: Any, reporter: WebStatusReporter) -> dict:
+        """Stream the graph for one segment, feeding node names into SSE steps.
+        Returns the accumulated update dict (+ '__interrupt__' if parked)."""
+        final: dict = {}
+        config = self._config(task_uid)
+        async for chunk in self.graph.astream(payload, config=config, stream_mode="updates"):
+            if not isinstance(chunk, dict):
+                continue
+            if "__interrupt__" in chunk:
+                final["__interrupt__"] = chunk["__interrupt__"]
+                continue
+            for node_name, update in chunk.items():
+                if isinstance(update, dict):
+                    final.update(update)
+                label = _NODE_LABELS.get(node_name)
+                if label:
+                    await reporter.step(label)
+        return final
+
+    async def _park(self, task_uid: str, reporter: WebStatusReporter, value: Any) -> None:
+        """Set the awaiting status + publish the decision payload for the UI."""
+        kind = value.get("kind") if isinstance(value, dict) else None
+        if kind == "image_upload":
+            await self._set_status(task_uid, "awaiting_image")
+            data = {
+                "image_prompt": value.get("image_prompt", ""),
+                "image_style": value.get("image_style", ""),
+                "can_generate": True,
+            }
+            await reporter.awaiting(phase="image_upload", data=data)
+        else:
+            await self._set_status(task_uid, "awaiting_text")
+            data = {"candidate": value.get("candidate") if isinstance(value, dict) else None}
+            await reporter.awaiting(phase="text_approve", data=data)
+        log.info("task_parked", task_uid=task_uid, phase=kind or "text_approve")
+
+    async def _finish_terminal(self, task_uid: str, reporter: WebStatusReporter, final: dict) -> None:
+        # Phase 4 will move rendered files into results/ and set result_url.
+        await reporter.done(result_url=None)
+        await self._finish(task_uid, "done")
+
+    # ── helpers ───────────────────────────────────────────────
+    def _config(self, task_uid: str) -> dict:
+        return {"configurable": {"thread_id": task_uid}, "recursion_limit": 30}
+
+    async def _open_count(self, user_id: int) -> int:
+        async with self.Session() as s:
+            res = await s.execute(
+                select(func.count())
+                .select_from(models.Task)
+                .where(models.Task.user_id == user_id)
+                .where(models.Task.status.in_(_OPEN_STATUSES))
+            )
+            return int(res.scalar_one())
+
+    async def _set_status(self, task_uid: str, status: str, *, started: bool = False) -> None:
+        async with self.Session() as s:
+            res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
+            task = res.scalar_one_or_none()
+            if task is None:
+                return
+            task.status = status
+            if started and task.started_at is None:
+                task.started_at = datetime.now(timezone.utc)
+            await s.commit()
+
+    async def _finish(
+        self,
+        task_uid: str,
+        status: str,
+        *,
+        result_url: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        async with self.Session() as s:
+            res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
+            task = res.scalar_one_or_none()
+            if task is None:
+                return
+            task.status = status
+            task.result_url = result_url
+            task.error = error
+            task.finished_at = datetime.now(timezone.utc)
+            await s.commit()
