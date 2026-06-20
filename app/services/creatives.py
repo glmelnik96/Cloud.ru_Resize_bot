@@ -22,6 +22,7 @@ import structlog
 from sqlalchemy import func, select
 
 from app.db import models
+from app.services.hero_gen import HeroGenerator, HeroGenUnavailable, NullHeroGenerator
 from app.tasks.events import EventBus
 from app.tasks.manager import TaskManager
 from app.tasks.status import WebStatusReporter
@@ -88,6 +89,7 @@ class CreativesService:
         sessionmaker,
         graph,
         results_dir: Path | str = "./data/results",
+        hero_generator: HeroGenerator | None = None,
         max_open_per_user: int = 5,
     ) -> None:
         self.manager = manager
@@ -96,6 +98,7 @@ class CreativesService:
         self.graph = graph
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.hero_generator: HeroGenerator = hero_generator or NullHeroGenerator()
         self.max_open_per_user = max_open_per_user
 
     # ── create ────────────────────────────────────────────────
@@ -158,6 +161,54 @@ class CreativesService:
         async def runner() -> None:
             await self._run_segment(
                 task_uid, user_id, payload, reporter, first_label="Продолжаю"
+            )
+
+        await self.manager.submit(user_id, runner)
+
+    async def generate_decision(self, task_uid: str, user_id: str) -> None:
+        """Web-generate the hero (channel switch), then resume the graph upload.
+
+        Pulls the EN image_prompt/style from the checkpoint, runs the hero
+        generator, saves the result, and resumes with {action:upload}. On
+        generator failure the task re-parks at awaiting_image so the user can
+        upload manually instead.
+        """
+        if not self.hero_generator.available:
+            raise HeroGenUnavailable("hero generation backend not configured")
+
+        await self._set_status(task_uid, "running")
+        reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
+
+        async def runner() -> None:
+            snapshot = await self.graph.aget_state(self._config(task_uid))
+            values = dict(snapshot.values or {})
+            prompt = values.get("image_prompt", "")
+            style = values.get("image_style", "render")
+            dest = self.manager.task_tmp(user_id, task_uid) / "hero_gen.png"
+            await reporter.start("Генерирую hero-картинку")
+            try:
+                async with self.manager.global_sem:
+                    await self.hero_generator.generate(prompt=prompt, style=style, dest=dest)
+            except Exception as exc:  # noqa: BLE001 — fall back to manual upload
+                log.warning("hero_gen_failed", task_uid=task_uid, error=str(exc))
+                await self._set_status(task_uid, "awaiting_image")
+                await reporter.awaiting(
+                    phase="image_upload",
+                    data={
+                        "image_prompt": prompt,
+                        "image_style": style,
+                        "can_generate": self.hero_generator.available,
+                        "gen_error": str(exc),
+                    },
+                )
+                return
+            # hero ready → resume the final segment as an upload
+            from langgraph.types import Command
+
+            await self._run_segment(
+                task_uid, user_id,
+                Command(resume={"action": "upload", "local_path": str(dest)}),
+                reporter, first_label="Накладываю в шаблоны",
             )
 
         await self.manager.submit(user_id, runner)
@@ -237,7 +288,7 @@ class CreativesService:
             data = {
                 "image_prompt": value.get("image_prompt", ""),
                 "image_style": value.get("image_style", ""),
-                "can_generate": True,
+                "can_generate": self.hero_generator.available,
             }
             await reporter.awaiting(phase="image_upload", data=data)
         else:

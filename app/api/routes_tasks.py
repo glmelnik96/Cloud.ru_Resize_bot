@@ -141,7 +141,13 @@ async def decide_image(
         return {"ok": True, "action": "cancel"}
 
     if action == "generate":
-        raise HTTPException(501, "web generation not enabled yet")
+        from app.services.hero_gen import HeroGenUnavailable
+
+        try:
+            await service.generate_decision(uid, str(user.id))
+        except HeroGenUnavailable as exc:
+            raise HTTPException(501, str(exc)) from exc
+        return {"ok": True, "action": "generate"}
 
     # upload
     if file is None:

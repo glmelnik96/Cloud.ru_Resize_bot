@@ -190,12 +190,14 @@ def test_decision_image_409_when_not_awaiting_image(tmp_path, monkeypatch):
         assert r.status_code == 409
 
 
-def test_decision_image_generate_501(tmp_path, monkeypatch):
+def test_decision_image_generate_501_when_no_backend(tmp_path, monkeypatch):
+    """With no Phygital session file, the real service has a Null generator →
+    generate returns 501 and the UI falls back to manual upload."""
     db = tmp_path / "r.db"
     app = _app(tmp_path, monkeypatch, graph_ok=True)
     with TestClient(app) as c:
         me = c.get("/api/me", headers=_HDR).json()
-        app.state.creatives = type("S", (), {"submit_decision": None})()
+        # use the REAL service built in lifespan (Null hero generator)
         _seed_task(db, "ig", "awaiting_image", me["id"])
         r = c.post("/api/tasks/ig/decision/image", data={"action": "generate"}, headers=_HDR)
         assert r.status_code == 501

@@ -91,6 +91,25 @@ async def _sessionmaker(tmp_path):
     return make_sessionmaker(engine)
 
 
+class _FakeHeroGen:
+    """Available generator that writes a stub PNG to dest."""
+
+    available = True
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.seen = None
+
+    async def generate(self, *, prompt, style, dest):
+        if self.fail:
+            raise RuntimeError("boom")
+        self.seen = (prompt, style)
+        from pathlib import Path as _P
+
+        _P(dest).write_bytes(b"\x89PNG-gen")
+        return dest
+
+
 def _service(Session, graph, **kw):
     return CreativesService(
         manager=TaskManager(tmp_root=kw.get("tmp", "./data/tmp_test")),
@@ -98,6 +117,7 @@ def _service(Session, graph, **kw):
         sessionmaker=Session,
         graph=graph,
         results_dir=kw.get("results_dir", "./data/results_test"),
+        hero_generator=kw.get("hero_generator"),
         max_open_per_user=kw.get("max_open", 5),
     )
 
@@ -185,7 +205,10 @@ async def test_approve_advances_to_awaiting_image(tmp_path):
     at awaiting_image, publishing the image_prompt for the UI."""
     Session = await _sessionmaker(tmp_path)
     bus = EventBus()
-    svc = _service(Session, _ResumableGraph(), bus=bus, tmp=tmp_path / "tmp")
+    svc = _service(
+        Session, _ResumableGraph(), bus=bus, tmp=tmp_path / "tmp",
+        hero_generator=_FakeHeroGen(),
+    )
     async with Session() as s:
         s.add(models.Task(task_uid="t2", user_id=1, workflow="creatives", status="awaiting_text"))
         await s.commit()
@@ -302,6 +325,121 @@ async def test_collect_results_png_fallback_when_no_zip(tmp_path):
     url = svc._collect_results("u1", {"rendered_files": [{"format": "f1", "path": str(png)}]})
     assert url == "/results/u1/f1.png"
     assert (tmp_path / "res" / "u1" / "f1.png").exists()
+
+
+@pytest.mark.asyncio
+async def test_null_hero_generator_unavailable():
+    from app.services.hero_gen import HeroGenUnavailable, NullHeroGenerator
+
+    g = NullHeroGenerator()
+    assert g.available is False
+    with pytest.raises(HeroGenUnavailable):
+        await g.generate(prompt="x", style="render", dest="y")
+
+
+@pytest.mark.asyncio
+async def test_awaiting_image_can_generate_reflects_backend(tmp_path):
+    """can_generate in the awaiting_image event mirrors generator.available."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(
+        Session, _ResumableGraph(), bus=bus, tmp=tmp_path / "tmp",
+        hero_generator=_FakeHeroGen(),
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="g0", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+    q = bus.subscribe("g0")
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="g0", label="creatives", eta_sec=None)
+    await svc._run_segment("g0", "1", Command(resume={"action": "approve"}), reporter)
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    awaiting = [e for e in events if e["kind"] == "awaiting_input"][0]
+    assert awaiting["can_generate"] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_decision_unavailable_raises(tmp_path):
+    from app.services.hero_gen import HeroGenUnavailable
+
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")  # default Null
+    with pytest.raises(HeroGenUnavailable):
+        await svc.generate_decision("gx", "1")
+
+
+@pytest.mark.asyncio
+async def test_generate_decision_success_runs_to_done(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    png = tmp_path / "r.png"
+    png.write_bytes(b"x")
+    zp = tmp_path / "r.zip"
+    zp.write_bytes(b"z")
+    graph = _TerminalGraph([{"format": "f1", "path": str(png)}], str(zp))
+    # _TerminalGraph needs aget_state for prompt fetch
+    graph.values = {"image_prompt": "P", "image_style": "render"}
+
+    async def _aget_state(config):
+        return _FakeState(graph.values)
+
+    graph.aget_state = _aget_state
+    gen = _FakeHeroGen()
+    svc = _service(
+        Session, graph, bus=bus, tmp=tmp_path / "tmp",
+        results_dir=tmp_path / "res", hero_generator=gen,
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="g1", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    # generate_decision enqueues a runner on the manager; run it inline instead
+    captured = {}
+
+    async def fake_submit(user_id, runner):
+        captured["runner"] = runner
+        return True
+
+    svc.manager.submit = fake_submit  # type: ignore[assignment]
+    await svc.generate_decision("g1", "1")
+    await captured["runner"]()
+
+    assert gen.seen == ("P", "render")
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "g1"))
+        task = res.scalar_one()
+    assert task.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_generate_decision_failure_reparks(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    graph = _ResumableGraph()
+    svc = _service(
+        Session, graph, bus=bus, tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen(fail=True)
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="g2", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+    captured = {}
+
+    async def fake_submit(user_id, runner):
+        captured["runner"] = runner
+        return True
+
+    svc.manager.submit = fake_submit  # type: ignore[assignment]
+    await svc.generate_decision("g2", "1")
+    await captured["runner"]()
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "g2"))
+        task = res.scalar_one()
+    assert task.status == "awaiting_image"  # re-parked for manual upload
 
 
 @pytest.mark.asyncio

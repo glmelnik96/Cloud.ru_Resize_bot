@@ -62,11 +62,23 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
         graph = None
         try:
             from app.services.creatives import CreativesService, init_graph
+            from app.services.hero_gen import NullHeroGenerator, PhygitalHeroGenerator
 
             graph, cm = await init_graph(cfg["redis_url"])
+
+            # Web Phygital generator only if a session file is present; else the
+            # UI offers manual upload only (Null generator).
+            session_file = Path(cfg["phygital_session_file"])
+            if session_file.exists():
+                hero_gen = PhygitalHeroGenerator(session_file)
+                log.info("hero generation: phygital web (session present)")
+            else:
+                hero_gen = NullHeroGenerator()
+                log.info("hero generation: disabled (no session file) — manual upload only")
+
             app.state.creatives = CreativesService(
                 manager=manager, bus=bus, sessionmaker=Session, graph=graph,
-                results_dir=cfg["results_dir"],
+                results_dir=cfg["results_dir"], hero_generator=hero_gen,
                 max_open_per_user=cfg["user_queue_limit"],
             )
             log.info("app3 orchestrator ready")
@@ -107,6 +119,7 @@ def _resolve_settings(test_settings: dict | None) -> dict:
         "renders_dir": str(settings.renders_dir),
         "zips_dir": str(settings.zips_dir),
         "heroes_dir": str(settings.heroes_dir),
+        "phygital_session_file": str(settings.phygital_session_file),
         "redis_url": settings.redis_url,
         "max_concurrency": settings.max_concurrency,
         "max_per_user_inflight": settings.max_per_user_inflight,
