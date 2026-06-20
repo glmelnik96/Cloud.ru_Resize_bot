@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     max_per_user_inflight: int = Field(2, alias="MAX_PER_USER_INFLIGHT")
     user_queue_limit: int = Field(5, alias="USER_QUEUE_LIMIT")
 
+    # --- HITL image-upload window (graph cancels the task after this) ---
+    image_timeout_sec: int = Field(24 * 3600, alias="IMAGE_TIMEOUT_SEC")
+    # --- results retention TTL ---
+    retention_ttl_sec: int = Field(24 * 3600, alias="RETENTION_TTL_SEC")
+
     # --- langgraph checkpointer (App3-only: durable HITL park/resume) ---
     redis_url: str = Field("redis://127.0.0.1:6379/0", alias="REDIS_URL")
 

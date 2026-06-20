@@ -34,6 +34,12 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
         app.state.sessionmaker = Session
         app.state.settings = cfg
 
+        # In-memory queue is lost on restart → fail orphaned queued/running rows.
+        # Parked (awaiting_*) tasks survive: their state is in the Redis checkpoint.
+        from app.tasks.reconcile import reconcile_interrupted_tasks
+
+        await reconcile_interrupted_tasks(Session)
+
         from app.tasks.events import EventBus
         from app.tasks.manager import TaskManager
 
@@ -80,15 +86,30 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
                 manager=manager, bus=bus, sessionmaker=Session, graph=graph,
                 results_dir=cfg["results_dir"], hero_generator=hero_gen,
                 max_open_per_user=cfg["user_queue_limit"],
+                image_timeout_sec=cfg["image_timeout_sec"],
             )
             log.info("app3 orchestrator ready")
         except Exception as exc:  # noqa: BLE001
             app.state.creatives = None
             log.error("graph init failed (tasks disabled): %s", exc)
 
+        # Background results retention (TTL cleanup of results/<uid>/ + rows).
+        import asyncio
+
+        from app.tasks.retention import retention_loop
+
+        retention_task = asyncio.create_task(
+            retention_loop(
+                results_dir=Path(cfg["results_dir"]), sessionmaker=Session,
+                ttl_sec=cfg["retention_ttl_sec"],
+            ),
+            name="retention-loop",
+        )
+
         try:
             yield
         finally:
+            retention_task.cancel()
             await manager.shutdown()
             if cm is not None:
                 await cm.__aexit__(None, None, None)
@@ -124,6 +145,8 @@ def _resolve_settings(test_settings: dict | None) -> dict:
         "max_concurrency": settings.max_concurrency,
         "max_per_user_inflight": settings.max_per_user_inflight,
         "user_queue_limit": settings.user_queue_limit,
+        "image_timeout_sec": settings.image_timeout_sec,
+        "retention_ttl_sec": settings.retention_ttl_sec,
     }
     if test_settings:
         base.update(test_settings)

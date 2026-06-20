@@ -1,0 +1,17 @@
+[Unit]
+Description=App3 (creatives) — Resize_bot web sub-app behind the platform gateway
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=admin
+WorkingDirectory=/home/admin/Resize_bot
+EnvironmentFile=-/home/admin/Resize_bot/.env
+# Single worker: the SSE EventBus is in-process (see app/tasks/events.py).
+ExecStart=/home/admin/Resize_bot/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8013 --workers 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

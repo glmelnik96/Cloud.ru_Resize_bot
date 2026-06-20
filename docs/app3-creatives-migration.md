@@ -50,12 +50,26 @@ queued → running → awaiting_text → (approve) → running
 - Redis — внутренняя зависимость (не egress; задекларировать как требование к ВМ)
 
 ## Фазы
-1. **Скелет** — `app/` пакет, auth по заголовку, БД, `/api/me`, `/results`. ✅ ГОТОВО.
-2. Порт графа в orchestrator (`app/services/creatives.py`), `POST /api/tasks` доезжает до `awaiting_text`.
-3. Текстовый HITL по SSE + REST.
-4. Картиночный HITL: загрузка из браузера → ZIP.
-5. Веб-Phygital генерация hero (смена канала с Telegram b2b).
-6. Resume-after-restart, таймаут, `app3.service`, egress.
+1. **Скелет** — `app/` пакет, auth по заголовку, БД, `/api/me`, `/results`. ✅
+2. **Порт графа** в orchestrator (`app/services/creatives.py`), `POST /api/tasks` → `awaiting_text`. ✅
+3. **Текстовый HITL** по SSE + REST (approve/regenerate/refine/cancel + `/pending`). ✅
+4. **Картиночный HITL**: загрузка из браузера → ZIP в `results/<uid>/`. ✅
+5. **Веб-генерация hero** — pluggable `HeroGenerator` (Null по умолчанию; Phygital-адаптер, активируется при наличии session.json). ✅
+6. **Resume-after-restart** (reconcile), 24h-таймаут картинки, retention, `app3.service`, `.env`. ✅
+
+Весь код App3 написан и покрыт unit-тестами (181 passed) на фейковых графе/генераторе — без живого Redis/Phygital.
+
+## Деплой
+- `deploy/app3.service` — systemd-юнит (порт 8013, single-worker, `After=redis.service`).
+- `deploy/.env.app3.example` — шаблон env (скопировать в `.env` на ВМ).
+- Зависимости веб-слоя: `pip install` группы `[web]` (fastapi/uvicorn/sqlalchemy/aiosqlite/sse-starlette/python-multipart) поверх ядра.
+
+## Осталось (требует участия/координации, НЕ автономно)
+1. **Phygital web-клиент + session.json.** Чтобы включить серверную генерацию hero, на ВМ нужно вендорить пакеты `client/` + `workflows/` (из Brand_Image_site) и положить `storage/session.json` (аккаунт-владелец). Без них App3 работает в режиме ручной загрузки (`NullHeroGenerator`, generate→501).
+2. **Шлюз** (чат-платформы): добавить `/creatives → 127.0.0.1:8013` в `gateway/proxy.py`, ссылку в навигацию, завести `app3.service`.
+3. **Страница `creatives.html`** — владелец чат-шлюз; App3 отдаёт только API-контракт (см. выше).
+4. **Egress-allowlist** — передать список хостов платформе (см. секцию Egress).
+5. **Боевой прогон** на ВМ с реальным Redis + Cloud.ru FM + Phygital.
 
 ## Что переиспользуется / выбрасывается
 - **as-is:** `graph/`, `infra/`, `llm/`, `config/templates.json`, `agents/` (нужна параметризация хардкода `/data/...`).

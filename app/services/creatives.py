@@ -12,6 +12,7 @@ in later phases.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -91,6 +92,7 @@ class CreativesService:
         results_dir: Path | str = "./data/results",
         hero_generator: HeroGenerator | None = None,
         max_open_per_user: int = 5,
+        image_timeout_sec: int = 24 * 3600,
     ) -> None:
         self.manager = manager
         self.bus = bus
@@ -100,6 +102,8 @@ class CreativesService:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.hero_generator: HeroGenerator = hero_generator or NullHeroGenerator()
         self.max_open_per_user = max_open_per_user
+        self.image_timeout_sec = image_timeout_sec
+        self._timeouts: dict[str, asyncio.Task] = {}
 
     # ── create ────────────────────────────────────────────────
     async def create(self, user_id: str, fields: dict[str, str]) -> str:
@@ -154,6 +158,7 @@ class CreativesService:
         """
         from langgraph.types import Command
 
+        self._cancel_timeout(task_uid)
         await self._set_status(task_uid, "running")
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
         payload = Command(resume=decision)
@@ -176,6 +181,7 @@ class CreativesService:
         if not self.hero_generator.available:
             raise HeroGenUnavailable("hero generation backend not configured")
 
+        self._cancel_timeout(task_uid)
         await self._set_status(task_uid, "running")
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
 
@@ -291,6 +297,7 @@ class CreativesService:
                 "can_generate": self.hero_generator.available,
             }
             await reporter.awaiting(phase="image_upload", data=data)
+            self._arm_image_timeout(task_uid)
         else:
             await self._set_status(task_uid, "awaiting_text")
             data = {"candidate": value.get("candidate") if isinstance(value, dict) else None}
@@ -338,6 +345,36 @@ class CreativesService:
             if pngs:
                 zip_url = f"/results/{task_uid}/{pngs[0].name}"
         return zip_url
+
+    # ── image-upload timeout ──────────────────────────────────
+    def _arm_image_timeout(self, task_uid: str) -> None:
+        """Resume the graph with {action:timeout} if the user never provides a
+        hero within image_timeout_sec (graph then cancels the task)."""
+        self._cancel_timeout(task_uid)
+
+        async def _sleeper() -> None:
+            try:
+                await asyncio.sleep(self.image_timeout_sec)
+            except asyncio.CancelledError:
+                return
+            # only fire if still parked at awaiting_image
+            async with self.Session() as s:
+                res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
+                task = res.scalar_one_or_none()
+            if task is None or task.status != "awaiting_image":
+                return
+            log.warning("image_upload_timeout", task_uid=task_uid)
+            await self.submit_decision(task_uid, str(task.user_id), {"action": "timeout"})
+
+        try:
+            self._timeouts[task_uid] = asyncio.create_task(_sleeper(), name=f"img-timeout-{task_uid}")
+        except RuntimeError:
+            pass  # no running loop (unit context without scheduling)
+
+    def _cancel_timeout(self, task_uid: str) -> None:
+        t = self._timeouts.pop(task_uid, None)
+        if t is not None and not t.done():
+            t.cancel()
 
     # ── helpers ───────────────────────────────────────────────
     def _config(self, task_uid: str) -> dict:
