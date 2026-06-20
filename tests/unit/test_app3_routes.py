@@ -15,9 +15,9 @@ _HDR = {"X-User-Id": "5", "X-User-Email": "u@cloud.ru"}
 
 
 def _app(tmp_path, monkeypatch, *, graph_ok: bool):
-    async def fake_init_graph(redis_url):
+    async def fake_init_graph(checkpoint_db):
         if not graph_ok:
-            raise RuntimeError("redis down")
+            raise RuntimeError("checkpointer init failed")
         return object(), None  # (graph, cm); cm=None so shutdown skips
 
     monkeypatch.setattr(creatives_mod, "init_graph", fake_init_graph)

@@ -337,6 +337,87 @@ async def test_null_hero_generator_unavailable():
         await g.generate(prompt="x", style="render", dest="y")
 
 
+def test_make_hero_generator_selects_backend():
+    from app.services.hero_gen import (
+        App1HeroGenerator,
+        NullHeroGenerator,
+        make_hero_generator,
+    )
+
+    assert isinstance(
+        make_hero_generator(backend="app1", app1_hero_url="http://127.0.0.1:8011/internal/hero"),
+        App1HeroGenerator,
+    )
+    assert isinstance(make_hero_generator(backend="none", app1_hero_url="x"), NullHeroGenerator)
+    # unknown backend → safe default (manual upload)
+    assert isinstance(make_hero_generator(backend="???", app1_hero_url="x"), NullHeroGenerator)
+
+
+@pytest.mark.asyncio
+async def test_app1_hero_generator_image_response(tmp_path, monkeypatch):
+    """App1HeroGenerator writes image bytes from an image/* response to dest."""
+    from app.services import hero_gen as hg
+
+    class _Resp:
+        def __init__(self, content=b"", headers=None, json_data=None):
+            self.content = content
+            self.headers = headers or {}
+            self._json = json_data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._json
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def post(self, url, json):
+            return _Resp(content=b"\x89PNG-app1", headers={"content-type": "image/png"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    gen = hg.App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+    dest = tmp_path / "hero.png"
+    out = await gen.generate(prompt="cloud", style="render", dest=dest)
+    assert out == dest
+    assert dest.read_bytes() == b"\x89PNG-app1"
+
+
+@pytest.mark.asyncio
+async def test_app1_hero_generator_failure_raises_unavailable(tmp_path, monkeypatch):
+    from app.services import hero_gen as hg
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def post(self, url, json):
+            raise RuntimeError("connection refused")
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    gen = hg.App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+    with pytest.raises(hg.HeroGenUnavailable):
+        await gen.generate(prompt="x", style="render", dest=tmp_path / "h.png")
+
+
 @pytest.mark.asyncio
 async def test_awaiting_image_can_generate_reflects_backend(tmp_path):
     """can_generate in the awaiting_image event mirrors generator.available."""

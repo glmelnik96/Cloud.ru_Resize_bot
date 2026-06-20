@@ -2,8 +2,9 @@
 
 Env-key names mirror App1 where they overlap (DB_URL, RESULTS_DIR,
 MAX_CONCURRENCY, ...) so the platform's deploy conventions line up. App3-only
-keys: REDIS_URL (langgraph checkpointer), PHYGITAL_SESSION_FILE (web hero
-generation), plus the Cloud.ru FM keys the graph reads from the environment.
+keys: CHECKPOINT_DB (SQLite langgraph checkpointer), HERO_GEN_BACKEND /
+APP1_HERO_URL (hero generation delegated to App1), plus the Cloud.ru FM keys
+the graph reads from the environment.
 """
 from __future__ import annotations
 
@@ -47,11 +48,16 @@ class Settings(BaseSettings):
     retention_ttl_sec: int = Field(24 * 3600, alias="RETENTION_TTL_SEC")
 
     # --- langgraph checkpointer (App3-only: durable HITL park/resume) ---
-    redis_url: str = Field("redis://127.0.0.1:6379/0", alias="REDIS_URL")
+    # SQLite-backed (no Redis on the VM — platform decision 2026-06-21).
+    # Separate DB file from db_url so checkpoint + app schemas stay independent.
+    checkpoint_db: str = Field("./data/app3_checkpoints.db", alias="CHECKPOINT_DB")
 
-    # --- web Phygital hero generation (channel switch, phase 5) ---
-    phygital_session_file: Path = Field(
-        ROOT / "storage" / "session.json", alias="PHYGITAL_SESSION_FILE"
+    # --- hero generation (delegated to App1, platform decision 2026-06-21) ---
+    # "none" → manual upload only (default until App1's /internal/hero is live);
+    # "app1" → POST the prompt to App1's internal loopback endpoint.
+    hero_gen_backend: str = Field("none", alias="HERO_GEN_BACKEND")
+    app1_hero_url: str = Field(
+        "http://127.0.0.1:8011/internal/hero", alias="APP1_HERO_URL"
     )
 
     # --- Cloud.ru FM (the graph's llm/cloudru.py reads these from env) ---

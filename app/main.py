@@ -62,25 +62,23 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
         os.environ.setdefault("ZIPS_DIR", str(cfg["zips_dir"]))
         os.environ.setdefault("HEROES_DIR", str(cfg["heroes_dir"]))
 
-        # Compile the /new graph with the Redis checkpointer. If Redis is down,
-        # the skeleton still boots (auth/me works); task creation returns 503.
+        # Compile the /new graph with the SQLite checkpointer (no Redis). If it
+        # fails, the skeleton still boots (auth/me works); tasks return 503.
         cm = None
         graph = None
         try:
             from app.services.creatives import CreativesService, init_graph
-            from app.services.hero_gen import NullHeroGenerator, PhygitalHeroGenerator
+            from app.services.hero_gen import make_hero_generator
 
-            graph, cm = await init_graph(cfg["redis_url"])
+            graph, cm = await init_graph(cfg["checkpoint_db"])
 
-            # Web Phygital generator only if a session file is present; else the
-            # UI offers manual upload only (Null generator).
-            session_file = Path(cfg["phygital_session_file"])
-            if session_file.exists():
-                hero_gen = PhygitalHeroGenerator(session_file)
-                log.info("hero generation: phygital web (session present)")
-            else:
-                hero_gen = NullHeroGenerator()
-                log.info("hero generation: disabled (no session file) — manual upload only")
+            # Hero generation backend, chosen by env (HERO_GEN_BACKEND):
+            #   "app1" → delegate to App1's /internal/hero (loopback);
+            #   "none" (default) → manual upload only, until App1's endpoint is live.
+            hero_gen = make_hero_generator(
+                backend=cfg["hero_gen_backend"], app1_hero_url=cfg["app1_hero_url"]
+            )
+            log.info("hero generation backend: %s", cfg["hero_gen_backend"])
 
             app.state.creatives = CreativesService(
                 manager=manager, bus=bus, sessionmaker=Session, graph=graph,
@@ -140,8 +138,9 @@ def _resolve_settings(test_settings: dict | None) -> dict:
         "renders_dir": str(settings.renders_dir),
         "zips_dir": str(settings.zips_dir),
         "heroes_dir": str(settings.heroes_dir),
-        "phygital_session_file": str(settings.phygital_session_file),
-        "redis_url": settings.redis_url,
+        "checkpoint_db": settings.checkpoint_db,
+        "hero_gen_backend": settings.hero_gen_backend,
+        "app1_hero_url": settings.app1_hero_url,
         "max_concurrency": settings.max_concurrency,
         "max_per_user_inflight": settings.max_per_user_inflight,
         "user_queue_limit": settings.user_queue_limit,

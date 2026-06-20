@@ -1,15 +1,17 @@
 [Unit]
 Description=App3 (creatives) — Resize_bot web sub-app behind the platform gateway
-After=network.target redis.service
-Wants=redis.service
+After=network.target
 
 [Service]
 Type=simple
 User=admin
-WorkingDirectory=/home/admin/Resize_bot
-EnvironmentFile=-/home/admin/Resize_bot/.env
-# Single worker: the SSE EventBus is in-process (see app/tasks/events.py).
-ExecStart=/home/admin/Resize_bot/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8013 --workers 1
+# Platform deploy clones into /opt/app3 (per COORDINATION 2026-06-21).
+WorkingDirectory=/opt/app3
+EnvironmentFile=-/opt/app3/.env
+# venv setup: python -m venv .venv && .venv/bin/pip install -e '.[web]'
+# (core deps + [web] group: FastAPI, SQLAlchemy, SQLite langgraph checkpointer).
+# No Redis. Single worker: the SSE EventBus is in-process (app/tasks/events.py).
+ExecStart=/opt/app3/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8013 --workers 1
 Restart=on-failure
 RestartSec=5
 

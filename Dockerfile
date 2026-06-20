@@ -15,7 +15,8 @@ RUN pip install uv
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN uv pip install --system -r pyproject.toml
+# Bot needs the core deps + the [bot] group (PTB + Redis checkpointer).
+RUN uv pip install --system -r pyproject.toml --group bot
 
 COPY bot/ ./bot/
 COPY llm/ ./llm/

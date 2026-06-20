@@ -52,21 +52,24 @@ class CapacityError(Exception):
     """Raised when a user already has too many open creatives tasks."""
 
 
-async def init_graph(redis_url: str):
-    """Open AsyncRedisSaver + compile the /new graph once at startup.
+async def init_graph(checkpoint_db: str):
+    """Open AsyncSqliteSaver + compile the /new graph once at startup.
 
-    Returns (compiled_graph, checkpointer_cm). The cm must be __aexit__'d on
-    shutdown. Ported from bot/graph_runner.init_compiled_graph, minus PTB.
+    Durable HITL (park/resume across restarts) is backed by SQLite — no Redis
+    on the VM (platform decision 2026-06-21). The checkpointer DB is separate
+    from the app's Task/User DB so a schema change in one never touches the
+    other. Returns (compiled_graph, checkpointer_cm); cm must be __aexit__'d
+    on shutdown.
     """
-    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
     from graph.builder import build_text_graph
 
-    cm = AsyncRedisSaver.from_conn_string(redis_url)
+    cm = AsyncSqliteSaver.from_conn_string(checkpoint_db)
     saver = await cm.__aenter__()
-    await saver.asetup()
+    await saver.setup()
     compiled = build_text_graph().compile(checkpointer=saver)
-    log.info("creatives_graph_ready", redis_url=redis_url)
+    log.info("creatives_graph_ready", checkpoint_db=checkpoint_db)
     return compiled, cm
 
 
