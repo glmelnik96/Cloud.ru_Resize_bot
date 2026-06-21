@@ -1,0 +1,88 @@
+/* App3 / creatives — canon v2 (palette + header copied 1:1 from contract §3–4).
+   Fonts served under the gateway section prefix /creatives/static/fonts/. */
+
+/* ── canon fonts: SB Sans (4 files) ─────────────────────── */
+@font-face { font-family: "SB Sans Text"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/creatives/static/fonts/sb-sans-text-400.woff2") format("woff2"); }
+@font-face { font-family: "SB Sans Text"; font-weight: 500 700; font-style: normal; font-display: swap;
+  src: url("/creatives/static/fonts/sb-sans-text-600.woff2") format("woff2"); }
+@font-face { font-family: "SB Sans Display"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/creatives/static/fonts/sb-sans-display-400.woff2") format("woff2"); }
+@font-face { font-family: "SB Sans Display"; font-weight: 500 700; font-style: normal; font-display: swap;
+  src: url("/creatives/static/fonts/sb-sans-display-600.woff2") format("woff2"); }
+
+/* ── canon palette ──────────────────────────────────────── */
+:root{
+  --bg:#222222; --panel:#2c2c2c; --panel-2:#383838; --line:#3d3d3d;
+  --text:#ffffff; --muted:#b8b8b8;
+  --accent:#26D07C; --accent-2:#1fb06a; --accent-ink:#04130d; --danger:#ff6b6b;
+  --font-display:"SB Sans Display",Verdana,sans-serif;
+  --font-text:"SB Sans Text",Verdana,sans-serif;
+}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-text);line-height:1.45;}
+h1,h2,h3,.brand{font-family:var(--font-display);}
+
+/* ── canon header ───────────────────────────────────────── */
+.topbar{display:flex;align-items:center;gap:24px;padding:14px 24px;background:var(--panel);border-bottom:1px solid var(--line);}
+.topbar .brand{font-size:20px;font-weight:700;letter-spacing:.3px;text-decoration:none;color:var(--text);}
+.topbar .brand span{color:var(--accent);}
+.topnav{display:flex;gap:6px;}
+.topnav__link{text-decoration:none;color:var(--muted);font-size:15px;padding:7px 14px;border-radius:9px;transition:color .12s,background .12s;}
+.topnav__link:hover{color:var(--text);background:var(--panel-2);}
+.topnav__link.is-active{color:var(--accent-ink);background:var(--accent);font-weight:600;}
+.topbar__auth{margin-left:auto;display:flex;align-items:center;gap:12px;}
+.topbar__user{color:var(--muted);font-size:14px;}
+.logout-form{margin:0;}
+.logout-form button{cursor:pointer;border:1px solid var(--line);background:var(--panel-2);color:var(--text);padding:8px 14px;border-radius:9px;font:inherit;}
+
+/* ── page layout ────────────────────────────────────────── */
+.wrap{max-width:860px;margin:0 auto;padding:28px 24px 64px;}
+.page-title{margin:0 0 6px;font-size:26px;}
+.page-sub{margin:0 0 24px;color:var(--muted);}
+.hidden{display:none;}
+
+/* ── panels ─────────────────────────────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:18px;}
+.panel h2{margin:0 0 14px;font-size:18px;}
+
+/* ── form controls ──────────────────────────────────────── */
+label{display:block;margin:12px 0 6px;font-size:14px;color:var(--muted);}
+textarea,select,input[type="text"]{
+  width:100%;box-sizing:border-box;background:var(--panel-2);color:var(--text);
+  border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:inherit;
+}
+textarea{min-height:72px;resize:vertical;}
+textarea:focus,select:focus{outline:none;border-color:var(--accent);}
+
+/* ── buttons ────────────────────────────────────────────── */
+.btn-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;}
+.btn{cursor:pointer;border:1px solid var(--line);background:var(--panel-2);color:var(--text);
+  padding:10px 18px;border-radius:9px;font:inherit;transition:background .12s,border-color .12s,opacity .12s;}
+.btn:hover{background:var(--line);}
+.btn:disabled{opacity:.5;cursor:default;}
+.btn--accent{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;}
+.btn--accent:hover{background:var(--accent-2);border-color:var(--accent-2);}
+.btn--danger{color:var(--danger);border-color:var(--danger);background:transparent;}
+.btn--danger:hover{background:rgba(255,107,107,.12);}
+
+/* ── status / progress ──────────────────────────────────── */
+.status{margin-top:14px;color:var(--muted);font-size:14px;min-height:20px;}
+.step{display:inline-flex;align-items:center;gap:8px;}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 0 rgba(38,208,124,.5);animation:pulse 1.4s ease-out infinite;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(38,208,124,.5);}70%{box-shadow:0 0 0 9px rgba(38,208,124,0);}100%{box-shadow:0 0 0 0 rgba(38,208,124,0);}}
+.err{color:var(--danger);}
+
+/* ── text candidate (HITL) ──────────────────────────────── */
+.kv{margin:6px 0;}
+.kv b{color:var(--accent);font-family:var(--font-display);}
+
+/* ── image prompt ───────────────────────────────────────── */
+.prompt{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;
+  padding:12px 14px;white-space:pre-wrap;word-break:break-word;font-size:13px;color:var(--text);margin:0;}
+
+/* ── results ────────────────────────────────────────────── */
+.results{margin-top:12px;}
+.dl{display:inline-block;margin-top:8px;text-decoration:none;background:var(--accent);color:var(--accent-ink);
+  padding:10px 18px;border-radius:9px;font-weight:600;}
+.dl:hover{background:var(--accent-2);}

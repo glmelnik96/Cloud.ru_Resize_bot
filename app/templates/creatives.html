@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Креативы — Cloud.ru Design</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Cloud.ru <span>Design</span></a>
+    <nav class="topnav">
+      <a href="/images" class="topnav__link">Картинки</a>
+      <a href="/slides" class="topnav__link">Слайды</a>
+      <a href="/creatives" class="topnav__link is-active">Креативы</a>
+    </nav>
+    <div class="topbar__auth">
+      <span class="topbar__user">{{ email }}</span>
+      <form action="/logout" method="post" class="logout-form"><button type="submit">Выйти</button></form>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1 class="page-title">Генерация креативов</h1>
+    <p class="page-sub">Бриф → текст под аудиторию → hero-картинка → готовые баннеры во всех форматах.</p>
+
+    <!-- 1. brief -->
+    <section class="panel" id="briefPanel">
+      <h2>Бриф</h2>
+      <label for="product">Что рекламируем</label>
+      <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
+      <label for="goal">Цель кампании</label>
+      <select id="goal">
+        <option value="awareness">Знакомство</option>
+        <option value="consideration">Рассмотрение</option>
+        <option value="conversion" selected>Конверсия</option>
+        <option value="engagement">Вовлечение</option>
+        <option value="retention">Удержание</option>
+      </select>
+      <label for="audience">Целевая аудитория</label>
+      <textarea id="audience" placeholder="Кто это, какие боли, чем мотивированы; можно указать канал (TG/VK/IG)"></textarea>
+      <div class="btn-row">
+        <button class="btn btn--accent" id="startBtn">Запустить генерацию</button>
+      </div>
+      <div class="status" id="briefStatus"></div>
+    </section>
+
+    <!-- 2. progress -->
+    <section class="panel hidden" id="progressPanel">
+      <h2>Прогресс</h2>
+      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
+    </section>
+
+    <!-- 3. text HITL -->
+    <section class="panel hidden" id="textPanel">
+      <h2>Текст-кандидат</h2>
+      <div id="candidate"></div>
+      <div class="btn-row">
+        <button class="btn btn--accent" data-act="approve">Принять</button>
+        <button class="btn" data-act="regenerate">Перегенерить</button>
+        <button class="btn" data-act="refine">Доработать</button>
+        <button class="btn btn--danger" data-act="cancel">Отменить</button>
+      </div>
+      <div id="refineBox" class="hidden">
+        <label for="refineComment">Что переделать</label>
+        <textarea id="refineComment" placeholder="Одной-двумя фразами"></textarea>
+        <div class="btn-row"><button class="btn btn--accent" id="refineSend">Отправить правку</button></div>
+      </div>
+    </section>
+
+    <!-- 4. image HITL -->
+    <section class="panel hidden" id="imagePanel">
+      <h2>Hero-картинка</h2>
+      <p class="page-sub">Промпт под тему (можно сгенерировать на сервере или загрузить свою картинку):</p>
+      <pre class="prompt" id="imagePrompt"></pre>
+      <div class="btn-row">
+        <button class="btn btn--accent hidden" id="genBtn">Сгенерировать</button>
+        <label class="btn" for="heroFile" style="display:inline-block">Загрузить картинку</label>
+        <input type="file" id="heroFile" accept="image/*" class="hidden">
+        <button class="btn btn--danger" id="imgCancel">Отменить</button>
+      </div>
+      <div class="status" id="imageStatus"></div>
+    </section>
+
+    <!-- 5. results -->
+    <section class="panel hidden" id="resultsPanel">
+      <h2>Готово</h2>
+      <div id="resultMsg"></div>
+      <div class="results" id="results"></div>
+    </section>
+  </main>
+
+  <script>window.APP_PREFIX = "{{ prefix }}";</script>
+  <script src="{{ prefix }}/static/creatives.js"></script>
+</body>
+</html>
