@@ -44,7 +44,12 @@ def test_same_gateway_id_reuses_row_and_updates_email(tmp_path):
 
 
 def test_results_mount_exists(tmp_path):
+    # Robust across starlette versions: newer starlette keeps included routers
+    # as a lazy wrapper (no flattened APIRoute in app.routes), so probe the
+    # /api/me route by behaviour (401, not 404 = wired) and check the /results
+    # Mount, which still surfaces in app.routes.
     app = create_app({"db_url": f"sqlite+aiosqlite:///{tmp_path / 'app3.db'}"})
-    paths = [r.path for r in app.routes if hasattr(r, "path")]
-    assert "/api/me" in paths
-    assert "/results" in paths
+    with TestClient(app) as c:
+        assert c.get("/api/me").status_code == 401  # wired (404 would mean missing)
+    mount_paths = [r.path for r in app.routes if hasattr(r, "path")]
+    assert "/results" in mount_paths

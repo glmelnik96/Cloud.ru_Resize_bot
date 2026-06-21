@@ -9,6 +9,13 @@
 
   let taskUid = null;
   let es = null; // EventSource
+  // Active-task handle survives the full page reload that canon-header
+  // navigation does (links to /images /slides /creatives are absolute). The
+  // run keeps going server-side; on load we rehydrate from here or /api/tasks.
+  const LS_KEY = "app3_active_task";
+  const ACTIVE = ["queued", "running", "awaiting_text", "awaiting_image"];
+  const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
+  const clearActive = () => { try { localStorage.removeItem(LS_KEY); } catch (_) {} };
 
   // ── start ──────────────────────────────────────────────
   $("startBtn").addEventListener("click", async () => {
@@ -30,6 +37,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       taskUid = data.task_uid;
+      saveActive(taskUid);
       $("briefStatus").textContent = "";
       show($("progressPanel"));
       subscribe();
@@ -111,6 +119,7 @@
   // ── terminal ───────────────────────────────────────────
   function onDone(d) {
     if (es) es.close();
+    clearActive();
     hideHitl(); hide($("progressPanel")); show($("resultsPanel"));
     const url = d.result_url ? `${P}${d.result_url}` : null;
     $("resultMsg").innerHTML = url
@@ -119,12 +128,14 @@
   }
   function onError(e) {
     if (es) es.close();
+    clearActive();
     let msg = "Сбой генерации.";
     try { msg = JSON.parse(e.data).message || msg; } catch {}
     $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
   }
   function onCancelled(d) {
     if (es) es.close();
+    clearActive();
     hideHitl(); hide($("progressPanel"));
     $("briefStatus").textContent = d.reason === "timeout" ? "Время истекло, сессия отменена." : "Отменено.";
     show($("briefPanel")); $("startBtn").disabled = false;
@@ -145,4 +156,50 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
+
+  // ── rehydrate active task on page load ─────────────────
+  // Canon-header navigation is a full reload that drops JS state + the
+  // EventSource, but the run lives on server-side (detached create_task). Find
+  // the active task (localStorage, else /api/tasks), snapshot its state via
+  // /pending (EventBus has no replay, so snapshot BEFORE resubscribing), then
+  // reattach the stream.
+  async function findActiveUid() {
+    const stored = (() => { try { return localStorage.getItem(LS_KEY); } catch (_) { return null; } })();
+    if (stored) return stored;
+    try {
+      const r = await fetch(`${P}/api/tasks`);
+      if (!r.ok) return null;
+      const tasks = await r.json();
+      const t = (tasks || []).find((x) => ACTIVE.includes(x.status));
+      return t ? t.task_uid : null;
+    } catch (_) { return null; }
+  }
+
+  async function rehydrate() {
+    const uid = await findActiveUid();
+    if (!uid) return;
+    taskUid = uid;
+    try {
+      const r = await fetch(`${P}/api/tasks/${uid}/pending`);
+      if (!r.ok) { clearActive(); return; }
+      const d = await r.json();
+      if (d.phase) {
+        // parked at a HITL pause → re-render the decision UI
+        saveActive(uid);
+        show($("progressPanel"));
+        onAwaiting(d);
+        subscribe();
+      } else if (ACTIVE.includes(d.status)) {
+        // still computing → show progress and reattach the stream
+        saveActive(uid);
+        setStep("Продолжаю…");
+        subscribe();
+      } else {
+        // terminal (done/failed/cancelled) since we last saw it
+        clearActive();
+      }
+    } catch (_) { /* leave the brief form as-is on any error */ }
+  }
+
+  rehydrate();
 })();

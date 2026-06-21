@@ -59,6 +59,18 @@ def test_static_font_served(tmp_path, monkeypatch):
         assert r.content[:4] == b"wOF2"  # woff2 magic
 
 
+def test_creatives_js_rehydrates_active_task(tmp_path, monkeypatch):
+    """Canon-header nav is a full reload; the JS must restore an in-flight run:
+    persist the uid, look it up (localStorage / GET /api/tasks), snapshot via
+    /pending, and reattach the EventSource (contract v3 §8)."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "localStorage" in js  # uid persisted across the reload
+        assert "/api/tasks" in js  # discover the active task when storage is empty
+        assert "/pending" in js  # snapshot the parked/running state before stream
+        assert "rehydrate" in js  # run the restore on load
+
+
 # ── local-smoke dev affordances (no gateway) ────────────────────────
 
 
