@@ -70,6 +70,9 @@ h1,h2,h3,.brand{font-family:var(--font-display);letter-spacing:-0.01em;}
   background:var(--accent);
   clip-path:polygon(0 0, 100% 0, 100% 30%, 42% 30%, 42% 100%, 0 100%);}
 .page-sub{margin:0 0 28px;color:var(--muted);}
+.intro{border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:var(--r);padding:16px 18px;margin:0 0 28px;background:var(--bg-soft);}
+.intro p{margin:0;color:var(--muted);line-height:1.55;font-size:14px;}
 .hidden{display:none !important;}
 
 /* ── панели: структура на хайрлайнах, фон прозрачный ──────── */
