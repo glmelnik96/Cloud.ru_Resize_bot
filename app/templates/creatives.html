@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260621v3">
 </head>
 <body>
   <header class="topbar">
@@ -29,16 +29,11 @@
       <h2>Бриф</h2>
       <label for="product">Что рекламируем</label>
       <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
-      <label for="goal">Цель кампании</label>
-      <select id="goal">
-        <option value="awareness">Знакомство</option>
-        <option value="consideration">Рассмотрение</option>
-        <option value="conversion" selected>Конверсия</option>
-        <option value="engagement">Вовлечение</option>
-        <option value="retention">Удержание</option>
-      </select>
       <label for="audience">Целевая аудитория</label>
       <textarea id="audience" placeholder="Кто это, какие боли, чем мотивированы; можно указать канал (TG/VK/IG)"></textarea>
+      <label for="emotion">Эмоция / образ</label>
+      <textarea id="emotion" placeholder="уверенность и контроль — будто всё управление под рукой"></textarea>
+      <p class="page-sub">Формула: «[чувство] + [образ/ассоциация]». Что должен почувствовать человек и с чем это ассоциируется. На этой эмоции строятся 12 предложений под аудиторию.</p>
       <div class="btn-row">
         <button class="btn btn--accent" id="startBtn">Запустить генерацию</button>
       </div>
@@ -49,22 +44,18 @@
     <section class="panel hidden" id="progressPanel">
       <h2>Прогресс</h2>
       <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
+      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
     </section>
 
     <!-- 3. text HITL -->
     <section class="panel hidden" id="textPanel">
-      <h2>Текст-кандидат</h2>
-      <div id="candidate"></div>
+      <h2>12 предложений под аудиторию</h2>
+      <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
+      <div id="candidates" class="candidates"></div>
       <div class="btn-row">
-        <button class="btn btn--accent" data-act="approve">Принять</button>
-        <button class="btn" data-act="regenerate">Перегенерить</button>
-        <button class="btn" data-act="refine">Доработать</button>
+        <button class="btn btn--accent" data-act="approve">Принять все</button>
+        <button class="btn" data-act="regenerate">Перегенерить все</button>
         <button class="btn btn--danger" data-act="cancel">Отменить</button>
-      </div>
-      <div id="refineBox" class="hidden">
-        <label for="refineComment">Что переделать</label>
-        <textarea id="refineComment" placeholder="Одной-двумя фразами"></textarea>
-        <div class="btn-row"><button class="btn btn--accent" id="refineSend">Отправить правку</button></div>
       </div>
     </section>
 

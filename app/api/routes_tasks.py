@@ -102,7 +102,7 @@ async def decide_text(uid: str, body: TextDecisionIn, request: Request):
     service = request.app.state.creatives
     if service is None:
         raise HTTPException(503, "service unavailable")
-    decision = {"action": body.action, "comment": body.comment}
+    decision = {"action": body.action}
     await service.submit_decision(uid, str(user.id), decision)
     return {"ok": True, "action": body.action}
 

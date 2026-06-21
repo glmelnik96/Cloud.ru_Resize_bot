@@ -26,7 +26,7 @@ def _app(tmp_path, monkeypatch, *, graph_ok: bool):
 
 def test_create_returns_503_when_graph_down(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch, graph_ok=False)) as c:
-        r = c.post("/api/tasks", json={"product": "p", "goal": "g", "audience": "a"}, headers=_HDR)
+        r = c.post("/api/tasks", json={"product": "p", "audience": "a", "emotion": "e"}, headers=_HDR)
         assert r.status_code == 503
 
 
@@ -40,14 +40,14 @@ def test_create_returns_uid_with_stub_service(tmp_path, monkeypatch):
                 return "deadbeef0001"
 
         app.state.creatives = _Stub()
-        r = c.post("/api/tasks", json={"product": "p", "goal": "g", "audience": "a"}, headers=_HDR)
+        r = c.post("/api/tasks", json={"product": "p", "audience": "a", "emotion": "e"}, headers=_HDR)
         assert r.status_code == 200
         assert r.json()["task_uid"] == "deadbeef0001"
 
 
 def test_create_requires_auth(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch, graph_ok=True)) as c:
-        r = c.post("/api/tasks", json={"product": "p", "goal": "g", "audience": "a"})
+        r = c.post("/api/tasks", json={"product": "p", "audience": "a", "emotion": "e"})
         assert r.status_code == 401
 
 
@@ -140,12 +140,12 @@ def test_decision_text_accepts_when_awaiting(tmp_path, monkeypatch):
         _seed_task(db, "at", "awaiting_text", me["id"])
         r = c.post(
             "/api/tasks/at/decision/text",
-            json={"action": "refine", "comment": "короче"},
+            json={"action": "regenerate"},
             headers=_HDR,
         )
         assert r.status_code == 200
         assert seen["uid"] == "at"
-        assert seen["decision"] == {"action": "refine", "comment": "короче"}
+        assert seen["decision"] == {"action": "regenerate"}
 
 
 def test_decision_text_rejects_bad_action(tmp_path, monkeypatch):

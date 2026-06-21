@@ -51,12 +51,12 @@ class _ResumableGraph:
     → image interrupt; Command(resume=cancel) → terminal cancelled."""
 
     def __init__(self):
-        self.values = {"winner": {"slogan": "S"}, "image_prompt": "P", "image_style": "render"}
+        self.values = {"ranked": [{"id": "c1", "slogan": "S"}], "image_prompt": "P", "image_style": "render"}
 
     async def astream(self, payload, config=None, stream_mode=None):
         resume = getattr(payload, "resume", None)
         if resume is None:
-            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidate": {"slogan": "S"}})]}
+            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidates": [{"id": "c1", "slogan": "S"}]})]}
             return
         action = resume.get("action")
         if action == "approve":
@@ -66,8 +66,8 @@ class _ResumableGraph:
             )]}
         elif action == "cancel":
             yield {"hitl_text_approve": {"cancelled": True}}
-        else:  # regenerate/refine → back to a fresh text interrupt
-            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidate": {"slogan": "S2"}})]}
+        else:  # regenerate → back to a fresh text interrupt
+            yield {"__interrupt__": [_FakeInterrupt({"kind": "text_approve", "candidates": [{"id": "c2", "slogan": "S2"}]})]}
 
     async def aget_state(self, config):
         return _FakeState(self.values)
@@ -124,17 +124,23 @@ def _service(Session, graph, **kw):
 
 # ── tests ──────────────────────────────────────────────────────
 def test_build_raw_brief():
-    txt = build_raw_brief({"product": "Облако", "goal": "conversion", "audience": "DevOps"})
+    txt = build_raw_brief(
+        {
+            "product": "Облако",
+            "audience": "DevOps",
+            "emotion": "уверенность и контроль — будто всё управление под рукой",
+        }
+    )
     assert "Продукт: Облако" in txt
-    assert "Цель: conversion" in txt
     assert "ЦА: DevOps" in txt
+    assert "Эмоция: уверенность и контроль" in txt
 
 
 @pytest.mark.asyncio
 async def test_segment_parks_at_awaiting_text(tmp_path):
     Session = await _sessionmaker(tmp_path)
     bus = EventBus()
-    iv = {"kind": "text_approve", "candidate": {"slogan": "Быстро в облако"}}
+    iv = {"kind": "text_approve", "candidates": [{"id": "c1", "slogan": "Быстро в облако"}]}
     svc = _service(Session, _FakeGraph(iv), bus=bus, tmp=tmp_path / "tmp")
 
     # seed a queued task row
@@ -160,7 +166,7 @@ async def test_segment_parks_at_awaiting_text(tmp_path):
         events.append(q.get_nowait())
     awaiting = [e for e in events if e["kind"] == "awaiting_input"]
     assert awaiting and awaiting[0]["phase"] == "text_approve"
-    assert awaiting[0]["candidate"]["slogan"] == "Быстро в облако"
+    assert awaiting[0]["candidates"][0]["slogan"] == "Быстро в облако"
 
 
 @pytest.mark.asyncio
@@ -270,7 +276,7 @@ async def test_pending_rehydrates_from_checkpoint(tmp_path):
     svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
     text_payload = await svc.pending("tX", "awaiting_text")
     assert text_payload["phase"] == "text_approve"
-    assert text_payload["candidate"] == {"slogan": "S"}
+    assert text_payload["candidates"] == [{"id": "c1", "slogan": "S"}]
     img_payload = await svc.pending("tX", "awaiting_image")
     assert img_payload["phase"] == "image_upload"
     assert img_payload["image_prompt"] == "P"

@@ -1,14 +1,14 @@
 """HITL: text approve node.
 
-Pauses the graph via ``interrupt()`` after persona-loop picks a winner.
-PTB layer renders the inline keyboard (OK / regenerate / refine / cancel),
-collects the user's decision and resumes the graph with ``Command(resume=...)``.
+Pauses the graph via ``interrupt()`` after rank_candidates orders the 12
+propositions. The UI renders all 12 ranked cards; the user approves the SET,
+asks to regenerate the whole set, or cancels. There is no single winner and no
+per-candidate refine (App3 redesign 2026-06-21).
 
 Decision contract (the value passed to ``Command(resume=...)``):
-    {"action": "approve", "comment": None}
-    {"action": "regenerate", "comment": None}
-    {"action": "refine", "comment": "<free-form text from user>"}
-    {"action": "cancel", "comment": None}
+    {"action": "approve"}     — accept the whole set of 12, proceed
+    {"action": "regenerate"}  — throw away the set, generate 12 fresh angles
+    {"action": "cancel"}      — abort the run
 """
 
 from __future__ import annotations
@@ -16,64 +16,39 @@ from __future__ import annotations
 import structlog
 from langgraph.types import interrupt
 
-from graph.state import GraphState, MessageCandidate
+from graph.state import GraphState
 
 log = structlog.get_logger(__name__)
 
 
 async def hitl_text_approve(state: GraphState) -> dict:
-    winner = state.get("winner")
-    if winner is None:
-        # Should never reach here — builder routes here only when winner != None.
-        return {"error": "hitl_text_approve called without winner"}
-
-    winner_obj = (
-        winner
-        if isinstance(winner, MessageCandidate)
-        else MessageCandidate.model_validate(winner)
-    )
+    ranked = state.get("ranked") or []
 
     log.info(
         "hitl_text_interrupt",
         session_id=state.get("session_id"),
-        candidate_id=winner_obj.id,
+        n=len(ranked),
     )
 
     decision: dict = interrupt(
         {
             "kind": "text_approve",
-            "candidate": winner_obj.model_dump(),
+            "candidates": ranked,
             "session_id": state.get("session_id"),
         }
     )
 
+    action = decision.get("action", "cancel")
     log.info(
         "hitl_text_resume",
         session_id=state.get("session_id"),
-        action=decision.get("action"),
-        has_comment=bool(decision.get("comment")),
+        action=action,
     )
 
-    action = decision.get("action", "cancel")
     if action == "approve":
         return {"text_approved": True}
-    if action == "cancel":
-        return {"text_approved": False, "cancelled": True}
     if action == "regenerate":
-        # bump revise_round so generate node knows it's a redo
-        return {
-            "winner": None,
-            "revise_round": state.get("revise_round", 0) + 1,
-            "candidates": [],
-            "verdicts": [],
-        }
-    if action == "refine":
-        comment = decision.get("comment") or ""
-        return {
-            "winner": None,
-            "revise_round": state.get("revise_round", 0) + 1,
-            "refine_comment": comment,
-            "candidates": [],
-            "verdicts": [],
-        }
+        # drop the set so generate_message_candidates produces a fresh 12.
+        return {"candidates": [], "ranked": []}
+    # cancel (and any unknown action) aborts the run
     return {"text_approved": False, "cancelled": True}

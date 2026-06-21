@@ -3,7 +3,7 @@ skill: prompts/creative_ads_explorer.md
 model: glm-5.1
 model_config:
   thinking: false
-  max_tokens: 4000
+  max_tokens: 8000  # 12 propositions (was 4000 for 3-5)
   temperature: 0.8
 schema: graph.state.CandidateSet
 retry_with_feedback: 1
@@ -45,10 +45,10 @@ post_hooks:
     fields: [slogan, body, cta]
     on_violation: fail
 
-  # diversity: each candidate must have a distinct hook_angle
-  - id: hook_diversity
-    field: hook_angle
-    on_violation: warn
+  # NOTE: hook_diversity dropped (2026-06-21 redesign) — with 12 propositions
+  # and 7 hook_angle values, per-candidate uniqueness is impossible. Diversity
+  # is now built at generation time (12 angles into one persona, each anchored
+  # on a distinct pain/motivation/objection), not enforced post-hoc.
 
   # calm tone: no `!` in slogan (CTA is allowed). warn — see AGENTS.md §4.4.
   - id: no_exclamation_in_slogan

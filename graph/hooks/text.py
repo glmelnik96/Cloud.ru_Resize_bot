@@ -28,41 +28,6 @@ _EMOJI_RE = re.compile(
 )
 
 
-# Consultant-mode markers (RU). The persona-eval contract (prompts/persona_eval.md,
-# non_consultant_rate >= 90%) requires the LLM to answer AS the persona, not as a
-# marketing consultant. These patterns catch advisory phrasing that signals the
-# model slipped out of role. Deliberately conservative: bare "стоит" / "рекомендовали"
-# are normal consumer speech ("не стоит того", "друзья рекомендовали") and must NOT match.
-_CONSULTANT_PATTERNS: tuple[str, ...] = (
-    r"\bрекомендую\b",
-    r"\bрекомендовал[аи]?\s+бы\b",
-    r"\bрекомендуется\b",
-    r"\bсоветую\b",
-    r"\bсовет\s*:",
-    r"\bя\s+бы\s+(?:посоветовал|порекомендовал|предложил)",
-    r"\bсто(?:ит|ило\s+бы)\s+(?:улучшить|добавить|изменить|доработать|переписать|усилить|убрать|уточнить|сделать)",
-    r"\bследует\s+(?:улучшить|добавить|изменить|доработать|переписать|усилить|убрать|уточнить|сделать)",
-    r"\b(?:нужно|надо|необходимо)\s+(?:доработать|улучшить|переписать|усилить|уточнить)",
-    r"\bможно\s+(?:было\s+бы\s+)?(?:улучшить|усилить|доработать)",
-    r"\bкак\s+маркетолог\b",
-    r"\bс\s+точки\s+зрения\s+маркетинга\b",
-)
-
-_CONSULTANT_RE = re.compile("|".join(_CONSULTANT_PATTERNS), flags=re.IGNORECASE)
-
-
-def is_consultant_mode(text: str | None) -> bool:
-    """True if `text` contains consultant/critic phrasing instead of persona speech.
-
-    Cheap regex check, case-insensitive. Used by evaluate_as_persona_loop to
-    downweight out-of-role verdicts (see non_consultant_rate metric in
-    prompts/persona_eval.md).
-    """
-    if not text:
-        return False
-    return bool(_CONSULTANT_RE.search(text))
-
-
 def _item_id(item: Any) -> str:
     return str(getattr(item, "id", "") or "")
 

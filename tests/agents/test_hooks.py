@@ -28,16 +28,13 @@ def _candidate(
 
 
 def _set(*items: MessageCandidate) -> CandidateSet:
-    """CandidateSet requires min 3 items — pad with clean fillers using unique hooks."""
-    fillers = [
-        _candidate(id="_pad1", hook_angle="curiosity", cta="Начать сейчас"),
-        _candidate(id="_pad2", hook_angle="authority", cta="Начать сейчас"),
-        _candidate(id="_pad3", hook_angle="direct_benefit", cta="Начать сейчас"),
-    ]
-    lst = list(items)
-    while len(lst) < 3:
-        lst.append(fillers[len(lst) - len(items)])
-    return CandidateSet(candidates=lst)
+    """A CandidateSet fixture for pure-hook unit tests.
+
+    Built with ``model_construct`` to bypass the production cardinality
+    constraint (exactly 12): these tests exercise the hook FUNCTIONS on an
+    arbitrary list, not the LLM-output validation (covered in
+    test_redesign_models.py)."""
+    return CandidateSet.model_construct(candidates=list(items))
 
 
 # ---------- ban_emoji -------------------------------------------------------
@@ -224,7 +221,7 @@ def test_run_hooks_unknown_id_raises():
 
 def test_hooks_work_on_personaset_wrapper():
     """Wrapper detection: PersonaSet has `personas` list — hooks should iterate it."""
-    pset = PersonaSet(
+    pset = PersonaSet.model_construct(
         personas=[
             Persona(
                 segment="A",

@@ -34,8 +34,8 @@ log = structlog.get_logger(__name__)
 _NODE_LABELS: dict[str, str] = {
     "parse_brief": "Разбираю бриф",
     "derive_persona": "Готовлю персон ЦА",
-    "generate_message_candidates": "Генерирую варианты текста",
-    "evaluate_as_persona_loop": "Оцениваю варианты глазами персон",
+    "generate_message_candidates": "Генерирую 12 предложений",
+    "rank_candidates": "Ранжирую предложения по ЦА",
     "route_image_style": "Подбираю стиль картинки",
     "generate_image_prompt": "Пишу промпт для hero-картинки",
     "fill_templates_per_format": "Накладываю в шаблоны",
@@ -75,12 +75,14 @@ async def init_graph(checkpoint_db: str):
 
 def build_raw_brief(fields: dict[str, str]) -> str:
     """Serialize the wizard fields into the raw_brief text parse_brief expects.
-    Mirrors bot/wizard._render_raw_brief. Channel/formats are inferred
-    downstream (parse_brief), so only the three collected fields are emitted."""
+    The brief is product + audience + emotion (the emotion/образ the offer must
+    evoke, formula "[чувство] + [образ/ассоциация]"). Channel/formats/goal are
+    inferred downstream (parse_brief), so only the three collected fields are
+    emitted."""
     return (
         f"Продукт: {fields.get('product', '')}\n"
-        f"Цель: {fields.get('goal', '')}\n"
         f"ЦА: {fields.get('audience', '')}\n"
+        f"Эмоция: {fields.get('emotion', '')}\n"
     )
 
 
@@ -136,8 +138,6 @@ class CreativesService:
             "session_id": task_uid,
             "user_id": int(user_id),
             "raw_brief": build_raw_brief(fields),
-            "revise_round": 0,
-            "prior_variant": None,
         }
 
         async def runner() -> None:
@@ -228,7 +228,7 @@ class CreativesService:
         snapshot = await self.graph.aget_state(self._config(task_uid))
         values = dict(snapshot.values or {})
         if status == "awaiting_text":
-            return {"phase": "text_approve", "candidate": values.get("winner")}
+            return {"phase": "text_approve", "candidates": values.get("ranked") or []}
         if status == "awaiting_image":
             return {
                 "phase": "image_upload",
@@ -303,7 +303,7 @@ class CreativesService:
             self._arm_image_timeout(task_uid)
         else:
             await self._set_status(task_uid, "awaiting_text")
-            data = {"candidate": value.get("candidate") if isinstance(value, dict) else None}
+            data = {"candidates": value.get("candidates") if isinstance(value, dict) else []}
             await reporter.awaiting(phase="text_approve", data=data)
         log.info("task_parked", task_uid=task_uid, phase=kind or "text_approve")
 

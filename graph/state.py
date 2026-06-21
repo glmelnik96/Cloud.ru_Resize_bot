@@ -20,9 +20,20 @@ class AdBrief(BaseModel):
 
     product: str = Field(description="Канонизированное название продукта/услуги")
     goal: str = Field(
-        description="awareness | consideration | conversion | engagement | retention"
+        default="awareness",
+        description=(
+            "awareness | consideration | conversion | engagement | retention "
+            "— выводится parse_brief из контекста брифа (явно не спрашивается)"
+        ),
     )
     audience_raw: str = Field(description="Сырое описание ЦА от маркетолога")
+    emotion: str = Field(
+        default="",
+        description=(
+            "Чувство/образ, который должно вызвать предложение — формула "
+            "'[чувство] + [образ/ассоциация]'. Драйвит генерацию 12 предложений."
+        ),
+    )
     channel: str = Field(description="tg_post | vk_ad | ig_story | yandex_promo | ...")
     formats: list[str] = Field(
         default_factory=list,
@@ -55,9 +66,15 @@ class Persona(BaseModel):
 
 
 class PersonaSet(BaseModel):
-    """Wrapper for derive_persona structured output (1-3 personas)."""
+    """Wrapper for derive_persona structured output.
 
-    personas: list[Persona] = Field(min_length=1, max_length=3)
+    Audience is single, so exactly ONE persona is derived. The 12 message
+    propositions are 12 distinct angles INTO this one persona (each anchored on
+    a different pain/motivation/objection + the emotion), so a per-candidate
+    persona selector would be redundant (decision 2026-06-21).
+    """
+
+    personas: list[Persona] = Field(min_length=1, max_length=1)
 
 
 # ----- Message candidate ----------------------------------------------------
@@ -77,39 +94,38 @@ class MessageCandidate(BaseModel):
 
 
 class CandidateSet(BaseModel):
-    """Wrapper for generate_message_candidates structured output."""
+    """Wrapper for generate_message_candidates structured output.
 
-    candidates: list[MessageCandidate] = Field(min_length=3, max_length=5)
-
-
-# ----- Persona-loop verdict -------------------------------------------------
-
-
-class Verdict(BaseModel):
-    """Persona-as-TA reaction to a single candidate. NOT a critic — a simulated consumer."""
-
-    candidate_id: str
-    persona_segment: str
-    resonance: int = Field(ge=0, le=10)
-    clarity: int = Field(ge=0, le=10)
-    action_intent: int = Field(ge=0, le=10)
-    free_form_reaction: str
-    main_friction: str | None = None
-
-
-# ----- A/B mechanic ---------------------------------------------------------
-
-
-class PriorVariant(BaseModel):
-    """State passed to variant B run so it can diverge from A.
-
-    Diversity required on >=2 of 3 axes.
+    Exactly 12 propositions (decision 2026-06-21): 12 distinct angles into the
+    single persona, each anchored on a different pain/motivation/objection plus
+    the brief emotion and a varied hook_angle. The whole set is delivered to the
+    user (HITL approves the set), so there is no single-winner selection.
     """
 
-    slogan: str
-    hook_angle: str
-    brand_variant: str | None = None
-    persona_priority: int = 0
+    candidates: list[MessageCandidate] = Field(min_length=12, max_length=12)
+
+
+# ----- Ranking (single light ranker) ---------------------------------------
+
+
+class RankingItem(BaseModel):
+    """One line of the ranker output: a candidate id, its predicted resonance
+    score and a one-line «почему зайдёт ЦА»."""
+
+    candidate_id: str
+    score: float = Field(ge=0, le=10, description="Предсказанный резонанс с ЦА, 0..10")
+    reason: str = Field(description="Одна строка: почему этот угол зайдёт ЦА")
+
+
+class RankingSet(BaseModel):
+    """Wrapper for rank_candidates structured output.
+
+    The ranker orders the 12 propositions by predicted resonance and attaches a
+    one-line rationale to each (decision 2026-06-21). There is no single winner
+    — the whole ordered set goes to HITL.
+    """
+
+    ranking: list[RankingItem] = Field(min_length=12, max_length=12)
 
 
 # ----- Image stage (M3) -----------------------------------------------------
@@ -168,15 +184,11 @@ class GraphState(TypedDict, total=False):
     raw_brief: str
     brief: AdBrief
     personas: list[Persona]
-    persona_priority: int  # index into personas[] — 0 for A, 1 for B if >1
     candidates: list[MessageCandidate]
-    verdicts: list[Verdict]
-    candidate_scores: dict[str, float]
-    winner: MessageCandidate | None
-    revise_round: int
-    prior_variant: PriorVariant | None
+    # rank_candidates output: ordered best-first, each item = candidate dict
+    # (slogan/body/cta/hook_angle/id) merged with score + reason.
+    ranked: list[dict]
     text_approved: bool
-    refine_comment: str | None
     # ----- Image stage (M3.3 — user-uploaded hero) --------------------------
     image_style: str  # photo | render | isometric — chosen by route_image_style
     image_prompt: str | None  # EN prompt shown to the user (generate_image_prompt)

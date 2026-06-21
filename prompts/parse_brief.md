@@ -1,6 +1,6 @@
 ---
 name: parse-brief
-version: 0.4.0
+version: 0.5.0
 source_upstream: original (Resize_bot specific)
 target_models:
   primary: deepseek-ai/DeepSeek-V4-Pro
@@ -26,8 +26,9 @@ status: m1
 
 ПРАВИЛА:
 1. product: короткое каноническое название продукта/услуги (1–6 слов). Если маркетолог дал длинное описание — извлеки главный объект, не пересказывай.
-2. goal: ОДНО из: awareness, consideration, conversion, engagement, retention. Если маркетолог сформулировал иначе — выбери ближайшее по смыслу.
+2. goal: ОДНО из: awareness, consideration, conversion, engagement, retention. Маркетолог НЕ указывает цель явно — выведи её из контекста брифа (продукт + ЦА + эмоция). Если непонятно — поставь awareness.
 3. audience_raw: оставь сырое описание ЦА БЕЗ изменений (его потом отдельная нода превратит в Persona).
+3b. emotion: чувство/образ, который должно вызвать предложение (строка «Эмоция:» в брифе). Скопируй формулировку маркетолога БЕЗ изменений — формула «[чувство] + [образ/ассоциация]». Это ядро креатива: на нём строится генерация 12 предложений. Если строки «Эмоция:» нет — пустая строка.
 4. channel: ОДНО из: tg_post, tg_story, vk_ad, ig_story, ig_post, web_banner. В М3.3 wizard НЕ спрашивает канал напрямую — извлекай его из текста audience_raw, если маркетолог упомянул площадку («ЦА сидит в VK», «таргет в инстаграме», «для TG-канала»). Если в тексте нет явных упоминаний площадки — поставь tg_post (дефолт по умолчанию).
 5. formats: список slug'ов мастер-фреймов из whitelist'а ниже. Wizard в M3.3 всегда подкладывает ВЕСЬ whitelist — просто скопируй его в `formats` 1-в-1. НЕ придумывай новые слаги, не маппи каналы в slug'и, бери ТОЛЬКО из списка:
    - banner_240x400
@@ -55,6 +56,7 @@ RAW WIZARD INPUT (today={{today}}):
   "product": str,
   "goal": str,
   "audience_raw": str,
+  "emotion": str,
   "channel": str,
   "formats": list[str],
   "tone_hints": str | null,
@@ -82,3 +84,4 @@ RAW WIZARD INPUT (today={{today}}):
 - v0.2.0 (2026-06-04) — M3.2: formats whitelist привязан к config/figma_templates.json. Расширение whitelist'а = PR в манифест + bump version здесь.
 - v0.3.0 (2026-06-05) — M3.3: whitelist sync с config/templates.json (banner_240x400 / banner_300x250 / banner_300x500). Wizard теперь всегда подкладывает полный whitelist — задача парсера просто его скопировать, без channel→slug mapping'а.
 - v0.4.0 (2026-06-05) — M3.3: channel убран из явного wizard-шага. Парсер теперь извлекает канал из audience_raw (контекстная подсказка маркетолога вроде «таргет в VK») либо ставит tg_post как дефолт. Whitelist каналов сжат до 6 (vk_post / yandex_promo / email выкинуты — wizard их никогда не предлагал).
+- v0.5.0 (2026-06-21) — App3 redesign: бриф = продукт + ЦА + ЭМОЦИЯ (образ/ассоциация). goal больше не спрашивается явно — выводится из контекста. Добавлено поле emotion (формула «[чувство] + [образ/ассоциация]»), которое драйвит генерацию 12 предложений.

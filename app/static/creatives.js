@@ -20,10 +20,10 @@
   // ── start ──────────────────────────────────────────────
   $("startBtn").addEventListener("click", async () => {
     const product = $("product").value.trim();
-    const goal = $("goal").value;
     const audience = $("audience").value.trim();
-    if (!product || !audience) {
-      $("briefStatus").textContent = "Заполни продукт и аудиторию.";
+    const emotion = $("emotion").value.trim();
+    if (!product || !audience || !emotion) {
+      $("briefStatus").textContent = "Заполни продукт, аудиторию и эмоцию.";
       return;
     }
     $("startBtn").disabled = true;
@@ -32,7 +32,7 @@
       const r = await fetch(`${P}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, goal, audience }),
+        body: JSON.stringify({ product, audience, emotion }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
@@ -66,7 +66,7 @@
   // ── awaiting (HITL) ────────────────────────────────────
   function onAwaiting(d) {
     if (d.phase === "text_approve") {
-      renderCandidate(d.candidate || {});
+      renderCandidates(d.candidates || []);
       hide($("imagePanel")); show($("textPanel"));
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
@@ -75,27 +75,31 @@
       hide($("textPanel")); show($("imagePanel"));
     }
   }
-  function renderCandidate(c) {
-    $("candidate").innerHTML =
-      kv("slogan", c.slogan) + kv("body", c.body) + kv("cta", c.cta) + kv("hook", c.hook_angle);
+  function renderCandidates(list) {
+    if (!list.length) { $("candidates").innerHTML = "<p class=\"page-sub\">Нет предложений.</p>"; return; }
+    $("candidates").innerHTML = list.map((c, i) => {
+      const rank = i + 1;
+      const score = (typeof c.score === "number") ? c.score.toFixed(1) : "";
+      const head = `<div class="cand-head"><span class="cand-rank">#${rank}</span>` +
+        `<span class="cand-slogan">${escapeHtml(c.slogan || "")}</span>` +
+        (score ? `<span class="cand-score">${score}</span>` : "") + `</div>`;
+      return `<div class="cand-card">${head}` +
+        kv("cta", c.cta) + kv("hook", c.hook_angle) +
+        kv("почему зайдёт ЦА", c.reason) + kv("идея", c.body) + `</div>`;
+    }).join("");
   }
   const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";
 
-  function hideHitl() { hide($("textPanel")); hide($("imagePanel")); hide($("refineBox")); }
+  function hideHitl() { hide($("textPanel")); hide($("imagePanel")); }
 
-  // text decisions
+  // text decisions (approve all / regenerate all / cancel)
   document.querySelectorAll("#textPanel [data-act]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const act = btn.dataset.act;
-      if (act === "refine") { show($("refineBox")); return; }
-      sendText(act, null);
-    });
+    btn.addEventListener("click", () => sendText(btn.dataset.act));
   });
-  $("refineSend").addEventListener("click", () => sendText("refine", $("refineComment").value.trim()));
 
-  async function sendText(action, comment) {
+  async function sendText(action) {
     hideHitl(); setStep("Применяю решение…");
-    await post(`${P}/api/tasks/${taskUid}/decision/text`, { action, comment });
+    await post(`${P}/api/tasks/${taskUid}/decision/text`, { action });
   }
 
   // image decisions

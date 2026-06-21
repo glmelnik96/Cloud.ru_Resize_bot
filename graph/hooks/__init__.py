@@ -14,7 +14,6 @@ from .brand_stopwords import brand_stopwords
 from .text import (
     ban_emoji,
     hook_diversity,
-    is_consultant_mode,
     no_exclamation_in_slogan,
     text_len,
 )
@@ -39,4 +38,4 @@ def run_hooks(result: BaseModel, specs: list[dict]) -> list[Violation]:
     return out
 
 
-__all__ = ["Violation", "run_hooks", "HOOK_REGISTRY", "is_consultant_mode"]
+__all__ = ["Violation", "run_hooks", "HOOK_REGISTRY"]

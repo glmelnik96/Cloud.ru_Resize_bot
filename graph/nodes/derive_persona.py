@@ -1,7 +1,8 @@
 """derive_persona node — GLM-5.1 thinking-OFF.
 
-Input:  GraphState.brief (AdBrief)
-Output: GraphState.personas (list[Persona]), persona_priority (default 0)
+Derives exactly ONE persona (audience is single; 12 message angles all target
+it). Input:  GraphState.brief (AdBrief, incl. emotion).
+Output: GraphState.personas (list[Persona] of length 1).
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ async def derive_persona(state: GraphState) -> dict:
             "brief.product": brief.product,
             "brief.goal": brief.goal,
             "brief.channel": brief.channel,
+            "brief.emotion": brief.emotion or "(не задано)",
             "brief.audience_raw": brief.audience_raw,
             "tone_hints_block": tone_block,
         },
@@ -61,5 +63,4 @@ async def derive_persona(state: GraphState) -> dict:
     )
     return {
         "personas": [p.model_dump() for p in persona_set.personas],
-        "persona_priority": state.get("persona_priority", 0),
     }

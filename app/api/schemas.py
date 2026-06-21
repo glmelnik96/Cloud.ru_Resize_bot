@@ -13,11 +13,17 @@ class UserOut(BaseModel):
 
 
 class CreateTaskIn(BaseModel):
-    """The /new brief fields the wizard used to collect in three steps."""
+    """The /new brief fields the wizard collects in three steps.
+
+    `emotion` is the feeling/образ the offer must evoke — formula
+    "[чувство] + [образ/ассоциация]" (e.g. «уверенность и контроль — будто
+    всё управление под рукой»). It replaces the former marketing `goal` field;
+    the marketing goal is now inferred downstream by parse_brief.
+    """
 
     product: str = Field(min_length=1)
-    goal: str = Field(min_length=1)
     audience: str = Field(min_length=1)
+    emotion: str = Field(min_length=1)
 
 
 class TaskOut(BaseModel):
@@ -31,8 +37,12 @@ class TaskOut(BaseModel):
 
 
 class TextDecisionIn(BaseModel):
-    """Resume the text-approve interrupt (HITL pause #1)."""
+    """Resume the text-approve interrupt (HITL pause #1).
 
-    action: Literal["approve", "regenerate", "refine", "cancel"]
-    comment: Optional[str] = None
+    The user reviews the SET of 12 ranked propositions and either accepts the
+    whole set, regenerates a fresh 12, or cancels. There is no per-candidate
+    refine in the App3 redesign (2026-06-21).
+    """
+
+    action: Literal["approve", "regenerate", "cancel"]
 

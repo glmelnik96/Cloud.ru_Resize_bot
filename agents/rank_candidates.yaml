@@ -1,0 +1,11 @@
+id: rank_candidates
+skill: prompts/rank_candidates.md
+model: glm-5.1
+model_config:
+  thinking: false
+  max_tokens: 3000
+  temperature: 0.4
+schema: graph.state.RankingSet
+retry_with_feedback: 1
+pre_hooks: []
+post_hooks: []
