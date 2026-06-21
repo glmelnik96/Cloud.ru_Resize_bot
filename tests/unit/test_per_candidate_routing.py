@@ -225,3 +225,69 @@ async def test_render_scenario_bakes_isometric_into_prompt_input(monkeypatch):
             assert "isometric" in user.lower()
         else:  # photo
             assert "isometric" not in user.lower()
+
+
+def _capture_users(monkeypatch) -> dict[int, str]:
+    """Run generate_image_prompt over a render/photo split and return the LLM
+    user-message per ranked index."""
+    seen: dict[int, str] = {}
+
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        user = messages[1]["content"]
+        idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
+        seen[idx] = user
+        return ImagePromptOutput(
+            prompt=f"hero prompt number {idx} for the banner, no text",
+            rationale="r",
+        )
+
+    monkeypatch.setattr(gip, "run_agent", fake_run_agent)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_photo_directives_are_distinct_per_banner(monkeypatch):
+    """All photo banners must NOT share one identical visual directive — each
+    photo carries its own varied scene cue (demographics / framing / setting)."""
+    seen = _capture_users(monkeypatch)
+    state = _state()
+    # 6 render + 6 photo (the production 6/6 lock).
+    state["scenarios"] = ["render"] * 6 + ["photo"] * 6
+    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    photo_users = [seen[i] for i in range(6, 12)]
+    # The injected CHOSEN VISUAL STYLE line must differ across photos.
+    style_lines = [
+        next(ln for ln in u.splitlines() if "CHOSEN VISUAL STYLE" in ln)
+        for u in photo_users
+    ]
+    assert len(set(style_lines)) == len(style_lines), "photo directives repeat"
+
+
+@pytest.mark.asyncio
+async def test_one_third_of_photos_have_no_people(monkeypatch):
+    """~1/3 of the photo banners must be people-free scenes (objects / spaces),
+    the rest feature a real person. With 6 photos that is exactly 2 no-people."""
+    seen = _capture_users(monkeypatch)
+    state = _state()
+    state["scenarios"] = ["render"] * 6 + ["photo"] * 6
+    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    photo_users = [seen[i] for i in range(6, 12)]
+    no_people = [u for u in photo_users if "no people in the scene" in u]
+    assert len(no_people) == 2, f"expected 2 no-people photos, got {len(no_people)}"
+    # render banners are never tagged with the photo no-people marker
+    render_users = [seen[i] for i in range(6)]
+    assert not any("no people in the scene" in u for u in render_users)
+
+
+@pytest.mark.asyncio
+async def test_render_directive_fixes_object_positioning(monkeypatch):
+    """The render directive sent to App1 must pin object positioning (fully
+    visible, centered, even margins) so cutouts come back consistently framed."""
+    seen = _capture_users(monkeypatch)
+    state = _state()
+    state["scenarios"] = ["render"] * 6 + ["photo"] * 6
+    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    for i in range(6):
+        low = seen[i].lower()
+        assert "centered" in low or "center" in low
+        assert "margin" in low

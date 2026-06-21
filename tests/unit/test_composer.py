@@ -21,6 +21,7 @@ from infra.template_manifest import (
     BoxBackground,
     FrameLayer,
     GradientLayer,
+    HeroCutoutLayer,
     HeroLayer,
     ImageLayer,
     PatternDotsLayer,
@@ -321,6 +322,113 @@ def test_hero_contain_letterboxes():
     assert img.getpixel((50, 25))[:3] == (0, 255, 0)
     assert img.getpixel((0, 25))[:3] == (255, 0, 255)
     assert img.getpixel((99, 25))[:3] == (255, 0, 255)
+
+
+# ----- hero_cutout alpha-bbox crop -------------------------------------------
+
+
+def _padded_cutout(
+    canvas_wh: tuple[int, int],
+    obj_box: tuple[int, int, int, int],
+    color: str = "#00FF00",
+) -> Image.Image:
+    """A transparent canvas with one opaque rectangle (the visible subject).
+
+    Mimics a background-removed hero: most of the PNG is transparent padding,
+    the real object occupies only ``obj_box`` (l, t, r, b). The composer must
+    scale/anchor the *visible object*, not the whole padded canvas.
+    """
+    img = Image.new("RGBA", canvas_wh, (0, 0, 0, 0))
+    obj = Image.new(
+        "RGBA",
+        (obj_box[2] - obj_box[0], obj_box[3] - obj_box[1]),
+        color,
+    )
+    img.paste(obj, (obj_box[0], obj_box[1]))
+    return img
+
+
+def test_hero_cutout_crops_transparent_padding_before_fit():
+    """A small object in the corner of a large transparent canvas must be
+    scaled by its OWN bounds (alpha bbox) and centered, not left tiny in a
+    corner because the padded canvas drove the scale."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="contain",
+                anchor_h="center",
+                anchor_v="middle",
+                allow_upscale=True,
+                z=0,
+            )
+        ],
+    )
+    # 40x40 object in the top-left of a 200x200 transparent canvas.
+    hero = _padded_cutout((200, 200), (0, 0, 40, 40), "#00FF00")
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # After bbox-crop, the 40x40 object scales (contain) to fill the 100x100
+    # rect and is centered: center + all corners are the object colour.
+    assert img.getpixel((50, 50))[:3] == (0, 255, 0)
+    for x, y in [(2, 2), (97, 2), (2, 97), (97, 97)]:
+        assert img.getpixel((x, y))[:3] == (0, 255, 0), f"({x},{y}) not object"
+
+
+def test_hero_cutout_bottom_anchor_uses_object_not_padding():
+    """With bottom anchoring, the visible object must sit on the rect's bottom
+    edge regardless of transparent padding below it in the source PNG."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="contain",
+                anchor_h="center",
+                anchor_v="bottom",
+                allow_upscale=False,
+                z=0,
+            )
+        ],
+    )
+    # 40x40 object at the TOP of a 200x200 canvas (lots of transparent space
+    # below it). Bottom-anchored, the object must land at the rect bottom.
+    hero = _padded_cutout((200, 200), (80, 0, 120, 40), "#00FF00")
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # Bottom row contains the object; top row is background (object hugged the
+    # bottom, not floating where its padding would have put it).
+    assert img.getpixel((50, 98))[:3] == (0, 255, 0)
+    assert img.getpixel((50, 2))[:3] == (255, 0, 255)
+
+
+def test_hero_cutout_fully_transparent_is_noop():
+    """A hero with no opaque pixels (getbbox None) must not crash; the rect
+    stays background."""
+    spec = TemplateSpec(
+        width=60,
+        height=60,
+        background_color="#123456",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout", x=0, y=0, width=60, height=60, z=0
+            )
+        ],
+    )
+    hero = Image.new("RGBA", (120, 120), (0, 0, 0, 0))
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    assert img.getpixel((30, 30))[:3] == (0x12, 0x34, 0x56)
 
 
 # ----- Real-manifest end-to-end smoke ----------------------------------------

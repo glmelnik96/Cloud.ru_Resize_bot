@@ -259,7 +259,22 @@ def _draw_hero_cutout_layer(
     fit="cover": cutout fills the rect; overflow is clipped against the rect
     edges (anchor decides which side bleeds off). Cover keeps the green panel
     full like the Figma mockups instead of floating a small object in voids.
+
+    Background-removed heroes (App1 render scenario + Photoroom) arrive as a
+    full-frame PNG that is mostly transparent padding with the real object
+    somewhere inside. We first crop to the alpha bounding box so the *visible
+    object* — not the arbitrary padding the cutout tool left around it — drives
+    scaling and anchoring. Without this, identical objects render at wildly
+    different sizes and float at different heights depending on how much empty
+    space the cutter happened to leave. A fully transparent hero (no bbox) is a
+    no-op.
     """
+    bbox = hero.getbbox()
+    if bbox is None:
+        return
+    if bbox != (0, 0, hero.width, hero.height):
+        hero = hero.crop(bbox)
+
     target_w, target_h = layer.width, layer.height
     src_w, src_h = hero.size
     if layer.fit == "cover":

@@ -51,22 +51,80 @@ _VALID_STYLES = {"photo", "render"}
 # The downstream hero generator (App1 `render` scenario) produces a 3D product
 # render, not an isometric line-art. To get the isometric LOOK the brand wants,
 # we bake an explicit isometric viewpoint into the EN prompt itself for render
-# banners. Photo stays a plain full-scene cue.
-_STYLE_DIRECTIVE = {
-    "render": (
-        "render (a premium 3D product render in the Cloud.ru brand style: a "
-        "single sleek matte-metal isometric module or platform shown from a "
-        "~30-degree three-quarter angle, with one tasteful centerpiece of "
-        "translucent emerald-green tinted glass geometric shapes resting on "
-        "it; clean soft studio lighting on a plain backdrop so the background "
-        "can be cut out — a recognisable object, not an abstract diagram)"
-    ),
-    "photo": (
-        "photo (an authentic, real photograph of a confident real person in a "
-        "genuine modern tech workplace — server room, office, or studio — "
-        "naturally lit and human, not a staged abstract metaphor)"
-    ),
-}
+# banners.
+#
+# OBJECT POSITIONING IS PINNED IN THE PROMPT (not just the composer). The
+# composer crops the cutout to its alpha bbox, but it cannot recover an object
+# that App1 generated touching/cropped by a frame edge (Photoroom then slices
+# it). So the render directive explicitly demands a single, fully-visible,
+# centered object with generous even margins — that is what makes the 12 render
+# cutouts come back consistently framed.
+_STYLE_DIRECTIVE_RENDER = (
+    "render (a premium 3D product render in the Cloud.ru brand style: a single "
+    "sleek matte-metal isometric module or platform shown from a ~30-degree "
+    "three-quarter angle, with one tasteful centerpiece of translucent emerald-"
+    "green tinted glass geometric shapes resting on it; clean soft studio "
+    "lighting on a plain seamless light backdrop. The single object MUST be "
+    "fully visible and centered in the frame, with generous even empty margins "
+    "on all sides, not touching or cropped by any edge, so the background can be "
+    "removed cleanly — a recognisable object, not an abstract diagram)"
+)
+
+# Photo banners must NOT all be the same stock "confident man in an office".
+# We vary the scene per banner (demographics / framing / setting) and make ~1/3
+# of them people-free (objects, workspaces, hardware) for subject variety. The
+# variant is chosen deterministically by the photo's position so a run stays
+# reproducible. Each people-free variant carries the literal marker
+# "no people in the scene" (used by the composer-agnostic tests + as a clear
+# cue to App1). None of the photo variants mention 3D / isometric / green.
+_PHOTO_PEOPLE = (
+    "photo (an authentic candid photograph of a woman in her early 40s, a "
+    "senior engineer, in a real data-center aisle; cool ambient light, shallow "
+    "depth of field, shot waist-up; natural and human, not a staged metaphor)",
+    "photo (an authentic photograph of a man in his late 20s at a standing desk "
+    "in a bright open-plan office; soft daylight from a window, mid-shot, "
+    "relaxed and focused; documentary, not a contrived metaphor)",
+    "photo (an authentic over-the-shoulder photograph of an experienced "
+    "operator in his 50s facing a wall of monitors in a network operations "
+    "room; moody cool lighting, the person seen from behind; real and grounded)",
+    "photo (an authentic close-up portrait of a woman in her late 20s in a "
+    "modern startup loft; warm window light, friendly confident expression, "
+    "shallow depth of field, 50mm; real skin and texture)",
+    "photo (an authentic photograph of a focused professional at a laptop in a "
+    "calm home office, hands on the keyboard with the face out of frame; soft "
+    "daylight, intimate and real)",
+)
+_PHOTO_NO_PEOPLE = (
+    "photo (an authentic still-life photograph of a tidy modern developer "
+    "workspace — a laptop and an external monitor showing soft out-of-focus "
+    "abstract dashboards, a coffee cup and a small plant; gentle daylight, "
+    "shallow depth of field, and no people in the scene)",
+    "photo (an authentic photograph of a real server-rack aisle in a data "
+    "center, rows of hardware with subtle status lights; cool ambient lighting, "
+    "deep perspective and shallow depth of field, and no people in the scene)",
+    "photo (an authentic macro photograph of clean networking hardware and "
+    "neatly routed fibre cables on a matte surface; soft directional light, "
+    "crisp detail with bokeh, and no people in the scene)",
+)
+
+
+def _photo_directives(n_photos: int) -> list[str]:
+    """Assign a distinct scene directive to each of the ``n_photos`` photo
+    banners, making every 3rd one (position % 3 == 2) people-free — ~1/3 of the
+    set. People and people-free variants are indexed by their own running
+    counters so consecutive picks stay distinct. With the production 6/6 lock
+    this yields exactly 2 people-free photos out of 6."""
+    out: list[str] = []
+    people_i = 0
+    nopeople_i = 0
+    for pos in range(n_photos):
+        if pos % 3 == 2:
+            out.append(_PHOTO_NO_PEOPLE[nopeople_i % len(_PHOTO_NO_PEOPLE)])
+            nopeople_i += 1
+        else:
+            out.append(_PHOTO_PEOPLE[people_i % len(_PHOTO_PEOPLE)])
+            people_i += 1
+    return out
 
 _WORD_MIN = 40
 _WORD_MAX = 90
@@ -102,12 +160,14 @@ async def generate_image_prompt(state: GraphState) -> dict:
     system_msg = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
 
+    directives = _resolve_directives(scenarios)
+
     prompts = await asyncio.gather(
         *(
             _build_one(
-                system_msg, user_tpl, brief, persona, cand, scen, session_id
+                system_msg, user_tpl, brief, persona, cand, directive, session_id
             )
-            for cand, scen in zip(candidates, scenarios)
+            for cand, directive in zip(candidates, directives)
         )
     )
     prompts = list(prompts)
@@ -120,17 +180,34 @@ async def generate_image_prompt(state: GraphState) -> dict:
     return {"image_prompts": prompts, "image_prompt": prompts[0]}
 
 
+def _resolve_directives(scenarios: list[str]) -> list[str]:
+    """Map each per-banner scenario to its visual-style directive: render -> the
+    fixed isometric/positioning directive; photo -> a varied scene directive
+    (with ~1/3 people-free), assigned by the photo's position in the set so the
+    12 photos don't collapse into one identical stock person."""
+    n_photos = sum(1 for s in scenarios if (s if s in _VALID_STYLES else "photo") == "photo")
+    photo_dirs = _photo_directives(n_photos)
+    out: list[str] = []
+    photo_cursor = 0
+    for scen in scenarios:
+        style = scen if scen in _VALID_STYLES else "photo"
+        if style == "render":
+            out.append(_STYLE_DIRECTIVE_RENDER)
+        else:
+            out.append(photo_dirs[photo_cursor])
+            photo_cursor += 1
+    return out
+
+
 async def _build_one(
     system_msg: str,
     user_tpl: str,
     brief: AdBrief,
     persona: Persona,
     cand: MessageCandidate,
-    scenario: str,
+    style_directive: str,
     session_id: str | None,
 ) -> str:
-    image_style = scenario if scenario in _VALID_STYLES else "photo"
-    style_directive = _STYLE_DIRECTIVE[image_style]
     user_msg = _render(
         user_tpl,
         **{

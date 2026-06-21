@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.3.0
+version: 0.4.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -56,25 +56,36 @@ clever conceptual metaphors, tangled-cable puzzles or surreal
 constructions — they read as confusing filler. The hero is a clean,
 recognisable subject that a viewer instantly understands.
 
-- PHOTO: a real, authentic photograph of a confident real person in a
-  genuine modern tech workplace (server room, office, studio). A
-  natural, human, documentary scene is exactly right — a real person
-  at work is the goal, not a contrived metaphor. Tie the setting
-  loosely to brief.product + winner.hook_angle, but keep it believable
-  and grounded, the way a real brand photo looks.
+- PHOTO: a real, authentic photograph. Usually a real person in a
+  genuine modern tech workplace (server room, office, studio) — a
+  natural, human, documentary scene, not a contrived metaphor — but it
+  may instead be a people-free scene (a workspace, hardware, a server
+  aisle) when the chosen style directive asks for one. VARY the scene:
+  do not default every photo to the same person/age/framing. Follow the
+  specifics of the chosen style directive (demographics, framing,
+  setting, with/without people). Tie the setting loosely to
+  brief.product + winner.hook_angle, kept believable and grounded.
 - RENDER: the Cloud.ru product-render aesthetic — a single sleek
   matte-metal isometric module or platform with one tasteful
   centerpiece of translucent emerald-green tinted glass geometric
   shapes (faceted hex / crystalline forms) resting on it. A premium,
-  recognisable object, not an abstract schematic.
+  recognisable object, not an abstract schematic. The object MUST be
+  fully visible and centered with generous even margins on every side,
+  not touching or cropped by any edge, on a plain seamless backdrop, so
+  its background can be removed cleanly.
 
 PROMPT MUST INCLUDE
 1. A concrete subject tied to brief.product AND winner.hook_angle.
-   Photo: a real person in a believable tech workplace (per above).
+   Photo: the scene described by the chosen style directive — a real
+   person in a believable tech workplace, OR a people-free workspace /
+   hardware scene when the directive says so. Match its demographics,
+   framing and setting; never reuse the same generic person across
+   banners.
    Render: the brand metal isometric module with translucent
    emerald-green geometric centerpiece, shown from a ~30-degree
-   three-quarter angle, centered on a plain studio backdrop so the
-   background can later be cut out.
+   three-quarter angle, fully visible and centered with generous even
+   margins on a plain studio backdrop so the background can later be cut
+   out.
 2. Style modifiers consistent with the chosen image_style category.
    Photo: natural light, documentary, shallow depth of field, 50mm
    lens, slight grain, real skin and textures. Render: 3D product
@@ -184,3 +195,11 @@ Return ONLY valid JSON:
   Cloud.ru product look (matte-metal isometric module + translucent
   emerald-green geometric centerpiece). Scoped the no-green rule to
   photo so the render brand motif is allowed.
+- v0.4.0 (2026-06-21) — live-run feedback: render cutouts came back at
+  inconsistent sizes/positions (and sometimes edge-cropped, breaking
+  bg-removal), and all photos looked like the same stock person. Pin
+  render object positioning in the prompt (fully visible, centered, even
+  margins). Allow per-banner photo variety: the node now injects a
+  varied scene directive per photo with ~1/3 people-free, so the system
+  message must follow the chosen directive rather than default to one
+  generic person. Pairs with the composer alpha-bbox crop.
