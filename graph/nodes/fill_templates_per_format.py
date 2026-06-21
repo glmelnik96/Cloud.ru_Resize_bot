@@ -9,9 +9,9 @@ Per-format try/except: one bad slug never kills the rest. Slugs missing
 from the manifest are skipped with a warning (parse_brief is supposed to
 emit only whitelisted slugs, but we are defensive here).
 
-Contract unchanged from M3.0/M3.2:
-  state.brief.formats × state.image (hero) × state.winner (text) →
-  state.rendered_files = [{format, path}, ...]
+Contract:
+  state.brief.formats × state.image (hero) × top-ranked proposition (text,
+  via chosen_candidate) → state.rendered_files = [{format, path}, ...]
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from pathlib import Path
 
 import structlog
 
-from graph.state import AdBrief, GeneratedImage, GraphState, MessageCandidate
+from graph.nodes import chosen_candidate
+from graph.state import AdBrief, GeneratedImage, GraphState
 from infra.composer import compose
 from infra.template_manifest import TemplateManifest, load_manifest
 
@@ -41,15 +42,12 @@ async def fill_templates_per_format(state: GraphState) -> dict:
 
     brief_raw = state.get("brief")
     image_raw = state.get("image")
-    winner_raw = state.get("winner")
     if image_raw is None:
         raise ValueError("fill_templates_per_format: state.image is None")
-    if winner_raw is None:
-        raise ValueError("fill_templates_per_format: state.winner is None")
 
     brief = _coerce(brief_raw, AdBrief, "brief") if brief_raw else None
     image = _coerce(image_raw, GeneratedImage, "image")
-    winner = _coerce(winner_raw, MessageCandidate, "winner")
+    winner = chosen_candidate(state)
 
     formats = (brief.formats if brief else []) or [_DEFAULT_FORMAT]
     age_rating = brief.age_rating if brief else "0+"

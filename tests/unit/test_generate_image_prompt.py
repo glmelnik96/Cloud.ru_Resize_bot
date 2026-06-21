@@ -1,7 +1,7 @@
 """Unit tests for graph.nodes.generate_image_prompt (M3.3).
 
 We stub run_agent — the node's behavior we care about is:
-- state shape: brief / personas / persona_priority / winner / image_style → user_msg,
+- state shape: brief / personas / ranked / image_style → user_msg,
 - bad / missing image_style falls back to 'photo',
 - soft validators only warn (don't raise) on length / cyrillic / no-text-guard,
 - returns {"image_prompt": prompt}.
@@ -40,13 +40,17 @@ def _good_state(**overrides: Any) -> dict:
                 "communication_style": "рациональный",
             }
         ],
-        "persona_priority": 0,
-        "winner": {
-            "slogan": "Инфра без сюрпризов",
-            "body": "B",
-            "cta": "Подробнее",
-            "hook_angle": "rational",
-        },
+        "ranked": [
+            {
+                "id": "c1",
+                "slogan": "Инфра без сюрпризов",
+                "body": "B",
+                "cta": "Подробнее",
+                "hook_angle": "rational",
+                "score": 9.0,
+                "reason": "топ",
+            }
+        ],
         "image_style": "render",
     }
     state.update(overrides)
@@ -133,26 +137,23 @@ async def test_empty_personas_raises(_stub_agent):
 
 
 @pytest.mark.asyncio
-async def test_missing_winner_raises(_stub_agent):
+async def test_empty_ranked_raises(_stub_agent):
     _stub_agent(ImagePromptOutput(prompt="x" * 25, rationale="r"))
     state = _good_state()
-    state["winner"] = None
-    with pytest.raises(ValueError, match="winner is None"):
+    state["ranked"] = []
+    with pytest.raises(ValueError, match="ranked is empty"):
         await mod.generate_image_prompt(state)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_persona_priority_clamped_to_available(_stub_agent):
-    """persona_priority=5 with one persona should not IndexError."""
+async def test_uses_single_persona(_stub_agent):
     good = ImagePromptOutput(
         prompt="A documentary photo of a small team in a sunlit office, " * 4
         + "no text, no letters, no logos.",
         rationale="ok",
     )
     calls = _stub_agent(good)
-    await mod.generate_image_prompt(  # type: ignore[arg-type]
-        _good_state(persona_priority=5)
-    )
+    await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
     user_msg = calls[0]["messages"][1]["content"]
     assert "DevOps mid-market" in user_msg
 

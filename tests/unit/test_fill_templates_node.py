@@ -4,7 +4,7 @@ Covers:
 - happy path: every requested slug -> rendered_files entry,
 - unknown slug skipped, doesn't kill known ones,
 - per-format compose error isolated (one format failure -> others still render),
-- raises when state.image / state.winner missing.
+- raises when state.image missing / state.ranked empty.
 """
 
 from __future__ import annotations
@@ -39,12 +39,17 @@ def _seed_state(tmp_path: Path, formats: list[str]) -> dict:
             "variant": "default",
             "prompt": "",
         },
-        "winner": {
-            "slogan": "Тестовый слоган",
-            "body": "B",
-            "cta": "Купить",
-            "hook_angle": "rational",
-        },
+        "ranked": [
+            {
+                "id": "c1",
+                "slogan": "Тестовый слоган",
+                "body": "B",
+                "cta": "Купить",
+                "hook_angle": "rational",
+                "score": 9.0,
+                "reason": "топ",
+            }
+        ],
     }
 
 
@@ -118,10 +123,10 @@ async def test_node_no_image_raises(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_node_no_winner_raises(tmp_path):
+async def test_node_no_ranked_raises(tmp_path):
     state = _seed_state(tmp_path, ["banner_240x400"])
-    state["winner"] = None
-    with pytest.raises(ValueError, match="state.winner is None"):
+    state["ranked"] = []
+    with pytest.raises(ValueError, match="ranked is empty"):
         await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
 
 

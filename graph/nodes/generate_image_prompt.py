@@ -2,8 +2,8 @@
 
 Input:
   - GraphState.brief (AdBrief)
-  - GraphState.personas (list[Persona]) + persona_priority
-  - GraphState.winner (MessageCandidate)
+  - GraphState.personas (list[Persona]) — single persona, [0]
+  - GraphState.ranked (top item = the proposition composed onto the hero)
   - GraphState.image_style (str ∈ {photo, render, isometric}) — set by
     route_image_style upstream
 Output:
@@ -27,13 +27,13 @@ import re
 import structlog
 
 from graph.agent_runner import run_agent
+from graph.nodes import chosen_candidate
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
     AdBrief,
     GraphState,
     ImagePromptOutput,
-    MessageCandidate,
     Persona,
 )
 
@@ -54,13 +54,9 @@ async def generate_image_prompt(state: GraphState) -> dict:
     if not personas_raw:
         raise ValueError("generate_image_prompt: state.personas is empty")
     personas = [_coerce(p, Persona, "persona") for p in personas_raw]
-    priority = state.get("persona_priority", 0)
-    persona = personas[min(priority, len(personas) - 1)]
+    persona = personas[0]
 
-    winner_raw = state.get("winner")
-    if winner_raw is None:
-        raise ValueError("generate_image_prompt: state.winner is None")
-    winner = _coerce(winner_raw, MessageCandidate, "winner")
+    winner = chosen_candidate(state)
 
     image_style = (state.get("image_style") or "").strip().lower()
     if image_style not in _VALID_STYLES:

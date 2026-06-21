@@ -2,8 +2,8 @@
 
 Input:
   - GraphState.brief (AdBrief)
-  - GraphState.personas (list[Persona]) + persona_priority
-  - GraphState.winner (MessageCandidate)
+  - GraphState.personas (list[Persona]) — single persona, [0]
+  - GraphState.ranked (top item = the proposition composed onto the hero)
 Output:
   - GraphState.image_style (str ∈ {photo, render, isometric})
 
@@ -16,13 +16,13 @@ from __future__ import annotations
 import structlog
 
 from graph.agent_runner import run_agent
+from graph.nodes import chosen_candidate
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
     AdBrief,
     GraphState,
     ImageStyleChoice,
-    MessageCandidate,
     Persona,
 )
 
@@ -38,13 +38,9 @@ async def route_image_style(state: GraphState) -> dict:
     if not personas_raw:
         raise ValueError("route_image_style: state.personas is empty")
     personas = [_coerce(p, Persona, "persona") for p in personas_raw]
-    priority = state.get("persona_priority", 0)
-    persona = personas[min(priority, len(personas) - 1)]
+    persona = personas[0]
 
-    winner_raw = state.get("winner")
-    if winner_raw is None:
-        raise ValueError("route_image_style: state.winner is None")
-    winner = _coerce(winner_raw, MessageCandidate, "winner")
+    winner = chosen_candidate(state)
 
     skill = load_skill(_SKILL_NAME)
     system_msg = _extract_section(skill.body, "## System message")
