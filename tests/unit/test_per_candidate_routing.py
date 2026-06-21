@@ -106,39 +106,55 @@ async def test_route_scenarios_one_per_candidate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_scenarios_unknown_falls_back_photo(monkeypatch):
+async def test_route_all_unknown_forced_to_even_split(monkeypatch):
+    """Unknown verdicts collapse to photo, but the strict even split then forces
+    exactly half render: the best-ranked propositions become render."""
     async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
         return ImageStyleChoice(style="weird-value", rationale="x")
 
     monkeypatch.setattr(ris, "run_agent", fake_run_agent)
     out = await ris.route_image_style(_state())  # type: ignore[arg-type]
-    assert set(out["scenarios"]) == {"photo"}
+    scenarios = out["scenarios"]
+    assert scenarios.count("render") == 6
+    assert scenarios.count("photo") == 6
 
 
 @pytest.mark.asyncio
-async def test_route_guarantees_photo_when_classifier_all_render(monkeypatch):
-    """The art-director classifier skews to render for technical audiences; the
-    redesign demands SOME photo banners among the 12. When the classifier
-    returns all-render, the node must flip the lowest-ranked propositions to
-    photo so at least MIN_PHOTO photos exist. Top-ranked picks are preserved."""
+async def test_route_locks_even_split_when_classifier_all_render(monkeypatch):
+    """Strict 6/6 lock: an all-render classifier is trimmed to exactly 6 render.
+    The best-ranked 6 stay render (flips happen from the worst-ranked tail)."""
     async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
         return ImageStyleChoice(style="render", rationale="x")
 
     monkeypatch.setattr(ris, "run_agent", fake_run_agent)
     out = await ris.route_image_style(_state())  # type: ignore[arg-type]
     scenarios = out["scenarios"]
-    assert len(scenarios) == 12
-    assert scenarios.count("photo") >= ris.MIN_PHOTO
-    assert scenarios.count("render") >= 1  # not everything flipped
-    # the flips land at the tail (worst-ranked); the top stays render
-    assert scenarios[0] == "render"
-    assert out["image_style"] == "render"  # top-ranked still its classifier pick
+    assert scenarios.count("render") == 6
+    assert scenarios.count("photo") == 6
+    # best-ranked 6 kept render, worst-ranked 6 flipped to photo
+    assert scenarios == ["render"] * 6 + ["photo"] * 6
+    assert out["image_style"] == "render"  # top-ranked classifier pick preserved
 
 
 @pytest.mark.asyncio
-async def test_route_does_not_flip_when_enough_photo(monkeypatch):
-    """If the classifier already yields >= MIN_PHOTO photos, nothing is flipped:
-    the per-candidate verdicts are respected verbatim."""
+async def test_route_locks_even_split_when_classifier_all_photo(monkeypatch):
+    """Strict 6/6 lock: an all-photo classifier is topped up to exactly 6 render.
+    The best-ranked propositions are promoted to render."""
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        return ImageStyleChoice(style="photo", rationale="x")
+
+    monkeypatch.setattr(ris, "run_agent", fake_run_agent)
+    out = await ris.route_image_style(_state())  # type: ignore[arg-type]
+    scenarios = out["scenarios"]
+    assert scenarios.count("render") == 6
+    assert scenarios.count("photo") == 6
+    assert scenarios == ["render"] * 6 + ["photo"] * 6
+
+
+@pytest.mark.asyncio
+async def test_route_keeps_balanced_split_verbatim(monkeypatch):
+    """When the classifier already yields exactly 6/6, the split is untouched —
+    each proposition keeps its own verdict."""
     async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
         user = messages[1]["content"]
         idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
@@ -150,6 +166,7 @@ async def test_route_does_not_flip_when_enough_photo(monkeypatch):
     assert out["scenarios"] == [
         "photo" if i % 2 == 0 else "render" for i in range(12)
     ]
+    assert out["scenarios"].count("render") == 6
 
 
 # ----- generate_image_prompt: 12 prompts -----------------------------------

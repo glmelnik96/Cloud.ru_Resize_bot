@@ -139,10 +139,7 @@
           "per_line_highlight": {
             "color": "#26D07C",
             "padding_x": 6,
-            "padding_y": 0,
-            "underline_color": "#222222",
-            "underline_height": 2,
-            "underline_gap": 1
+            "padding_y": 1
           },
           "z": 30
         },

@@ -44,29 +44,31 @@ log = structlog.get_logger(__name__)
 _AGENT_ID = "route_image_style"
 _SKILL_NAME = "route_image_style"
 
-# The 12-banner set must always carry SOME photo banners: the art-director
-# classifier skews to render for technical audiences (render = isometric device
-# render), which would route all 12 to render and lose the photo scenario the
-# redesign requires. If fewer than MIN_PHOTO photos come back, the lowest-ranked
-# render propositions are flipped to photo (top-ranked picks are preserved).
-MIN_PHOTO = 4
-
-
-def _ensure_min_photo(scenarios: list[str]) -> list[str]:
-    """Guarantee at least MIN_PHOTO photo scenarios by flipping the worst-ranked
-    render propositions (end of the best-first list) to photo. No-op when the
-    classifier already produced enough photos, or when there aren't enough
-    candidates to reach the quota."""
+# The 12-banner set is LOCKED to a strict even split: exactly half render, half
+# photo. The art-director classifier skews hard to render for technical
+# audiences (render = isometric device render) — left unchecked it routes all 12
+# to one scenario. Глеб's decision (2026-06-21): force a 6/6 lock so every set
+# carries both looks. The classifier's per-candidate verdicts still decide WHICH
+# propositions land in each half (by rank); the split count is fixed.
+def _force_even_split(scenarios: list[str]) -> list[str]:
+    """Force exactly ``len // 2`` render scenarios, the rest photo, keeping the
+    classifier's preference by rank (scenarios are aligned to the best-first
+    ranked order). If the classifier produced too many render, the worst-ranked
+    extras flip to photo; too few, the best-ranked photos are promoted to
+    render. An already-balanced split is returned untouched."""
     out = list(scenarios)
-    quota = min(MIN_PHOTO, len(out))
-    if out.count("photo") >= quota:
-        return out
-    # Flip render -> photo from the tail (worst-ranked) until the quota is met.
-    for i in range(len(out) - 1, -1, -1):
-        if out.count("photo") >= quota:
-            break
-        if out[i] == "render":
+    target_render = len(out) // 2
+    render_idx = [i for i, s in enumerate(out) if s == "render"]
+    if len(render_idx) > target_render:
+        # Too many render: keep the best-ranked target_render, flip the tail.
+        for i in render_idx[target_render:]:
             out[i] = "photo"
+    elif len(render_idx) < target_render:
+        # Too few render: promote the best-ranked photos until the target.
+        need = target_render - len(render_idx)
+        photo_idx = [i for i, s in enumerate(out) if s == "photo"]
+        for i in photo_idx[:need]:
+            out[i] = "render"
     return out
 
 
@@ -107,7 +109,7 @@ async def route_image_style(state: GraphState) -> dict:
         )
     )
     raw_scenarios = list(scenarios)
-    scenarios = _ensure_min_photo(raw_scenarios)
+    scenarios = _force_even_split(raw_scenarios)
 
     flipped = sum(1 for a, b in zip(raw_scenarios, scenarios) if a != b)
     log.info(

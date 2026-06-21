@@ -64,16 +64,26 @@
   function setStep(t) { $("stepLabel").textContent = t; show($("progressPanel")); }
 
   // ── awaiting (HITL) ────────────────────────────────────
+  // A HITL pause means the pipeline is BLOCKED on the user. Hide the running
+  // progress bar (its indeterminate animation + pulsing dot read as "still
+  // working") so it's unambiguous that the user must now act, then scroll the
+  // decision panel into view.
   function onAwaiting(d) {
+    hide($("progressPanel"));
     if (d.phase === "text_approve") {
       renderCandidates(d.candidates || []);
       hide($("imagePanel")); show($("textPanel"));
+      focusPanel($("textPanel"));
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
       if (d.can_generate) show($("genBtn")); else hide($("genBtn"));
       $("imageStatus").textContent = d.gen_error ? `Генерация не удалась: ${d.gen_error}. Загрузи картинку.` : "";
       hide($("textPanel")); show($("imagePanel"));
+      focusPanel($("imagePanel"));
     }
+  }
+  function focusPanel(el) {
+    try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
   }
   function renderCandidates(list) {
     if (!list.length) { $("candidates").innerHTML = "<p class=\"page-sub\">Нет предложений.</p>"; return; }
