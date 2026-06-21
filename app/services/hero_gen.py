@@ -27,10 +27,19 @@ class HeroGenUnavailable(Exception):
 class HeroGenerator(Protocol):
     available: bool
 
-    async def generate(self, *, prompt: str, style: str, dest: Path) -> Path:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        style: str,
+        dest: Path,
+        user_id: str | None = None,
+        email: str | None = None,
+    ) -> Path:
         """Generate a hero image for the prompt and write it to ``dest``.
         Returns the path written. Raises on failure (caller falls back to
-        manual upload)."""
+        manual upload). ``user_id``/``email`` identify the END user so App1 can
+        lane hero generation per user (App1 commit 2010463)."""
         ...
 
 
@@ -39,7 +48,15 @@ class NullHeroGenerator:
 
     available = False
 
-    async def generate(self, *, prompt: str, style: str, dest: Path) -> Path:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        style: str,
+        dest: Path,
+        user_id: str | None = None,
+        email: str | None = None,
+    ) -> Path:
         raise HeroGenUnavailable("hero generation backend not configured")
 
 
@@ -54,6 +71,12 @@ class App1HeroGenerator:
     transparent cutout; photo = full-bleed photo with background). In the
     12-banner flow ``style`` already carries the per-proposition scenario, so
     we forward it as ``scenario`` too. App3 trusts the loopback (127.0.0.1).
+
+    End-user identity is forwarded as ``X-User-Id`` / ``X-User-Email`` headers
+    so App1 lanes hero generation per end user (App1 commit 2010463) — without
+    them a multi-user burst serialises into one shared lane and hits App1's
+    per-lane limit (503 queue full). Omitted when no identity is supplied
+    (back-compat: App1 falls back to the shared lane).
     """
 
     available = True
@@ -62,15 +85,29 @@ class App1HeroGenerator:
         self.url = url
         self.timeout_s = timeout_s
 
-    async def generate(self, *, prompt: str, style: str, dest: Path) -> Path:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        style: str,
+        dest: Path,
+        user_id: str | None = None,
+        email: str | None = None,
+    ) -> Path:
         import httpx
 
         scenario = style if style in {"render", "photo"} else "photo"
+        headers: dict[str, str] = {}
+        if user_id:
+            headers["X-User-Id"] = str(user_id)
+        if email:
+            headers["X-User-Email"] = email
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s) as c:
                 resp = await c.post(
                     self.url,
                     json={"prompt": prompt, "style": style, "scenario": scenario},
+                    headers=headers or None,
                 )
                 resp.raise_for_status()
                 ctype = resp.headers.get("content-type", "")

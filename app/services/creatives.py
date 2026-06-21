@@ -178,7 +178,14 @@ class CreativesService:
 
         await self.manager.submit(user_id, runner)
 
-    async def generate_decision(self, task_uid: str, user_id: str) -> None:
+    async def generate_decision(
+        self,
+        task_uid: str,
+        user_id: str,
+        *,
+        end_user_id: str | None = None,
+        end_user_email: str | None = None,
+    ) -> None:
         """Web-generate the 12 heroes (channel switch), then resume the upload.
 
         Pulls the per-proposition EN image_prompts + scenarios from the
@@ -187,6 +194,11 @@ class CreativesService:
         carries its ranked ``index`` so a single failure never misaligns the
         banners. If at least one hero succeeds the graph resumes with the list;
         if ALL fail the task re-parks at awaiting_image for manual upload.
+
+        ``end_user_id``/``end_user_email`` carry the GATEWAY identity of the end
+        user (distinct from ``user_id``, the App3 lane key) so App1 can lane
+        hero generation per end user (App1 commit 2010463); they are forwarded
+        to the hero generator as X-User-* headers.
 
         Back-compat: a pre-redesign checkpoint without image_prompts/scenarios
         degrades to a single hero from image_prompt/image_style.
@@ -217,7 +229,8 @@ class CreativesService:
                 dest = tmp_dir / f"hero_{i}.png"
                 async with sem:
                     await self.hero_generator.generate(
-                        prompt=prompt, style=scenario, dest=dest
+                        prompt=prompt, style=scenario, dest=dest,
+                        user_id=end_user_id, email=end_user_email,
                     )
                 return {
                     "url": None,

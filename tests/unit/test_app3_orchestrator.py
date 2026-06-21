@@ -99,11 +99,13 @@ class _FakeHeroGen:
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.seen = None
+        self.seen_identity = None
 
-    async def generate(self, *, prompt, style, dest):
+    async def generate(self, *, prompt, style, dest, user_id=None, email=None):
         if self.fail:
             raise RuntimeError("boom")
         self.seen = (prompt, style)
+        self.seen_identity = (user_id, email)
         from pathlib import Path as _P
 
         _P(dest).write_bytes(b"\x89PNG-gen")
@@ -368,9 +370,10 @@ async def test_app1_hero_generator_sends_scenario(tmp_path, monkeypatch):
         async def __aexit__(self, *a):
             return False
 
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             captured["url"] = url
             captured["json"] = json
+            captured["headers"] = headers
             return _FakeResp()
 
     import httpx
@@ -383,6 +386,86 @@ async def test_app1_hero_generator_sends_scenario(tmp_path, monkeypatch):
     assert captured["json"]["prompt"] == "a server, no text"
     assert captured["json"]["scenario"] == "render"
     assert dest.read_bytes() == b"\x89PNG-bytes"
+
+
+@pytest.mark.asyncio
+async def test_app1_hero_generator_forwards_user_headers(tmp_path, monkeypatch):
+    """App1 lanes hero gen per end-user via X-User-Id (App1 commit 2010463).
+    The generator must forward the gateway user id (+ email) as headers so a
+    burst from many users is parallelised instead of serialised into one lane.
+    """
+    from app.services.hero_gen import App1HeroGenerator
+
+    captured = {}
+
+    class _FakeResp:
+        headers = {"content-type": "image/png"}
+        content = b"\x89PNG-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers=None):
+            captured["headers"] = headers
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    gen = App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+    await gen.generate(
+        prompt="a server, no text", style="render", dest=tmp_path / "h.png",
+        user_id="gw-42", email="user@cloud.ru",
+    )
+    assert captured["headers"]["X-User-Id"] == "gw-42"
+    assert captured["headers"]["X-User-Email"] == "user@cloud.ru"
+
+
+@pytest.mark.asyncio
+async def test_app1_hero_generator_omits_headers_when_no_identity(tmp_path, monkeypatch):
+    """Back-compat: no user_id → no X-User-* header (App1 falls back to the
+    shared lane). Sending an empty/None header would be wrong."""
+    from app.services.hero_gen import App1HeroGenerator
+
+    captured = {}
+
+    class _FakeResp:
+        headers = {"content-type": "image/png"}
+        content = b"\x89PNG-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers=None):
+            captured["headers"] = headers
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    gen = App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+    await gen.generate(prompt="x", style="render", dest=tmp_path / "h.png")
+    assert "X-User-Id" not in (captured["headers"] or {})
 
 
 def test_make_hero_generator_selects_backend():
@@ -428,7 +511,7 @@ async def test_app1_hero_generator_image_response(tmp_path, monkeypatch):
         async def __aexit__(self, *a):
             pass
 
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             return _Resp(content=b"\x89PNG-app1", headers={"content-type": "image/png"})
 
     import httpx
@@ -455,7 +538,7 @@ async def test_app1_hero_generator_failure_raises_unavailable(tmp_path, monkeypa
         async def __aexit__(self, *a):
             pass
 
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             raise RuntimeError("connection refused")
 
     import httpx
@@ -534,10 +617,14 @@ async def test_generate_decision_success_runs_to_done(tmp_path):
         return True
 
     svc.manager.submit = fake_submit  # type: ignore[assignment]
-    await svc.generate_decision("g1", "1")
+    await svc.generate_decision(
+        "g1", "1", end_user_id="gw-7", end_user_email="g@cloud.ru"
+    )
     await captured["runner"]()
 
     assert gen.seen == ("P", "render")
+    # end-user identity is forwarded to the hero generator (App1 per-user lane)
+    assert gen.seen_identity == ("gw-7", "g@cloud.ru")
     async with Session() as s:
         res = await s.execute(select(models.Task).where(models.Task.task_uid == "g1"))
         task = res.scalar_one()
