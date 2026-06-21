@@ -61,13 +61,16 @@ _VALID_STYLES = {"photo", "render"}
 # cutouts come back consistently framed.
 _STYLE_DIRECTIVE_RENDER = (
     "render (a premium 3D product render in the Cloud.ru brand style: a single "
-    "sleek matte-metal isometric module or platform shown from a ~30-degree "
-    "three-quarter angle, with one tasteful centerpiece of translucent emerald-"
-    "green tinted glass geometric shapes resting on it; clean soft studio "
-    "lighting on a plain seamless light backdrop. The single object MUST be "
-    "fully visible and centered in the frame, with generous even empty margins "
-    "on all sides, not touching or cropped by any edge, so the background can be "
-    "removed cleanly — a recognisable object, not an abstract diagram)"
+    "large, chunky, roughly-square isometric module or platform shown from a "
+    "~30-degree three-quarter angle, the dominant subject that fills most of the "
+    "frame and reads big and bold. Resting on top of it is a BIG, bright, vivid "
+    "emerald-and-lime green translucent faceted glass crystal centerpiece — the "
+    "clear glowing focal hero of the image, large (about a third of the object) "
+    "and unmistakably green, NEVER blue, grey or clear glass. Clean soft studio "
+    "lighting on a plain seamless light backdrop. Keep only a small, even margin "
+    "of empty background on every side so the whole object is fully visible and "
+    "never cropped or touching an edge, letting the background be removed "
+    "cleanly — a recognisable object, not an abstract diagram)"
 )
 
 # Photo banners must NOT all be the same stock "confident man in an office".

@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.4.0
+version: 0.4.1
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -65,14 +65,16 @@ recognisable subject that a viewer instantly understands.
   specifics of the chosen style directive (demographics, framing,
   setting, with/without people). Tie the setting loosely to
   brief.product + winner.hook_angle, kept believable and grounded.
-- RENDER: the Cloud.ru product-render aesthetic — a single sleek
-  matte-metal isometric module or platform with one tasteful
-  centerpiece of translucent emerald-green tinted glass geometric
-  shapes (faceted hex / crystalline forms) resting on it. A premium,
-  recognisable object, not an abstract schematic. The object MUST be
-  fully visible and centered with generous even margins on every side,
-  not touching or cropped by any edge, on a plain seamless backdrop, so
-  its background can be removed cleanly.
+- RENDER: the Cloud.ru product-render aesthetic — a single large,
+  chunky, roughly-square matte-metal isometric module or platform that
+  fills most of the frame and reads big and bold. Resting on it is a
+  BIG, bright, vivid emerald-and-lime green translucent faceted glass
+  crystal (faceted hex / crystalline forms) — the dominant glowing focal
+  hero, about a third of the object, unmistakably green, NEVER blue, grey
+  or clear. A premium, recognisable object, not an abstract schematic.
+  Keep only a small even margin on every side so the object stays fully
+  visible and is never cropped or touching an edge, on a plain seamless
+  backdrop, so its background can be removed cleanly.
 
 PROMPT MUST INCLUDE
 1. A concrete subject tied to brief.product AND winner.hook_angle.
@@ -81,11 +83,12 @@ PROMPT MUST INCLUDE
    hardware scene when the directive says so. Match its demographics,
    framing and setting; never reuse the same generic person across
    banners.
-   Render: the brand metal isometric module with translucent
-   emerald-green geometric centerpiece, shown from a ~30-degree
-   three-quarter angle, fully visible and centered with generous even
-   margins on a plain studio backdrop so the background can later be cut
-   out.
+   Render: a large chunky roughly-square brand metal isometric module
+   filling most of the frame, topped by a BIG bright vivid emerald-and-
+   lime green translucent crystal centerpiece (the dominant focal hero,
+   never blue/grey/clear), shown from a ~30-degree three-quarter angle,
+   fully visible with a small even margin on a plain studio backdrop so
+   the background can later be cut out.
 2. Style modifiers consistent with the chosen image_style category.
    Photo: natural light, documentary, shallow depth of field, 50mm
    lens, slight grain, real skin and textures. Render: 3D product
@@ -203,3 +206,10 @@ Return ONLY valid JSON:
   varied scene directive per photo with ~1/3 people-free, so the system
   message must follow the chosen directive rather than default to one
   generic person. Pairs with the composer alpha-bbox crop.
+- v0.4.1 (2026-06-21) — render heroes came back too small (13-27% of the
+  hero zone vs ~70% in Figma ref 3460-1390) and the brand green crystal
+  rendered blue/clear (0% green vs 24% in ref). Render directive now
+  demands a large, chunky, roughly-square object that fills the frame
+  (so the composer's contain fit fills both dimensions) and a BIG, bright,
+  vivid emerald-and-lime green crystal as the dominant focal hero, never
+  blue/grey/clear.
