@@ -1,10 +1,15 @@
-"""Unit tests for graph.nodes.fill_templates_per_format (M3.3 rewrite).
+"""Unit tests for graph.nodes.fill_templates_per_format (12-banner rewrite).
+
+2026-06-21 redesign: the node no longer composes one hero across many format
+slugs. It composes ONE banner per ranked proposition — each proposition's hero
+(state.generated_heroes[i]) onto the 300x600 template for its scenario
+(render|photo), with that proposition's slogan/body/cta.
 
 Covers:
-- happy path: every requested slug -> rendered_files entry,
-- unknown slug skipped, doesn't kill known ones,
-- per-format compose error isolated (one format failure -> others still render),
-- raises when state.image missing / state.ranked empty.
+- happy path: N heroes -> N rendered_files, unique labels, right scenario slug,
+- per-banner compose error isolated (one failure -> others still render),
+- manual single-upload fallback (state.image, no generated_heroes) -> 1 banner,
+- raises when neither heroes nor image present / ranked empty.
 """
 
 from __future__ import annotations
@@ -19,145 +24,150 @@ from graph.nodes import fill_templates_per_format as mod
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _seed_state(tmp_path: Path, formats: list[str]) -> dict:
-    hero = tmp_path / "hero.png"
-    Image.new("RGB", (512, 512), (200, 100, 100)).save(hero)
-    return {
-        "session_id": "sX",
-        "brief": {
-            "product": "P",
-            "goal": "awareness",
-            "audience_raw": "A",
-            "channel": "vk_post",
-            "formats": formats,
-            "constraints": [],
-            "age_rating": "12+",
-        },
-        "image": {
-            "local_path": str(hero),
-            "style": "stub",
-            "variant": "default",
-            "prompt": "",
-        },
-        "ranked": [
+def _make_hero(tmp_path: Path, name: str) -> str:
+    p = tmp_path / name
+    Image.new("RGBA", (400, 400), (180, 90, 90, 255)).save(p)
+    return str(p)
+
+
+def _ranked(n: int = 12) -> list[dict]:
+    return [
+        {
+            "id": f"c{i}",
+            "slogan": f"Слоган {i}",
+            "body": f"Подзаголовок {i}",
+            "cta": f"Кнопка {i}",
+            "hook_angle": "rational",
+            "score": float(n - i),
+            "reason": "r",
+        }
+        for i in range(n)
+    ]
+
+
+def _heroes(tmp_path: Path, scenarios: list[str]) -> list[dict]:
+    out = []
+    for i, scen in enumerate(scenarios):
+        out.append(
             {
-                "id": "c1",
-                "slogan": "Тестовый слоган",
-                "body": "B",
-                "cta": "Купить",
-                "hook_angle": "rational",
-                "score": 9.0,
-                "reason": "топ",
+                "url": None,
+                "local_path": _make_hero(tmp_path, f"hero_{i}.png"),
+                "style": scen,
+                "variant": "default",
+                "prompt": f"prompt {i}",
             }
-        ],
+        )
+    return out
+
+
+@pytest.mark.asyncio
+async def test_node_renders_one_banner_per_hero(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+    scenarios = ["render", "photo"] * 6  # 12
+    state = {
+        "session_id": "sX",
+        "ranked": _ranked(12),
+        "scenarios": scenarios,
+        "generated_heroes": _heroes(tmp_path, scenarios),
     }
-
-
-@pytest.mark.asyncio
-async def test_node_happy_path_renders_all_known_slugs(monkeypatch, tmp_path):
-    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
-    state = _seed_state(tmp_path, ["banner_240x400", "banner_300x250"])
     out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert {r["format"] for r in out["rendered_files"]} == {
-        "banner_240x400",
-        "banner_300x250",
-    }
-    for r in out["rendered_files"]:
-        img = Image.open(r["path"])
-        img.verify()
+    files = out["rendered_files"]
+    assert len(files) == 12
+    # labels are unique (so render_all arcnames don't collide)
+    labels = [r["format"] for r in files]
+    assert len(set(labels)) == 12
+    for r in files:
+        Image.open(r["path"]).verify()
 
 
 @pytest.mark.asyncio
-async def test_node_unknown_slug_skipped(monkeypatch, tmp_path):
+async def test_node_uses_scenario_template(monkeypatch, tmp_path):
+    """Each banner is composed on the template matching its scenario."""
     monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
-    state = _seed_state(tmp_path, ["banner_240x400", "totally_unknown_slug"])
-    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert {r["format"] for r in out["rendered_files"]} == {"banner_240x400"}
-
-
-@pytest.mark.asyncio
-async def test_node_compose_error_isolated_per_format(monkeypatch, tmp_path):
-    """If compose() raises for one slug, the rest must still render."""
-    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+    seen: list[tuple[int, int, dict]] = []
     real_compose = mod.compose
 
-    def _flaky_compose(spec, **kwargs):
-        if spec.width == 240:
-            raise RuntimeError("synthetic failure")
+    def _spy(spec, **kwargs):
+        seen.append((spec.width, spec.height, dict(kwargs.get("texts", {}))))
         return real_compose(spec, **kwargs)
 
-    monkeypatch.setattr(mod, "compose", _flaky_compose)
-    state = _seed_state(tmp_path, ["banner_240x400", "banner_300x250"])
-    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert {r["format"] for r in out["rendered_files"]} == {"banner_300x250"}
+    monkeypatch.setattr(mod, "compose", _spy)
+    scenarios = ["render", "photo"]
+    state = {
+        "session_id": "sX",
+        "ranked": _ranked(2),
+        "scenarios": scenarios,
+        "generated_heroes": _heroes(tmp_path, scenarios),
+    }
+    await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
+    # both are 300x600
+    assert all(w == 300 and h == 600 for (w, h, _t) in seen)
+    # texts carry the per-candidate slogan + subtitle(body) + cta
+    texts0 = seen[0][2]
+    assert texts0["slogan"] == "Слоган 0"
+    assert texts0["subtitle"] == "Подзаголовок 0"
+    assert texts0["cta"] == "Кнопка 0"
 
 
 @pytest.mark.asyncio
-async def test_node_parallel_render_preserves_format_order(monkeypatch, tmp_path):
-    """Formats are rendered in parallel threads; rendered_files must still
-    follow the requested order. We force the first format to be the slowest
-    so any order-by-completion bug would surface."""
-    import time
-
+async def test_node_per_banner_error_isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
     real_compose = mod.compose
-    delays = {"banner_300x500": 0.2, "banner_240x400": 0.05, "banner_300x250": 0.0}
+    calls = {"n": 0}
 
-    def _slow_compose(spec, **kwargs):
-        time.sleep(delays.get(kwargs.get("slug"), 0.0))
+    def _flaky(spec, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("synthetic")
         return real_compose(spec, **kwargs)
 
-    monkeypatch.setattr(mod, "compose", _slow_compose)
-    formats = ["banner_300x500", "banner_240x400", "banner_300x250"]
-    state = _seed_state(tmp_path, formats)
+    monkeypatch.setattr(mod, "compose", _flaky)
+    scenarios = ["render", "photo", "render"]
+    state = {
+        "session_id": "sX",
+        "ranked": _ranked(3),
+        "scenarios": scenarios,
+        "generated_heroes": _heroes(tmp_path, scenarios),
+    }
     out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert [r["format"] for r in out["rendered_files"]] == formats
+    assert len(out["rendered_files"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_node_no_image_raises(tmp_path):
-    state = _seed_state(tmp_path, ["banner_240x400"])
-    state["image"] = None
-    with pytest.raises(ValueError, match="state.image is None"):
+async def test_node_manual_single_upload_fallback(monkeypatch, tmp_path):
+    """No generated_heroes but a single manually uploaded hero -> 1 banner
+    composed with the top-ranked proposition on its scenario template."""
+    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
+    state = {
+        "session_id": "sX",
+        "ranked": _ranked(12),
+        "scenarios": ["photo"] * 12,
+        "image": {
+            "url": None,
+            "local_path": _make_hero(tmp_path, "manual.png"),
+            "style": "photo",
+            "variant": "default",
+            "prompt": "p",
+        },
+    }
+    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
+    assert len(out["rendered_files"]) == 1
+    Image.open(out["rendered_files"][0]["path"]).verify()
+
+
+@pytest.mark.asyncio
+async def test_node_no_hero_no_image_raises(tmp_path):
+    state = {"session_id": "sX", "ranked": _ranked(12), "scenarios": ["photo"] * 12}
+    with pytest.raises(ValueError, match="no heroes and no uploaded image"):
         await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
 async def test_node_no_ranked_raises(tmp_path):
-    state = _seed_state(tmp_path, ["banner_240x400"])
-    state["ranked"] = []
+    state = {
+        "session_id": "sX",
+        "ranked": [],
+        "generated_heroes": _heroes(tmp_path, ["photo"]),
+    }
     with pytest.raises(ValueError, match="ranked is empty"):
         await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_node_default_format_when_brief_empty(monkeypatch, tmp_path):
-    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
-    state = _seed_state(tmp_path, [])  # empty formats
-    out = await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert len(out["rendered_files"]) == 1
-    assert out["rendered_files"][0]["format"] == mod._DEFAULT_FORMAT
-
-
-@pytest.mark.asyncio
-async def test_node_uses_age_rating_from_brief(monkeypatch, tmp_path):
-    """The age_rating from brief must reach the rendered PNG.
-
-    We don't OCR the PNG; we assert that the compose() call was made with
-    the brief's age_rating in the texts dict.
-    """
-    monkeypatch.setattr(mod, "_RENDER_DIR", tmp_path / "renders")
-    seen: list[dict] = []
-    real_compose = mod.compose
-
-    def _spying_compose(spec, **kwargs):
-        seen.append(dict(kwargs.get("texts", {})))
-        return real_compose(spec, **kwargs)
-
-    monkeypatch.setattr(mod, "compose", _spying_compose)
-    state = _seed_state(tmp_path, ["banner_300x250"])
-    state["brief"]["age_rating"] = "18+"
-    await mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    assert seen[0]["age_rating"] == "18+"
-    assert seen[0]["slogan"] == "Тестовый слоган"
-    assert seen[0]["cta"] == "Купить"

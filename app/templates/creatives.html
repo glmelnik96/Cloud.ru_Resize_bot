@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260621v3">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260621v4">
 </head>
 <body>
   <header class="topbar">
@@ -22,7 +22,7 @@
 
   <main class="wrap">
     <h1 class="page-title">Генерация креативов</h1>
-    <p class="page-sub">Бриф → текст под аудиторию → hero-картинка → готовые баннеры во всех форматах.</p>
+    <p class="page-sub">Бриф → 12 предложений под аудиторию → 12 hero-картинок → 12 баннеров 300×600 (render + photo).</p>
 
     <!-- 1. brief -->
     <section class="panel" id="briefPanel">
@@ -61,11 +61,11 @@
 
     <!-- 4. image HITL -->
     <section class="panel hidden" id="imagePanel">
-      <h2>Hero-картинка</h2>
-      <p class="page-sub">Промпт под тему (можно сгенерировать на сервере или загрузить свою картинку):</p>
+      <h2>Hero-картинки</h2>
+      <p class="page-sub">12 hero-картинок (по одной на предложение, сценарий render/photo выбран под каждое). Можно сгенерировать на сервере все сразу или загрузить свою одну картинку. Ниже — пример промпта первого предложения:</p>
       <pre class="prompt" id="imagePrompt"></pre>
       <div class="btn-row">
-        <button class="btn btn--accent hidden" id="genBtn">Сгенерировать</button>
+        <button class="btn btn--accent hidden" id="genBtn">Сгенерировать 12 hero</button>
         <label class="btn" for="heroFile" style="display:inline-block">Загрузить картинку</label>
         <input type="file" id="heroFile" accept="image/*" class="hidden">
         <button class="btn btn--danger" id="imgCancel">Отменить</button>
@@ -88,6 +88,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260621v3"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260621v4"></script>
 </body>
 </html>

@@ -19,6 +19,8 @@ import structlog
 from PIL import Image, ImageDraw, ImageFont
 
 from infra.template_manifest import (
+    FrameLayer,
+    GradientLayer,
     HeroCutoutLayer,
     HeroLayer,
     ImageLayer,
@@ -263,6 +265,39 @@ def _draw_hero_cutout_layer(
     canvas.alpha_composite(resized, (x, y))
 
 
+def _draw_frame_layer(canvas: Image.Image, layer: FrameLayer) -> None:
+    """Draw a solid border of `thickness` around the layer rect; interior is
+    left untouched so the body / hero show through."""
+    t = layer.thickness
+    x0, y0 = layer.x, layer.y
+    x1, y1 = layer.x + layer.width, layer.y + layer.height
+    draw = ImageDraw.Draw(canvas)
+    # four filled bars (top, bottom, left, right)
+    draw.rectangle((x0, y0, x1, y0 + t), fill=layer.color)            # top
+    draw.rectangle((x0, y1 - t, x1, y1), fill=layer.color)            # bottom
+    draw.rectangle((x0, y0, x0 + t, y1), fill=layer.color)            # left
+    draw.rectangle((x1 - t, y0, x1, y1), fill=layer.color)            # right
+
+
+def _draw_gradient_layer(canvas: Image.Image, layer: GradientLayer) -> None:
+    """Composite a linear single-colour alpha gradient over the rect."""
+    w, h = layer.width, layer.height
+    base = Image.new("RGBA", (w, h), layer.color)
+    span = (h if layer.direction == "vertical" else w) - 1 or 1
+    mask = Image.new("L", (w, h))
+    px = mask.load()
+    for i in range(layer.height if layer.direction == "vertical" else layer.width):
+        a = round(layer.from_alpha + (layer.to_alpha - layer.from_alpha) * i / span)
+        if layer.direction == "vertical":
+            for x in range(w):
+                px[x, i] = a
+        else:
+            for y in range(h):
+                px[i, y] = a
+    base.putalpha(mask)
+    canvas.alpha_composite(base, (layer.x, layer.y))
+
+
 def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     """Draw one text layer. Returns True if the text was truncated."""
     if not text:
@@ -383,6 +418,10 @@ def compose(
     for _, layer in layers:
         if isinstance(layer, ImageLayer):
             _draw_image_layer(canvas, layer, assets_root=assets_root)
+        elif isinstance(layer, FrameLayer):
+            _draw_frame_layer(canvas, layer)
+        elif isinstance(layer, GradientLayer):
+            _draw_gradient_layer(canvas, layer)
         elif isinstance(layer, (HeroLayer, HeroCutoutLayer)):
             if hero_img is None:
                 raise ValueError(

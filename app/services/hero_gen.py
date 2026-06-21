@@ -46,11 +46,14 @@ class NullHeroGenerator:
 class App1HeroGenerator:
     """Delegate hero generation to App1 over an internal loopback endpoint.
 
-    Contract (to be finalised by App1): POST ``{url}`` with JSON
-    ``{"prompt": str, "style": str}`` → response is the rendered image bytes
-    (image/* body) or a JSON ``{"url": "..."}`` to download. App3 trusts the
-    loopback (127.0.0.1) and forwards no user identity beyond what App1
-    requires; the exact auth handshake is settled in COORDINATION before flip.
+    Contract: POST ``{url}`` with JSON
+    ``{"prompt": str, "style": str, "scenario": str}`` → response is the
+    rendered image bytes (image/* body) or a JSON ``{"url": "..."}`` to
+    download. ``scenario`` ∈ {render, photo} selects App1's brand pipeline
+    (render = isometric brand_t2i render variant + Photoroom bg-removal →
+    transparent cutout; photo = full-bleed photo with background). In the
+    12-banner flow ``style`` already carries the per-proposition scenario, so
+    we forward it as ``scenario`` too. App3 trusts the loopback (127.0.0.1).
     """
 
     available = True
@@ -62,9 +65,13 @@ class App1HeroGenerator:
     async def generate(self, *, prompt: str, style: str, dest: Path) -> Path:
         import httpx
 
+        scenario = style if style in {"render", "photo"} else "photo"
         try:
             async with httpx.AsyncClient(timeout=self.timeout_s) as c:
-                resp = await c.post(self.url, json={"prompt": prompt, "style": style})
+                resp = await c.post(
+                    self.url,
+                    json={"prompt": prompt, "style": style, "scenario": scenario},
+                )
                 resp.raise_for_status()
                 ctype = resp.headers.get("content-type", "")
                 if ctype.startswith("image/"):

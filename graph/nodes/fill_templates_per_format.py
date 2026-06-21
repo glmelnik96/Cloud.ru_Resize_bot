@@ -1,17 +1,21 @@
-"""fill_templates_per_format node — M3.3 PIL composer.
+"""fill_templates_per_format node — 12-banner PIL composer (2026-06-21).
 
-For each slug in brief.formats:
-  - Look up the spec in config/templates.json,
-  - Compose canvas via infra.composer (hero + slogan + cta + age_rating),
-  - Save PNG to /data/renders/, append {format, path} to rendered_files.
+For each ranked proposition i:
+  - take its generated hero (state.generated_heroes[i]) and its scenario
+    (render|photo, read from the hero entry's ``style``),
+  - look up the matching 300x600 template (banner_300x600_<scenario>),
+  - compose hero + slogan + subtitle(body) + cta,
+  - save a PNG and append {format=<NN_scenario>, path} to rendered_files.
 
-Per-format try/except: one bad slug never kills the rest. Slugs missing
-from the manifest are skipped with a warning (parse_brief is supposed to
-emit only whitelisted slugs, but we are defensive here).
+Each banner gets a UNIQUE ``format`` label (index + scenario) so render_all's
+per-entry ZIP arcname never collides — the 12 banners would otherwise share
+only two template slugs.
 
-Contract:
-  state.brief.formats × state.image (hero) × top-ranked proposition (text,
-  via chosen_candidate) → state.rendered_files = [{format, path}, ...]
+Manual fallback: if no heroes were generated but the user uploaded a single
+hero (state.image), compose ONE banner with the top-ranked proposition on its
+scenario template. Raises if there is neither a generated hero nor an upload.
+
+Per-banner try/except: one bad compose never kills the rest.
 """
 
 from __future__ import annotations
@@ -23,10 +27,10 @@ from pathlib import Path
 
 import structlog
 
-from graph.nodes import chosen_candidate
-from graph.state import AdBrief, GeneratedImage, GraphState
+from graph.nodes import ranked_candidates
+from graph.state import GeneratedImage, GraphState, MessageCandidate
 from infra.composer import compose
-from infra.template_manifest import TemplateManifest, load_manifest
+from infra.template_manifest import load_manifest
 
 log = structlog.get_logger(__name__)
 
@@ -34,67 +38,71 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Default to the Docker bot's /data/renders; App3 overrides via RENDERS_DIR.
 _RENDER_DIR = Path(os.environ.get("RENDERS_DIR", "/data/renders"))
 _MANIFEST_PATH = _REPO_ROOT / "config" / "templates.json"
-_DEFAULT_FORMAT = "banner_300x250"
+_VALID_SCENARIOS = {"render", "photo"}
+_DEFAULT_SCENARIO = "photo"
+
+
+def _scenario_for(raw: str | None) -> str:
+    s = (raw or "").strip().lower()
+    return s if s in _VALID_SCENARIOS else _DEFAULT_SCENARIO
+
+
+def _slug(scenario: str) -> str:
+    return f"banner_300x600_{scenario}"
 
 
 async def fill_templates_per_format(state: GraphState) -> dict:
     session_id = state.get("session_id") or "nosession"
 
-    brief_raw = state.get("brief")
+    candidates = ranked_candidates(state)
+    heroes = state.get("generated_heroes") or []
     image_raw = state.get("image")
-    if image_raw is None:
-        raise ValueError("fill_templates_per_format: state.image is None")
-
-    brief = _coerce(brief_raw, AdBrief, "brief") if brief_raw else None
-    image = _coerce(image_raw, GeneratedImage, "image")
-    winner = chosen_candidate(state)
-
-    formats = (brief.formats if brief else []) or [_DEFAULT_FORMAT]
-    age_rating = brief.age_rating if brief else "0+"
 
     _RENDER_DIR.mkdir(parents=True, exist_ok=True)
     manifest = load_manifest(_MANIFEST_PATH)
-    hero_bytes = Path(image.local_path).read_bytes()
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-    texts = {
-        "slogan": winner.slogan,
-        "cta": winner.cta,
-        "age_rating": age_rating,
-    }
-
     start = datetime.utcnow()
 
-    # Filter unknown slugs first, then render the known ones in parallel:
-    # compose() is CPU-bound PIL work, so each format goes to a worker
-    # thread via asyncio.to_thread and the event loop stays responsive.
-    # Hero is passed as bytes — each thread opens its own PIL.Image from
-    # them, so no Image object is shared across threads. gather() keeps
-    # the result order equal to the formats order.
-    known: list[str] = []
-    for fmt in formats:
-        spec = manifest.templates.get(fmt)
-        if spec is None:
-            log.warning(
-                "compose_unknown_slug",
-                session_id=session_id,
-                slug=fmt,
-                known=list(manifest.templates),
-            )
-            continue
-        known.append(fmt)
+    # Build the (index, candidate, hero_bytes, scenario) jobs.
+    jobs: list[tuple[int, MessageCandidate, bytes, str]] = []
+    if heroes:
+        for pos, hero in enumerate(heroes):
+            # Each hero may carry the ranked index it was generated for, so a
+            # failed/skipped hero never shifts the candidate alignment.
+            idx = hero.get("index", pos)
+            if idx >= len(candidates):
+                continue
+            scenario = _scenario_for(hero.get("style"))
+            hero_bytes = Path(hero["local_path"]).read_bytes()
+            jobs.append((idx, candidates[idx], hero_bytes, scenario))
+    elif image_raw is not None:
+        # Manual single-upload fallback: one banner, top proposition.
+        image = _coerce(image_raw, GeneratedImage, "image")
+        scenario = _scenario_for(image.style)
+        hero_bytes = Path(image.local_path).read_bytes()
+        jobs.append((0, candidates[0], hero_bytes, scenario))
+    else:
+        raise ValueError(
+            "fill_templates_per_format: no heroes and no uploaded image"
+        )
 
     results = await asyncio.gather(
         *(
             asyncio.to_thread(
                 _render_one_sync,
-                manifest.templates[fmt],
-                fmt,
+                manifest.templates[_slug(scenario)],
+                _slug(scenario),
+                f"{idx + 1:02d}_{scenario}",
                 hero_bytes,
-                texts,
+                {
+                    "slogan": cand.slogan,
+                    "subtitle": cand.body,
+                    "cta": cand.cta,
+                },
                 session_id,
                 ts,
             )
-            for fmt in known
+            for (idx, cand, hero_bytes, scenario) in jobs
         )
     )
     out: list[dict] = [r for r in results if r is not None]
@@ -103,7 +111,7 @@ async def fill_templates_per_format(state: GraphState) -> dict:
         "compose_node_done",
         session_id=session_id,
         n_total=len(out),
-        n_requested=len(formats),
+        n_requested=len(jobs),
         node_latency_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
     )
     return {"rendered_files": out}
@@ -111,16 +119,18 @@ async def fill_templates_per_format(state: GraphState) -> dict:
 
 def _render_one_sync(
     spec,
-    fmt: str,
+    slug: str,
+    label: str,
     hero_bytes: bytes,
     texts: dict[str, str],
     session_id: str,
     ts: str,
 ) -> dict | None:
-    """Compose + save one format. Runs in a worker thread.
+    """Compose + save one banner. Runs in a worker thread.
 
-    Returns {format, path} on success, None on failure (per-format
-    isolation: one bad slug never kills the rest).
+    Returns {format, path} on success, None on failure (per-banner
+    isolation: one bad compose never kills the rest). ``label`` is the
+    unique per-banner id used for the filename and the ZIP arcname.
     """
     fmt_start = datetime.utcnow()
     try:
@@ -129,24 +139,26 @@ def _render_one_sync(
             hero=hero_bytes,
             texts=texts,
             assets_root=_REPO_ROOT,
-            slug=fmt,
+            slug=slug,
         )
-        path = _RENDER_DIR / f"{session_id}_{fmt}_{ts}.png"
+        path = _RENDER_DIR / f"{session_id}_{label}_{ts}.png"
         canvas.save(path, format="PNG", optimize=True)
         log.info(
             "compose_format_ok",
             session_id=session_id,
-            slug=fmt,
+            label=label,
+            slug=slug,
             latency_ms=int(
                 (datetime.utcnow() - fmt_start).total_seconds() * 1000
             ),
         )
-        return {"format": fmt, "path": str(path)}
-    except Exception as exc:  # noqa: BLE001 — single-format isolation
+        return {"format": label, "path": str(path)}
+    except Exception as exc:  # noqa: BLE001 — single-banner isolation
         log.error(
             "compose_format_error",
             session_id=session_id,
-            slug=fmt,
+            label=label,
+            slug=slug,
             error=str(exc),
             error_type=type(exc).__name__,
         )

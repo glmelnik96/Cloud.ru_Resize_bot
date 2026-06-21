@@ -76,6 +76,21 @@ async def test_upload_action_without_local_path_cancels(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_upload_action_with_heroes_populates_generated_heroes(monkeypatch):
+    """The generation path resumes with a list of 12 heroes (one per
+    proposition) -> state.generated_heroes; no single image is set."""
+    heroes = [
+        {"local_path": f"/data/h{i}.png", "style": "render", "prompt": "p"}
+        for i in range(12)
+    ]
+    _patch_interrupt(monkeypatch, {"action": "upload", "heroes": heroes})
+    out = await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
+    assert "generated_heroes" in out
+    assert len(out["generated_heroes"]) == 12
+    assert "image" not in out
+
+
+@pytest.mark.asyncio
 async def test_cancel_action(monkeypatch):
     _patch_interrupt(monkeypatch, {"action": "cancel"})
     out = await mod.hitl_image_upload(_state())  # type: ignore[arg-type]

@@ -62,6 +62,11 @@ async def hitl_image_upload(state: GraphState) -> dict:
     )
 
     if action == "upload":
+        # Generation path: a list of heroes (one per proposition) was produced
+        # server-side and resumed here -> state.generated_heroes.
+        heroes = decision.get("heroes")
+        if heroes:
+            return {"generated_heroes": list(heroes)}
         local_path = decision.get("local_path")
         if not local_path:
             return {"error": "image upload resumed without local_path", "cancelled": True}

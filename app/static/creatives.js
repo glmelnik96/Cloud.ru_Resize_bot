@@ -104,7 +104,7 @@
 
   // image decisions
   $("genBtn").addEventListener("click", async () => {
-    $("imageStatus").textContent = "Генерирую…"; hideHitl(); setStep("Генерирую hero…");
+    $("imageStatus").textContent = "Генерирую 12 hero…"; hideHitl(); setStep("Генерирую 12 hero…");
     const fd = new FormData(); fd.append("action", "generate");
     await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
   });

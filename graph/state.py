@@ -190,9 +190,14 @@ class GraphState(TypedDict, total=False):
     ranked: list[dict]
     text_approved: bool
     # ----- Image stage (M3.3 — user-uploaded hero) --------------------------
-    image_style: str  # photo | render | isometric — chosen by route_image_style
-    image_prompt: str | None  # EN prompt shown to the user (generate_image_prompt)
-    image: dict | None  # GeneratedImage.model_dump(), filled after user upload
+    image_style: str  # photo | render — top-ranked scenario (HITL display)
+    image_prompt: str | None  # EN prompt shown to the user (top-ranked)
+    image: dict | None  # GeneratedImage.model_dump(), single manual-upload fallback
+    # ----- 12-banner stage (2026-06-21) -------------------------------------
+    # Per ranked-candidate, aligned by index with state.ranked:
+    scenarios: list[str]  # render | photo for each of the 12 propositions
+    image_prompts: list[str]  # one EN hero prompt per proposition
+    generated_heroes: list[dict]  # GeneratedImage.model_dump() per proposition
     # ----- Render stage (M3) ------------------------------------------------
     rendered_files: list[dict]  # [{"format": "banner_300x250", "path": "/data/..."}, ...]
     rendered_zip_path: str | None

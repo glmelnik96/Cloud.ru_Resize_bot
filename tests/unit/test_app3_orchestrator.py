@@ -343,6 +343,48 @@ async def test_null_hero_generator_unavailable():
         await g.generate(prompt="x", style="render", dest="y")
 
 
+@pytest.mark.asyncio
+async def test_app1_hero_generator_sends_scenario(tmp_path, monkeypatch):
+    """App1's /internal/hero needs the brand scenario (render|photo). The
+    generator must POST it alongside prompt+style (2026-06-21 Block E)."""
+    from app.services.hero_gen import App1HeroGenerator
+
+    captured = {}
+
+    class _FakeResp:
+        headers = {"content-type": "image/png"}
+        content = b"\x89PNG-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json):
+            captured["url"] = url
+            captured["json"] = json
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    gen = App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+    dest = tmp_path / "h.png"
+    await gen.generate(prompt="a server, no text", style="render", dest=dest)
+
+    assert captured["json"]["prompt"] == "a server, no text"
+    assert captured["json"]["scenario"] == "render"
+    assert dest.read_bytes() == b"\x89PNG-bytes"
+
+
 def test_make_hero_generator_selects_backend():
     from app.services.hero_gen import (
         App1HeroGenerator,

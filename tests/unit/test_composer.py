@@ -19,6 +19,8 @@ from PIL import Image
 from infra.composer import _fit_text, _wrap_to_width, compose
 from infra.template_manifest import (
     BoxBackground,
+    FrameLayer,
+    GradientLayer,
     HeroLayer,
     ImageLayer,
     PerLineHighlight,
@@ -276,13 +278,13 @@ def test_hero_contain_letterboxes():
 
 
 @pytest.mark.parametrize(
-    "slug", ["banner_240x400", "banner_300x250", "banner_300x500"]
+    "slug", ["banner_300x600_render", "banner_300x600_photo"]
 )
 def test_compose_real_template_smoke(slug, tmp_path):
     """End-to-end: load real manifest, compose, write PNG, reopen, check size.
 
-    Uses the real brand_area_line PNGs from assets/brand/, so this test
-    catches missing assets too.
+    Uses the real brand header / footer PNGs from assets/brand/creatives/, so
+    this test catches missing assets too.
     """
     manifest = load_manifest(MANIFEST)
     spec = manifest.templates[slug]
@@ -291,9 +293,9 @@ def test_compose_real_template_smoke(slug, tmp_path):
         spec,
         hero=hero,
         texts={
-            "slogan": "Чек-ап проверки инфраструктуры в период распродаж",
-            "cta": "Подробнее",
-            "age_rating": "0+",
+            "slogan": "Разработка и тестирование в облаке",
+            "subtitle": "GenAI — генеративный искусственный интеллект",
+            "cta": "Попробовать бесплатно",
         },
         assets_root=REPO_ROOT,
     )
@@ -302,6 +304,20 @@ def test_compose_real_template_smoke(slug, tmp_path):
     img.save(out, "PNG")
     reopened = Image.open(out)
     assert reopened.size == (spec.width, spec.height)
+
+
+def test_render_banner_has_green_frame_and_header():
+    """The render layout draws the green border frame and the brand header
+    sits on top (top-left logo region is not pure background)."""
+    manifest = load_manifest(MANIFEST)
+    spec = manifest.templates["banner_300x600_render"]
+    # transparent cutout so the #222 body + green frame show
+    hero = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    img = compose(spec, hero=hero, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
+    green = (0x26, 0xD0, 0x7C)
+    assert img.getpixel((2, 300))[:3] == green     # left frame border
+    assert img.getpixel((297, 300))[:3] == green    # right frame border
+    assert img.getpixel((150, 595))[:3] == green    # bottom frame border
 
 
 # ----- Per-line highlight + CTA background -----------------------------------
@@ -345,6 +361,80 @@ def test_per_line_highlight_present():
         if found_red:
             break
     assert found_red, "per-line highlight not drawn"
+
+
+# ----- Frame layer (green border) --------------------------------------------
+
+
+def test_frame_layer_draws_border_only():
+    """A frame draws a solid border of `thickness` around its rect and leaves
+    the interior untouched (the dark body shows through)."""
+    spec = TemplateSpec(
+        width=20,
+        height=20,
+        background_color="#FFFFFF",
+        layers=[
+            FrameLayer(
+                type="frame", x=0, y=0, width=20, height=20,
+                thickness=3, color="#26D07C", z=10,
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={}, assets_root=REPO_ROOT)
+    green = (0x26, 0xD0, 0x7C)
+    # all four borders are green
+    assert img.getpixel((0, 10))[:3] == green     # left
+    assert img.getpixel((19, 10))[:3] == green    # right
+    assert img.getpixel((10, 0))[:3] == green     # top
+    assert img.getpixel((10, 19))[:3] == green    # bottom
+    # interior untouched (background shows through)
+    assert img.getpixel((10, 10))[:3] == (255, 255, 255)
+
+
+def test_frame_layer_inset_rect():
+    """A frame placed below a header (y>0) borders only its own rect; the
+    region above y stays background."""
+    spec = TemplateSpec(
+        width=20,
+        height=30,
+        background_color="#222222",
+        layers=[
+            FrameLayer(
+                type="frame", x=0, y=10, width=20, height=20,
+                thickness=2, color="#26D07C", z=10,
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={}, assets_root=REPO_ROOT)
+    green = (0x26, 0xD0, 0x7C)
+    assert img.getpixel((10, 5))[:3] == (0x22, 0x22, 0x22)   # above frame
+    assert img.getpixel((10, 10))[:3] == green               # frame top edge
+    assert img.getpixel((10, 20))[:3] == (0x22, 0x22, 0x22)  # frame interior
+
+
+# ----- Gradient layer (legibility scrim) -------------------------------------
+
+
+def test_gradient_layer_darkens_bottom_only():
+    """A vertical gradient scrim (transparent at top -> opaque dark at bottom)
+    keeps the top of the rect close to the original and darkens the bottom."""
+    spec = TemplateSpec(
+        width=10,
+        height=100,
+        background_color="#FFFFFF",
+        layers=[
+            GradientLayer(
+                type="gradient", x=0, y=0, width=10, height=100,
+                color="#000000", from_alpha=0, to_alpha=255,
+                direction="vertical", z=10,
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={}, assets_root=REPO_ROOT)
+    top = img.getpixel((5, 0))[:3]
+    bottom = img.getpixel((5, 99))[:3]
+    assert top[0] > 230          # near-white at the top (alpha ~0)
+    assert bottom[0] < 25        # near-black at the bottom (alpha ~255)
 
 
 def test_cta_background_drawn():

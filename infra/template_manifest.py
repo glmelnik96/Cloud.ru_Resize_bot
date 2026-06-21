@@ -108,6 +108,45 @@ class HeroCutoutLayer(BaseModel):
     z: int = 0
 
 
+class FrameLayer(BaseModel):
+    """Solid-colour border drawn around a rect (interior untouched).
+
+    The Cloud.ru creatives 300x600 render banner frames the dark body with a
+    10px green border. ``thickness`` is the border width in px; the interior
+    (rect inset by thickness) is left transparent so the body / hero show
+    through.
+    """
+
+    type: Literal["frame"]
+    name: str | None = None
+    x: int
+    y: int
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    thickness: int = Field(gt=0)
+    color: str = Field(description="Border fill, e.g. '#26D07C'")
+    z: int = 0
+
+
+class GradientLayer(BaseModel):
+    """Linear alpha gradient of a single colour, composited as a legibility
+    scrim over the hero (e.g. transparent at top -> dark at bottom so white
+    headline text stays readable on a full-bleed photo).
+    """
+
+    type: Literal["gradient"]
+    name: str | None = None
+    x: int
+    y: int
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    color: str = "#000000"
+    from_alpha: int = Field(default=0, ge=0, le=255)
+    to_alpha: int = Field(default=255, ge=0, le=255)
+    direction: Literal["vertical", "horizontal"] = "vertical"
+    z: int = 0
+
+
 class TextLayer(BaseModel):
     """Auto-shrinking text in a rect, optional highlight backgrounds.
 
@@ -165,7 +204,7 @@ class TextLayer(BaseModel):
 
 
 Layer = Annotated[
-    ImageLayer | HeroLayer | HeroCutoutLayer | TextLayer,
+    ImageLayer | HeroLayer | HeroCutoutLayer | FrameLayer | GradientLayer | TextLayer,
     Field(discriminator="type"),
 ]
 

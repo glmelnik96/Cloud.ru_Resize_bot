@@ -159,25 +159,27 @@ def test_negative_dimensions_rejected():
 
 def test_real_manifest_loads():
     manifest = load_manifest(REAL_MANIFEST)
-    assert manifest.version == "0.6.0"
     assert set(manifest.templates) == {
-        "banner_240x400",
-        "banner_300x250",
-        "banner_300x500",
+        "banner_300x600_render",
+        "banner_300x600_photo",
     }
 
 
 def test_real_manifest_each_template_has_required_slots():
-    """Every template must have: 1 hero, 1 brand image, slogan, cta, age_rating."""
+    """Both 300x600 scenarios carry a hero, the brand header image, and the
+    slogan + cta text slots. The photo scenario additionally has a subtitle."""
     manifest = load_manifest(REAL_MANIFEST)
     for slug, spec in manifest.templates.items():
         layer_types = [type(layer).__name__ for layer in spec.layers]
-        assert "HeroLayer" in layer_types, f"{slug}: no hero"
+        # render uses a cutout hero, photo a full-bleed hero
+        assert (
+            "HeroLayer" in layer_types or "HeroCutoutLayer" in layer_types
+        ), f"{slug}: no hero"
         assert "ImageLayer" in layer_types, f"{slug}: no brand image"
         text_slots = {
             layer.slot for layer in spec.layers if isinstance(layer, TextLayer)
         }
-        assert text_slots == {"slogan", "cta", "age_rating"}, (
+        assert {"slogan", "cta"} <= text_slots, (
             f"{slug}: text slots = {text_slots}"
         )
 

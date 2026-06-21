@@ -13,6 +13,7 @@ in later phases.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -46,6 +47,10 @@ _NODE_LABELS: dict[str, str] = {
 # create() by a DB count of these (not TaskManager.has_capacity) because parked
 # tasks legitimately sit open for a long time.
 _OPEN_STATUSES = ("queued", "running", "awaiting_text", "awaiting_image")
+
+# Max concurrent hero generations against App1 during a single /new run. The
+# 12 propositions each need a hero; this bounds the burst on App1's backend.
+_HERO_GEN_CONCURRENCY = int(os.environ.get("HERO_GEN_CONCURRENCY", "4"))
 
 
 class CapacityError(Exception):
@@ -174,12 +179,17 @@ class CreativesService:
         await self.manager.submit(user_id, runner)
 
     async def generate_decision(self, task_uid: str, user_id: str) -> None:
-        """Web-generate the hero (channel switch), then resume the graph upload.
+        """Web-generate the 12 heroes (channel switch), then resume the upload.
 
-        Pulls the EN image_prompt/style from the checkpoint, runs the hero
-        generator, saves the result, and resumes with {action:upload}. On
-        generator failure the task re-parks at awaiting_image so the user can
-        upload manually instead.
+        Pulls the per-proposition EN image_prompts + scenarios from the
+        checkpoint and generates one hero per proposition via the hero
+        generator (concurrently, bounded by _HERO_GEN_CONCURRENCY). Each hero
+        carries its ranked ``index`` so a single failure never misaligns the
+        banners. If at least one hero succeeds the graph resumes with the list;
+        if ALL fail the task re-parks at awaiting_image for manual upload.
+
+        Back-compat: a pre-redesign checkpoint without image_prompts/scenarios
+        degrades to a single hero from image_prompt/image_style.
         """
         if not self.hero_generator.available:
             raise HeroGenUnavailable("hero generation backend not configured")
@@ -191,32 +201,69 @@ class CreativesService:
         async def runner() -> None:
             snapshot = await self.graph.aget_state(self._config(task_uid))
             values = dict(snapshot.values or {})
-            prompt = values.get("image_prompt", "")
-            style = values.get("image_style", "render")
-            dest = self.manager.task_tmp(user_id, task_uid) / "hero_gen.png"
-            await reporter.start("Генерирую hero-картинку")
-            try:
-                async with self.manager.global_sem:
-                    await self.hero_generator.generate(prompt=prompt, style=style, dest=dest)
-            except Exception as exc:  # noqa: BLE001 — fall back to manual upload
-                log.warning("hero_gen_failed", task_uid=task_uid, error=str(exc))
+            prompts = values.get("image_prompts") or [values.get("image_prompt", "")]
+            scenarios = values.get("scenarios") or [values.get("image_style", "render")]
+            # pad scenarios to the prompts length (defensive)
+            scenarios = [
+                scenarios[i] if i < len(scenarios) else "photo"
+                for i in range(len(prompts))
+            ]
+            tmp_dir = self.manager.task_tmp(user_id, task_uid)
+            await reporter.start(f"Генерирую hero-картинки (0/{len(prompts)})")
+
+            sem = asyncio.Semaphore(_HERO_GEN_CONCURRENCY)
+
+            async def _one(i: int, prompt: str, scenario: str) -> dict:
+                dest = tmp_dir / f"hero_{i}.png"
+                async with sem:
+                    await self.hero_generator.generate(
+                        prompt=prompt, style=scenario, dest=dest
+                    )
+                return {
+                    "url": None,
+                    "local_path": str(dest),
+                    "style": scenario,
+                    "variant": "default",
+                    "prompt": prompt,
+                    "index": i,
+                }
+
+            async with self.manager.global_sem:
+                results = await asyncio.gather(
+                    *(_one(i, p, s) for i, (p, s) in enumerate(zip(prompts, scenarios))),
+                    return_exceptions=True,
+                )
+
+            heroes = [r for r in results if isinstance(r, dict)]
+            failures = [r for r in results if isinstance(r, BaseException)]
+            if failures:
+                log.warning(
+                    "hero_gen_partial",
+                    task_uid=task_uid,
+                    ok=len(heroes),
+                    failed=len(failures),
+                    first_error=str(failures[0]),
+                )
+
+            if not heroes:
                 await self._set_status(task_uid, "awaiting_image")
                 await reporter.awaiting(
                     phase="image_upload",
                     data={
-                        "image_prompt": prompt,
-                        "image_style": style,
+                        "image_prompt": prompts[0],
+                        "image_style": scenarios[0],
                         "can_generate": self.hero_generator.available,
-                        "gen_error": str(exc),
+                        "gen_error": str(failures[0]) if failures else "no heroes",
                     },
                 )
                 return
-            # hero ready → resume the final segment as an upload
+
+            # heroes ready → resume the final segment as an upload
             from langgraph.types import Command
 
             await self._run_segment(
                 task_uid, user_id,
-                Command(resume={"action": "upload", "local_path": str(dest)}),
+                Command(resume={"action": "upload", "heroes": heroes}),
                 reporter, first_label="Накладываю в шаблоны",
             )
 

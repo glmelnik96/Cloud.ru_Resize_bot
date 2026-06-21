@@ -38,3 +38,6 @@ tests/manual/_heroes/
 # App3 web sub-app runtime data (SQLite DB, results, scratch, Phygital session)
 data/
 storage/
+
+# Figma export scratch (raw node PNGs, local e2e driver, compose samples)
+.tmp_figma/

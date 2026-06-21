@@ -20,3 +20,19 @@ def chosen_candidate(state: GraphState) -> MessageCandidate:
     if isinstance(top, MessageCandidate):
         return top
     return MessageCandidate.model_validate(top)
+
+
+def ranked_candidates(state: GraphState) -> list[MessageCandidate]:
+    """All 12 propositions, ordered best-first (per rank_candidates).
+
+    The 12-banner stage (2026-06-21) composes one banner per proposition, so
+    every node downstream of the ranker iterates this list. Ranker-only keys
+    (score/reason) on each dict are ignored by MessageCandidate.
+    """
+    ranked = state.get("ranked") or []
+    if not ranked:
+        raise ValueError("ranked_candidates: state.ranked is empty")
+    return [
+        c if isinstance(c, MessageCandidate) else MessageCandidate.model_validate(c)
+        for c in ranked
+    ]

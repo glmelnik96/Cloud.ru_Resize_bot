@@ -3,37 +3,41 @@
 Input:
   - GraphState.brief (AdBrief)
   - GraphState.personas (list[Persona]) — single persona, [0]
-  - GraphState.ranked (top item = the proposition composed onto the hero)
-  - GraphState.image_style (str ∈ {photo, render, isometric}) — set by
-    route_image_style upstream
+  - GraphState.ranked (all 12 propositions, best-first)
+  - GraphState.scenarios (list[str], one ∈ {render, photo} per proposition) —
+    set by route_image_style upstream
 Output:
-  - GraphState.image_prompt (str) — EN single-paragraph prompt shown to
-    the user in TG so they can paste it into MJ / DALL-E / SDXL / Nano
-    Banana and upload the result back.
+  - GraphState.image_prompts (list[str]) — one EN single-paragraph hero
+    prompt per proposition, the per-banner generation input.
+  - GraphState.image_prompt (str) — the top-ranked prompt, kept so the HITL
+    image gate / manual-upload fallback still has one prompt to display.
 
-This node replaces the M3.2 generate_image (Phygital) node. We no longer
-auto-generate the hero — the user does it themselves in their own image
-tool and uploads via hitl_image_upload.
+The 12-banner redesign (2026-06-21) writes one hero prompt per proposition,
+each cued by that proposition's scenario (render -> isometric 3D device on a
+clean studio backdrop; photo -> full scene). We no longer auto-generate here;
+heroes are produced by App1 in CreativesService.generate_decision.
 
-Soft validation: we warn (don't retry) when the prompt is outside the
+Soft validation: we warn (don't retry) when a prompt is outside the
 40-90 word band, contains Cyrillic, or is missing "no text"/"no letters".
 The schema only enforces min_length=20 on the prompt.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import structlog
 
 from graph.agent_runner import run_agent
-from graph.nodes import chosen_candidate
+from graph.nodes import ranked_candidates
 from graph.nodes.parse_brief import _extract_section, _render
 from graph.prompts import load_skill
 from graph.state import (
     AdBrief,
     GraphState,
     ImagePromptOutput,
+    MessageCandidate,
     Persona,
 )
 
@@ -42,7 +46,21 @@ log = structlog.get_logger(__name__)
 _AGENT_ID = "generate_image_prompt"
 _SKILL_NAME = "generate_image_prompt"
 
-_VALID_STYLES = {"photo", "render", "isometric"}
+_VALID_STYLES = {"photo", "render"}
+
+# The downstream hero generator (App1 `render` scenario) produces a 3D product
+# render, not an isometric line-art. To get the isometric LOOK the brand wants,
+# we bake an explicit isometric viewpoint into the EN prompt itself for render
+# banners. Photo stays a plain full-scene cue.
+_STYLE_DIRECTIVE = {
+    "render": (
+        "render (a clean 3D product render shown from an isometric "
+        "three-quarter viewpoint, ~30-degree isometric angle, single object "
+        "centered on a plain studio backdrop so the background can be cut out)"
+    ),
+    "photo": "photo",
+}
+
 _WORD_MIN = 40
 _WORD_MAX = 90
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
@@ -56,22 +74,56 @@ async def generate_image_prompt(state: GraphState) -> dict:
     personas = [_coerce(p, Persona, "persona") for p in personas_raw]
     persona = personas[0]
 
-    winner = chosen_candidate(state)
+    candidates = ranked_candidates(state)
+    session_id = state.get("session_id")
 
-    image_style = (state.get("image_style") or "").strip().lower()
-    if image_style not in _VALID_STYLES:
+    scenarios = state.get("scenarios") or []
+    if len(scenarios) != len(candidates):
         log.warning(
-            "generate_image_prompt_bad_style",
-            session_id=state.get("session_id"),
-            got=image_style,
+            "generate_image_prompt_scenarios_mismatch",
+            session_id=session_id,
+            n_scenarios=len(scenarios),
+            n_candidates=len(candidates),
             fallback="photo",
         )
-        image_style = "photo"
+        scenarios = [
+            scenarios[i] if i < len(scenarios) else "photo"
+            for i in range(len(candidates))
+        ]
 
     skill = load_skill(_SKILL_NAME)
     system_msg = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
 
+    prompts = await asyncio.gather(
+        *(
+            _build_one(
+                system_msg, user_tpl, brief, persona, cand, scen, session_id
+            )
+            for cand, scen in zip(candidates, scenarios)
+        )
+    )
+    prompts = list(prompts)
+
+    log.info(
+        "generate_image_prompt_ok",
+        session_id=session_id,
+        n=len(prompts),
+    )
+    return {"image_prompts": prompts, "image_prompt": prompts[0]}
+
+
+async def _build_one(
+    system_msg: str,
+    user_tpl: str,
+    brief: AdBrief,
+    persona: Persona,
+    cand: MessageCandidate,
+    scenario: str,
+    session_id: str | None,
+) -> str:
+    image_style = scenario if scenario in _VALID_STYLES else "photo"
+    style_directive = _STYLE_DIRECTIVE[image_style]
     user_msg = _render(
         user_tpl,
         **{
@@ -83,13 +135,12 @@ async def generate_image_prompt(state: GraphState) -> dict:
             "persona.age_range": persona.age_range,
             "persona.pain_points": ", ".join(persona.pain_points),
             "persona.communication_style": persona.communication_style,
-            "winner.slogan": winner.slogan,
-            "winner.cta": winner.cta,
-            "winner.hook_angle": winner.hook_angle,
-            "image_style": image_style,
+            "winner.slogan": cand.slogan,
+            "winner.cta": cand.cta,
+            "winner.hook_angle": cand.hook_angle,
+            "image_style": style_directive,
         },
     )
-
     result = await run_agent(
         _AGENT_ID,
         messages=[
@@ -97,20 +148,11 @@ async def generate_image_prompt(state: GraphState) -> dict:
             {"role": "user", "content": user_msg},
         ],
         schema=ImagePromptOutput,
-        session_id=state.get("session_id"),
+        session_id=session_id,
     )
-
     prompt = result.prompt.strip()
-    _soft_validate(prompt, session_id=state.get("session_id"))
-
-    log.info(
-        "generate_image_prompt_ok",
-        session_id=state.get("session_id"),
-        style=image_style,
-        words=_word_count(prompt),
-        rationale=result.rationale,
-    )
-    return {"image_prompt": prompt}
+    _soft_validate(prompt, session_id=session_id)
+    return prompt
 
 
 def _soft_validate(prompt: str, *, session_id: str | None) -> None:
