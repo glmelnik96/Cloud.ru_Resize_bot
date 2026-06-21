@@ -477,26 +477,35 @@ def test_render_banner_has_green_frame_and_header():
     assert img.getpixel((150, 595))[:3] == green    # bottom frame border
 
 
-def test_render_hero_covers_full_width_and_crosses_middle():
-    """Match Figma ref 3460-1390: the render device fills the canvas width
-    (its tips bleed off the left/right edges, slightly cropped) and crosses the
-    horizontal middle (y=300). That means fit=cover, a full-width rect, and a
-    rect band that spans the vertical centre — not a small contained object
-    floating in the upper half with side margins."""
+def test_render_hero_is_large_uncropped_and_crosses_middle():
+    """The render device must be LARGE (fills the full-width hero band and
+    crosses the horizontal middle y=300) but must NEVER be cropped — its tips
+    stay fully visible. That means fit=contain (no clipping) on a full-width
+    rect whose band spans the vertical centre. A near-square object then fills
+    the canvas width and crosses the middle while remaining whole; a flatter
+    object stays smaller but is still never cut."""
     manifest = load_manifest(MANIFEST)
     spec = manifest.templates["banner_300x600_render"]
     hero_layer = next(l for l in spec.layers if l.type == "hero_cutout")
-    # geometry: cover, full canvas width, band crosses y=300
-    assert hero_layer.fit == "cover"
+    # geometry: contain (never crops), full canvas width, band crosses y=300
+    assert hero_layer.fit == "contain"
     assert hero_layer.x == 0 and hero_layer.x + hero_layer.width == 300
     assert hero_layer.y < 300 < hero_layer.y + hero_layer.height
-    # behaviour: an opaque object reaches the inner edges AND the middle row
+    # behaviour: a near-square object fills the width and crosses the middle row
     hero = _solid_hero(200, 200, "#FF00FF")
     img = compose(spec, hero=hero, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
     magenta = (0xFF, 0x00, 0xFF)
     assert img.getpixel((12, 300))[:3] == magenta    # reaches just inside left frame
     assert img.getpixel((287, 300))[:3] == magenta   # reaches just inside right frame
     assert img.getpixel((150, 300))[:3] == magenta   # crosses the horizontal middle
+    # no-crop proof: a very wide-and-short object is letterboxed (full width
+    # shown, dead bands top/bottom) — never clipped at the sides.
+    wide = _solid_hero(300, 60, "#00FFAA")
+    img2 = compose(spec, hero=wide, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
+    teal = (0x00, 0xFF, 0xAA)
+    assert img2.getpixel((150, 210))[:3] == teal     # full object band centred in rect
+    assert img2.getpixel((12, 210))[:3] == teal      # left tip fully visible (not cut)
+    assert img2.getpixel((287, 210))[:3] == teal     # right tip fully visible (not cut)
 
 
 # ----- Per-line highlight + CTA background -----------------------------------
