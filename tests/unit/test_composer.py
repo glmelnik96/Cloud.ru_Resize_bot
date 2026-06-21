@@ -477,6 +477,28 @@ def test_render_banner_has_green_frame_and_header():
     assert img.getpixel((150, 595))[:3] == green    # bottom frame border
 
 
+def test_render_hero_covers_full_width_and_crosses_middle():
+    """Match Figma ref 3460-1390: the render device fills the canvas width
+    (its tips bleed off the left/right edges, slightly cropped) and crosses the
+    horizontal middle (y=300). That means fit=cover, a full-width rect, and a
+    rect band that spans the vertical centre — not a small contained object
+    floating in the upper half with side margins."""
+    manifest = load_manifest(MANIFEST)
+    spec = manifest.templates["banner_300x600_render"]
+    hero_layer = next(l for l in spec.layers if l.type == "hero_cutout")
+    # geometry: cover, full canvas width, band crosses y=300
+    assert hero_layer.fit == "cover"
+    assert hero_layer.x == 0 and hero_layer.x + hero_layer.width == 300
+    assert hero_layer.y < 300 < hero_layer.y + hero_layer.height
+    # behaviour: an opaque object reaches the inner edges AND the middle row
+    hero = _solid_hero(200, 200, "#FF00FF")
+    img = compose(spec, hero=hero, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
+    magenta = (0xFF, 0x00, 0xFF)
+    assert img.getpixel((12, 300))[:3] == magenta    # reaches just inside left frame
+    assert img.getpixel((287, 300))[:3] == magenta   # reaches just inside right frame
+    assert img.getpixel((150, 300))[:3] == magenta   # crosses the horizontal middle
+
+
 # ----- Per-line highlight + CTA background -----------------------------------
 
 

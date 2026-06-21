@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.4.1
+version: 0.4.2
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -206,6 +206,15 @@ Return ONLY valid JSON:
   varied scene directive per photo with ~1/3 people-free, so the system
   message must follow the chosen directive rather than default to one
   generic person. Pairs with the composer alpha-bbox crop.
+- v0.4.2 (2026-06-21) — photo feedback: scenes were good but too literal.
+  Reworked the per-banner photo directives (in the node) to carry a grounded,
+  evocative mood — calm/control (operator with coffee facing status screens;
+  hand on a trackpad at the frame edge), 24/7 reliability (single calm on-call
+  engineer in a night NOC), scalability (server aisle vanishing into deep
+  perspective), order (immaculate parallel fibre rows), readiness (uncluttered
+  desk at dawn). Still concrete documentary photography, not surreal/abstract
+  metaphor (brand-book ban holds). Render geometry (cover/full-width bleed
+  crossing the middle) lives in config/templates.json + the composer, not here.
 - v0.4.1 (2026-06-21) — render heroes came back too small (13-27% of the
   hero zone vs ~70% in Figma ref 3460-1390) and the brand green crystal
   rendered blue/clear (0% green vs 24% in ref). Render directive now

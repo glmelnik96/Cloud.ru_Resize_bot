@@ -81,33 +81,38 @@ _STYLE_DIRECTIVE_RENDER = (
 # "no people in the scene" (used by the composer-agnostic tests + as a clear
 # cue to App1). None of the photo variants mention 3D / isometric / green.
 _PHOTO_PEOPLE = (
-    "photo (an authentic candid photograph of a woman in her early 40s, a "
-    "senior engineer, in a real data-center aisle; cool ambient light, shallow "
-    "depth of field, shot waist-up; natural and human, not a staged metaphor)",
-    "photo (an authentic photograph of a man in his late 20s at a standing desk "
-    "in a bright open-plan office; soft daylight from a window, mid-shot, "
-    "relaxed and focused; documentary, not a contrived metaphor)",
-    "photo (an authentic over-the-shoulder photograph of an experienced "
-    "operator in his 50s facing a wall of monitors in a network operations "
-    "room; moody cool lighting, the person seen from behind; real and grounded)",
+    "photo (an authentic photograph of a calm operator standing with a coffee, "
+    "back turned to a softly glowing wall of status screens in a control room; "
+    "cool ambient light, seen from behind, unhurried — a quiet sense of "
+    "everything being under control)",
+    "photo (an authentic photograph of a single on-call engineer in a dim night "
+    "operations room, face lit softly by monitor glow, relaxed and unworried; "
+    "moody low light, mid-shot — the calm of reliable round-the-clock "
+    "infrastructure)",
+    "photo (an authentic close-up of a hand resting lightly on a laptop "
+    "trackpad at the very edge of the frame, the person soft and out of focus "
+    "behind; gentle daylight, shallow depth of field, 50mm — the feeling of "
+    "control right at your fingertips)",
     "photo (an authentic close-up portrait of a woman in her late 20s in a "
-    "modern startup loft; warm window light, friendly confident expression, "
-    "shallow depth of field, 50mm; real skin and texture)",
-    "photo (an authentic photograph of a focused professional at a laptop in a "
-    "calm home office, hands on the keyboard with the face out of frame; soft "
-    "daylight, intimate and real)",
+    "modern startup loft, a calm confident half-smile looking just off-camera; "
+    "warm window light, shallow depth of field, 50mm; real skin and texture)",
+    "photo (an authentic photograph of a man in his late 20s at a standing desk "
+    "in a bright open-plan office, unhurried and quietly focused; soft daylight "
+    "from a window, mid-shot — a relaxed, in-control workday)",
 )
 _PHOTO_NO_PEOPLE = (
-    "photo (an authentic still-life photograph of a tidy modern developer "
-    "workspace — a laptop and an external monitor showing soft out-of-focus "
-    "abstract dashboards, a coffee cup and a small plant; gentle daylight, "
-    "shallow depth of field, and no people in the scene)",
-    "photo (an authentic photograph of a real server-rack aisle in a data "
-    "center, rows of hardware with subtle status lights; cool ambient lighting, "
-    "deep perspective and shallow depth of field, and no people in the scene)",
-    "photo (an authentic macro photograph of clean networking hardware and "
-    "neatly routed fibre cables on a matte surface; soft directional light, "
-    "crisp detail with bokeh, and no people in the scene)",
+    "photo (an authentic photograph of a long data-center aisle of server racks "
+    "vanishing into deep perspective, subtle status lights receding into the "
+    "distance; cool ambient light, deep depth of field, and no people in the "
+    "scene — a sense of vast, scalable capacity)",
+    "photo (an authentic macro photograph of immaculately routed fibre-optic "
+    "cables in clean parallel rows on a matte surface, every strand in perfect "
+    "order; soft directional light, crisp detail with bokeh, and no people in "
+    "the scene — the calm of a perfectly ordered system)",
+    "photo (an authentic still-life of a calm, uncluttered desk at dawn — a "
+    "closed laptop and a single coffee, soft first light across the surface; "
+    "gentle daylight, shallow depth of field, and no people in the scene — a "
+    "quiet, ready, in-control start)",
 )
 
 
