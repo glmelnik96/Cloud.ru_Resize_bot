@@ -24,6 +24,7 @@ class TaskOut(BaseModel):
     task_uid: str
     workflow: str
     status: str
+    prompt: Optional[str] = None
     result_url: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[str] = None

@@ -125,6 +125,7 @@
     $("resultMsg").innerHTML = url
       ? `<a class="dl" href="${url}" download>⬇ Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
+    loadRecentTasks();
   }
   function onError(e) {
     if (es) es.close();
@@ -132,6 +133,7 @@
     let msg = "Сбой генерации.";
     try { msg = JSON.parse(e.data).message || msg; } catch {}
     $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+    loadRecentTasks();
   }
   function onCancelled(d) {
     if (es) es.close();
@@ -139,6 +141,7 @@
     hideHitl(); hide($("progressPanel"));
     $("briefStatus").textContent = d.reason === "timeout" ? "Время истекло, сессия отменена." : "Отменено.";
     show($("briefPanel")); $("startBtn").disabled = false;
+    loadRecentTasks();
   }
 
   // ── helpers ────────────────────────────────────────────
@@ -155,6 +158,48 @@
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ── recent tasks (history within the 24h retention window) ─
+  // GET /api/tasks does not carry an in-flight run's progress (that's what
+  // rehydrate() restores) — this list just makes finished creatives reachable
+  // again so a completed ZIP can be re-downloaded after a reload.
+  const STATUS_LABEL = {
+    queued: "В очереди", running: "В работе",
+    awaiting_text: "Ждёт решения", awaiting_image: "Ждёт картинку",
+    done: "Готово", failed: "Ошибка", cancelled: "Отменено",
+  };
+  function fmtDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+  }
+  function taskRow(t) {
+    const label = STATUS_LABEL[t.status] || t.status;
+    const title = escapeHtml(t.prompt || "(без названия)");
+    let action = "";
+    if (t.status === "done" && t.result_url) {
+      action = `<a class="task-dl" href="${P}${t.result_url}" download>⬇ ZIP</a>`;
+    } else if (t.status === "failed" && t.error) {
+      action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
+    }
+    return (
+      `<div class="task-row">` +
+      `<span class="task-title">${title}</span>` +
+      `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>` +
+      `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span>` +
+      `</div>`
+    );
+  }
+  async function loadRecentTasks() {
+    try {
+      const r = await fetch(`${P}/api/tasks`);
+      if (!r.ok) return;
+      const tasks = await r.json();
+      if (!tasks || !tasks.length) return;
+      $("tasksList").innerHTML = tasks.map(taskRow).join("");
+      show($("tasksPanel"));
+    } catch (_) { /* leave the panel hidden on any error */ }
   }
 
   // ── rehydrate active task on page load ─────────────────
@@ -202,4 +247,5 @@
   }
 
   rehydrate();
+  loadRecentTasks();
 })();

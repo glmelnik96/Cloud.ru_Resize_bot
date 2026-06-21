@@ -14,6 +14,7 @@ Skipped if CLOUDRU_API_KEY not set (real network calls — costs tokens).
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -23,14 +24,19 @@ from graph.builder import build_text_graph
 from graph.state import AdBrief, MessageCandidate, Persona, Verdict
 
 
-# interrupt() in async nodes works on Python 3.10 with langgraph>=1.2.6 (the
-# floor pinned in pyproject); 1.1.x regressed it ("Called get_config outside of
-# a runnable context"). This e2e resumes through the text-approve interrupt, so
-# it doubles as the regression guard for that bug — keep it runnable on 3.10.
+# interrupt() in async nodes needs Python 3.11+. On 3.10 langgraph's get_config()
+# hard-branches and the runnable-config contextvar isn't propagated into async
+# child nodes → "Called get_config outside of a runnable context" (Bug 1, prod).
+# The langgraph version does NOT change this — it's the Python floor. This e2e
+# resumes through the text-approve interrupt, so it guards that fix on 3.11+.
 pytestmark = [
     pytest.mark.skipif(
         not os.environ.get("CLOUDRU_API_KEY"),
         reason="CLOUDRU_API_KEY not set; graph pipeline test skipped",
+    ),
+    pytest.mark.skipif(
+        sys.version_info < (3, 11),
+        reason="interrupt() in async nodes requires Python 3.11+ (prod runs 3.11)",
     ),
 ]
 

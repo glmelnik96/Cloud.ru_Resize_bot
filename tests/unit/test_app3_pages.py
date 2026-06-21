@@ -59,6 +59,26 @@ def test_static_font_served(tmp_path, monkeypatch):
         assert r.content[:4] == b"wOF2"  # woff2 magic
 
 
+def test_index_has_recent_tasks_panel(tmp_path, monkeypatch):
+    """A finished run must stay reachable after a reload: the page carries a
+    'Последние креативы' panel that the JS fills from GET /api/tasks."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/", headers=_HDR).text
+        assert 'id="tasksPanel"' in html
+        assert 'id="tasksList"' in html
+        assert "Последние креативы" in html
+
+
+def test_creatives_js_loads_recent_tasks(tmp_path, monkeypatch):
+    """The served JS fetches the task list and renders the ZIP link so a
+    completed creative is re-downloadable within the 24h retention window."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "loadRecentTasks" in js  # fetch + render recent tasks on load
+        assert "tasksPanel" in js  # reveal the panel when there are tasks
+        assert "result_url" in js  # done rows expose the ZIP download
+
+
 def test_creatives_js_rehydrates_active_task(tmp_path, monkeypatch):
     """Canon-header nav is a full reload; the JS must restore an in-flight run:
     persist the uid, look it up (localStorage / GET /api/tasks), snapshot via

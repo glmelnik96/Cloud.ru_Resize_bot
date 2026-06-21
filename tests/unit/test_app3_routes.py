@@ -62,7 +62,7 @@ def test_list_and_get_task_isolation(tmp_path, monkeypatch):
         assert r2.status_code == 404
 
 
-def _seed_task(db_path, uid, status, user_id):
+def _seed_task(db_path, uid, status, user_id, **extra):
     """Insert a task row via a separate async engine to the same sqlite file
     (the TestClient runs the app loop in a worker thread, so we can't reuse
     its sessionmaker from the test thread)."""
@@ -79,7 +79,8 @@ def _seed_task(db_path, uid, status, user_id):
             async with async_sessionmaker(eng)() as s:
                 await s.execute(
                     insert(models.Task).values(
-                        task_uid=uid, user_id=user_id, workflow="creatives", status=status
+                        task_uid=uid, user_id=user_id, workflow="creatives",
+                        status=status, **extra,
                     )
                 )
                 await s.commit()
@@ -87,6 +88,24 @@ def _seed_task(db_path, uid, status, user_id):
             await eng.dispose()
 
     asyncio.run(_ins())
+
+
+def test_list_tasks_includes_prompt_and_result(tmp_path, monkeypatch):
+    """The recent-creatives list needs a human label (prompt) and the ZIP link
+    so a finished run is re-downloadable after a reload."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "done1", "done", me["id"],
+            prompt="Cloud.ru Evolution",
+            result_url="/results/done1/done1.zip",
+        )
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert len(rows) == 1
+        assert rows[0]["prompt"] == "Cloud.ru Evolution"
+        assert rows[0]["result_url"] == "/results/done1/done1.zip"
 
 
 def test_decision_text_409_when_not_awaiting(tmp_path, monkeypatch):

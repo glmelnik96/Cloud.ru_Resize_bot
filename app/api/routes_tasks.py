@@ -22,6 +22,7 @@ def _task_out(t: models.Task) -> TaskOut:
         task_uid=t.task_uid,
         workflow=t.workflow,
         status=t.status,
+        prompt=t.prompt,
         result_url=t.result_url,
         error=t.error,
         created_at=t.created_at.isoformat() if t.created_at else None,
