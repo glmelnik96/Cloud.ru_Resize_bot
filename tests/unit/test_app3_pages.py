@@ -115,5 +115,5 @@ def test_empty_prefix_serves_assets_and_api_at_root(tmp_path, monkeypatch):
         assert r.status_code == 200
         html = r.text
         assert 'href="/static/app.css?v=' in html
-        assert 'src="/static/creatives.js"' in html
+        assert 'src="/static/creatives.js?v=' in html
         assert 'window.APP_PREFIX = "";' in html
