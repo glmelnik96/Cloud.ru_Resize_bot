@@ -20,15 +20,15 @@ router = APIRouter(tags=["pages"])
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
-# Prefix the gateway mounts this sub-app under (for asset/link URLs in the page).
-_PREFIX = "/creatives"
-
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     user = await get_current_user(request)
+    # Prefix the gateway mounts this sub-app under (asset/API URLs in the page).
+    # Default "/creatives"; "" for a local run with no gateway.
+    prefix = (getattr(request.app.state, "settings", {}) or {}).get("prefix", "/creatives")
     return _TEMPLATES.TemplateResponse(
         request=request,
         name="creatives.html",
-        context={"email": user.email, "prefix": _PREFIX},
+        context={"email": user.email, "prefix": prefix},
     )

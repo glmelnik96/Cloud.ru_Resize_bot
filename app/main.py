@@ -137,6 +137,8 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
 
 def _resolve_settings(test_settings: dict | None) -> dict:
     base = {
+        "prefix": settings.prefix,
+        "dev_user": settings.dev_user,
         "db_url": settings.db_url,
         "results_dir": str(settings.results_dir),
         "tmp_root": str(settings.tmp_root),

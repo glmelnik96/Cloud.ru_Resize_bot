@@ -14,12 +14,12 @@ from app.main import create_app  # noqa: E402
 _HDR = {"X-User-Id": "3", "X-User-Email": "gleb@cloud.ru"}
 
 
-def _app(tmp_path, monkeypatch):
+def _app(tmp_path, monkeypatch, **extra):
     async def fake_init_graph(checkpoint_db):
         return object(), None
 
     monkeypatch.setattr(creatives_mod, "init_graph", fake_init_graph)
-    return create_app({"db_url": f"sqlite+aiosqlite:///{tmp_path / 'p.db'}"})
+    return create_app({"db_url": f"sqlite+aiosqlite:///{tmp_path / 'p.db'}", **extra})
 
 
 def test_index_requires_auth(tmp_path, monkeypatch):
@@ -57,3 +57,31 @@ def test_static_font_served(tmp_path, monkeypatch):
         r = c.get("/static/fonts/sb-sans-text-400.woff2")
         assert r.status_code == 200
         assert r.content[:4] == b"wOF2"  # woff2 magic
+
+
+# ── local-smoke dev affordances (no gateway) ────────────────────────
+
+
+def test_dev_user_allows_access_without_gateway_header(tmp_path, monkeypatch):
+    """APP3_DEV_USER set → the page renders without a gateway X-User-Id header."""
+    with TestClient(_app(tmp_path, monkeypatch, dev_user="gleb@cloud.ru")) as c:
+        r = c.get("/")  # no _HDR
+        assert r.status_code == 200
+        assert "gleb@cloud.ru" in r.text
+
+
+def test_no_dev_user_still_401_without_header(tmp_path, monkeypatch):
+    """Default (no dev user) → unauthenticated request is rejected as in prod."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        assert c.get("/").status_code == 401
+
+
+def test_empty_prefix_serves_assets_and_api_at_root(tmp_path, monkeypatch):
+    """APP3_PREFIX='' → assets/API resolve at root (local run without gateway)."""
+    with TestClient(_app(tmp_path, monkeypatch, prefix="")) as c:
+        r = c.get("/", headers=_HDR)
+        assert r.status_code == 200
+        html = r.text
+        assert 'href="/static/app.css"' in html
+        assert 'src="/static/creatives.js"' in html
+        assert 'window.APP_PREFIX = "";' in html

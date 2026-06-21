@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # --- gateway sub-app contract ---
     # Loopback bind port (informational; uvicorn is started with --port).
     port: int = Field(8013, alias="PORT")
+    # Section prefix the gateway mounts this sub-app under, used for the page's
+    # asset/API URLs. Default matches prod; set "" for a local run with no
+    # gateway (assets at /static, API at /api).
+    prefix: str = Field("/creatives", alias="APP3_PREFIX")
+    # Local-smoke dev auth: when set AND no gateway X-User-Id header is present,
+    # treat the request as this user (email). Empty (default) → prod behavior:
+    # missing header → 401. The gateway always injects the header in prod.
+    dev_user: str = Field("", alias="APP3_DEV_USER")
     # Own DB — isolated per App1 pattern; Task/User lifecycle (NOT graph state).
     db_url: str = Field("sqlite+aiosqlite:///./data/app3.db", alias="DB_URL")
     results_dir: Path = Field(ROOT / "data" / "results", alias="RESULTS_DIR")
