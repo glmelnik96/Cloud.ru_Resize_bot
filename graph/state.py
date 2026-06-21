@@ -132,15 +132,17 @@ class RankingSet(BaseModel):
 
 
 class ImageStyleChoice(BaseModel):
-    """Output of route_image_style — LLM classifier picks one of three visual styles.
+    """Output of route_image_style — LLM classifier picks one visual style.
 
-    Style vocabulary is fixed by Cloud.ru 2.0 brand book (see AGENTS.md §4):
+    Style vocabulary is fixed by Cloud.ru 2.0 brand book (see AGENTS.md §4).
+    The 12-banner redesign (2026-06-21) collapsed the prompt to two output
+    scenarios; legacy ``isometric`` is still accepted and folds into render via
+    route_image_style._to_scenario:
     - photo: real photography / staged scene
-    - render: 3D render, studio-lit object
-    - isometric: flat/isometric vector illustration
+    - render: 3D render, studio-lit object (isometric folds in here)
     """
 
-    style: str = Field(description="photo | render | isometric")
+    style: str = Field(description="photo | render (legacy: isometric -> render)")
     rationale: str = Field(description="Короткое обоснование выбора стиля под бриф")
 
 

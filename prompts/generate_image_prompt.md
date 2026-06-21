@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.2.0
+version: 0.3.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -50,35 +50,37 @@ OUTPUT REQUIREMENTS
 - rationale: one sentence, English, explaining why this composition
   fits the brief. Logged only, not shown to the user.
 
-THE PROMPT MUST READ LIKE AN ADVERTISING VISUAL, NOT A STOCK PHOTO
-The hero must visualise the SELLING MESSAGE of brief.product + the
-winner.hook_angle — not just a generic scene of the persona's office.
-Anchor it in a concrete, specific situation that a viewer would
-instantly read as "this picture is about <product benefit>".
+THE HERO MUST BE CONCRETE AND ON-BRAND, NOT ABSTRACT
+Stay close to the Cloud.ru reference look. Avoid abstract diagrams,
+clever conceptual metaphors, tangled-cable puzzles or surreal
+constructions — they read as confusing filler. The hero is a clean,
+recognisable subject that a viewer instantly understands.
 
-Examples of the kind of specificity expected:
-- A developer's hand pulling a single clean ribbon-cable out of a
-  tangled bundle (for "API без костылей" / removing complexity).
-- A perfectly-stacked tower of identical white server modules vs one
-  module being lifted out and replaced in a single motion (for fast
-  provisioning).
-- An isometric view of three parallel pipelines, each rendering the
-  same shape simultaneously (for parallel compute).
-Never settle for "a developer at a laptop" or "a clean office desk"
-unless that scene visibly carries the product metaphor.
+- PHOTO: a real, authentic photograph of a confident real person in a
+  genuine modern tech workplace (server room, office, studio). A
+  natural, human, documentary scene is exactly right — a real person
+  at work is the goal, not a contrived metaphor. Tie the setting
+  loosely to brief.product + winner.hook_angle, but keep it believable
+  and grounded, the way a real brand photo looks.
+- RENDER: the Cloud.ru product-render aesthetic — a single sleek
+  matte-metal isometric module or platform with one tasteful
+  centerpiece of translucent emerald-green tinted glass geometric
+  shapes (faceted hex / crystalline forms) resting on it. A premium,
+  recognisable object, not an abstract schematic.
 
 PROMPT MUST INCLUDE
-1. A concrete subject and situation tied to brief.product AND the
-   winner.hook_angle (per the examples above). Photo: real people or
-   objects in a staged scene. Render: a clean 3D product render of a
-   single object that embodies the metaphor, shown from an isometric
-   three-quarter viewpoint (~30-degree isometric angle), centered on a
-   plain studio backdrop so the background can later be cut out.
+1. A concrete subject tied to brief.product AND winner.hook_angle.
+   Photo: a real person in a believable tech workplace (per above).
+   Render: the brand metal isometric module with translucent
+   emerald-green geometric centerpiece, shown from a ~30-degree
+   three-quarter angle, centered on a plain studio backdrop so the
+   background can later be cut out.
 2. Style modifiers consistent with the chosen image_style category.
    Photo: natural light, documentary, shallow depth of field, 50mm
-   lens, slight grain. Render: 3D product render, isometric
-   three-quarter angle, studio lighting, soft shadow, matte materials,
-   octane-like, subtle ambient occlusion, plain seamless backdrop.
+   lens, slight grain, real skin and textures. Render: 3D product
+   render, isometric three-quarter angle, studio lighting, soft shadow,
+   matte metal + translucent green glass materials, octane-like, subtle
+   ambient occlusion, plain seamless backdrop.
 3. Composition guidance: the main subject biased toward the RIGHT or
    CENTER-RIGHT of the frame; leave the left third intentionally
    uncluttered with calm background tones (a slogan plate will sit
@@ -86,8 +88,12 @@ PROMPT MUST INCLUDE
    quiet — no important detail there).
 4. Mood and palette consistent with the persona and channel —
    muted neutrals, light greys, soft warm wood or matte studio
-   surfaces. NO bright lemon-green or saturated brand colours in
-   the image itself (the brand accent is added later by the composer).
+   surfaces. Photo: NO green or saturated brand colours in the scene
+   (the brand accent is added later by the composer). Render: a
+   restrained translucent emerald-green geometric centerpiece IS the
+   intended brand motif and is allowed, but keep the rest of the
+   render neutral metal/grey — no lemon-green (#CFF500), no flat green
+   highlight stripes, no brand logos.
 5. Atmosphere matching winner.hook_angle (rational → calm/analytical,
    emotional → warm/human, social_proof → group dynamic, direct_benefit
    → confident/clear, fear_of_missing_out → urgent/now, curiosity →
@@ -98,8 +104,10 @@ HARD RULES — NO BRAND ARTEFACTS IN THE IMAGE
   words, no UI overlays, no watermarks, no captions. Say so explicitly
   at the end of the prompt: "no text, no letters, no logos, no
   watermarks".
-- No lemon-green (#CFF500) accents, no Cloud.ru brand marks, no green
-  highlight stripes — those are added by the composer.
+- No lemon-green (#CFF500) accents, no Cloud.ru brand marks, no flat
+  green highlight stripes — those are added by the composer. (A render's
+  translucent emerald-green glass centerpiece is the one allowed
+  exception; photo scenes stay green-free.)
 - No frame, no border, no rectangular plate, no banner layout — the
   output must be a continuous scene, not a pre-composed ad mock.
 - No people if the chosen style is render or isometric.
@@ -170,3 +178,9 @@ Return ONLY valid JSON:
   the no-brand-artefacts rule explicit (no lemon-green accents, no
   pre-composed banner layout) since brand chrome is added by the
   composer downstream.
+- v0.3.0 (2026-06-21) — 12-banner redesign feedback: heroes came back
+  too abstract and off-reference. Steer photo to authentic real-person
+  tech-workplace scenes (not contrived metaphors) and render to the
+  Cloud.ru product look (matte-metal isometric module + translucent
+  emerald-green geometric centerpiece). Scoped the no-green rule to
+  photo so the render brand motif is allowed.

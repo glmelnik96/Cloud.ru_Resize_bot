@@ -24,6 +24,7 @@ from infra.template_manifest import (
     HeroCutoutLayer,
     HeroLayer,
     ImageLayer,
+    PatternDotsLayer,
     TemplateSpec,
     TextLayer,
 )
@@ -35,6 +36,45 @@ log = structlog.get_logger(__name__)
 _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 
 _ELLIPSIS = "\u2026"
+_NBSP = "\u00a0"
+
+# Russian prepositions / conjunctions / particles that must never end a line
+# ("висячие предлоги"). They are glued to the FOLLOWING word with a
+# non-breaking space so the wrapper keeps them together. Any 1-letter word is
+# glued too (covers "и", "а", "в", "с", "к", "о", "у", "я").
+_GLUE_WORDS = frozenset(
+    """
+    и а но да или либо то же бы ли не ни
+    в во с со к ко о об обо у из изо от ото до по на за над под при про
+    для без перед через между около кроме среди вокруг ради сквозь
+    что как так уже еще ещё вот лишь даже чем тем под
+    """.split()
+)
+
+
+def _apply_orphan_glue(text: str) -> str:
+    """Glue short prepositions/conjunctions (and any 1-letter word) to the next
+    word with a non-breaking space so they never get stranded at a line end."""
+    out_lines: list[str] = []
+    for paragraph in text.split("\n"):
+        tokens = paragraph.split()
+        if not tokens:
+            out_lines.append("")
+            continue
+        glued: list[str] = []
+        i = 0
+        n = len(tokens)
+        while i < n:
+            tok = tokens[i]
+            is_glue = (len(tok) == 1 and tok.isalpha()) or tok.lower() in _GLUE_WORDS
+            if is_glue and i + 1 < n:
+                glued.append(tok + _NBSP + tokens[i + 1])
+                i += 2
+            else:
+                glued.append(tok)
+                i += 1
+        out_lines.append(" ".join(glued))
+    return "\n".join(out_lines)
 
 
 def _font_path(family: str, weight: str) -> Path:
@@ -78,7 +118,9 @@ def _wrap_to_width(
     outside the rect."""
     out: list[str] = []
     for paragraph in text.split("\n"):
-        words = paragraph.split()
+        # Split on regular spaces only; non-breaking spaces (orphan glue) stay
+        # inside their word so glued prepositions never wrap to a line end.
+        words = [w for w in paragraph.split(" ") if w]
         if not words:
             out.append("")
             continue
@@ -132,6 +174,7 @@ def _fit_text(
     truncated=True.
     """
     fp = _font_path(layer.font_family, layer.font_weight)
+    text = _apply_orphan_glue(text)
     sizes = (
         range(layer.font_size_max, (layer.font_size_min or layer.font_size_max) - 1, -1)
         if layer.font_size_min
@@ -265,6 +308,27 @@ def _draw_hero_cutout_layer(
     canvas.alpha_composite(resized, (x, y))
 
 
+def _hex_rgb(color: str) -> tuple[int, int, int]:
+    c = color.lstrip("#")
+    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+
+
+def _draw_pattern_dots(canvas: Image.Image, layer: PatternDotsLayer) -> None:
+    """Tile a dot grid over the rect, alpha-composited so it stays subtle."""
+    overlay = Image.new("RGBA", (layer.width, layer.height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    fill = (*_hex_rgb(layer.color), layer.alpha)
+    d = layer.dot_size
+    y = 0
+    while y < layer.height:
+        x = 0
+        while x < layer.width:
+            draw.rectangle((x, y, x + d - 1, y + d - 1), fill=fill)
+            x += layer.spacing_x
+        y += layer.spacing_y
+    canvas.alpha_composite(overlay, (layer.x, layer.y))
+
+
 def _draw_frame_layer(canvas: Image.Image, layer: FrameLayer) -> None:
     """Draw a solid border of `thickness` around the layer rect; interior is
     left untouched so the body / hero show through."""
@@ -353,9 +417,14 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
         y = y0 + i * line_h
         line_geom.append((x, y, line))
 
-    # Pass 1: all per-line highlight plates.
+    # Pass 1: all per-line highlight plates (+ optional underline). Drawn on a
+    # transparent overlay so a sub-255 alpha lets the photo show through.
     if layer.per_line_highlight is not None:
         h = layer.per_line_highlight
+        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        odraw = ImageDraw.Draw(overlay)
+        plate_fill = (*_hex_rgb(h.color), h.alpha)
+        # Sub-pass A: all plates.
         for x, y, line in line_geom:
             if not line.strip():
                 continue
@@ -367,9 +436,27 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
                 y + text_h + h.padding_y,
             )
             if h.radius > 0:
-                draw.rounded_rectangle(box, radius=h.radius, fill=h.color)
+                odraw.rounded_rectangle(box, radius=h.radius, fill=plate_fill)
             else:
-                draw.rectangle(box, fill=h.color)
+                odraw.rectangle(box, fill=plate_fill)
+        # Sub-pass B: all underlines, drawn after every plate so a following
+        # line's plate can never paint over the previous line's underline.
+        if h.underline_color and h.underline_height > 0:
+            for x, y, line in line_geom:
+                if not line.strip():
+                    continue
+                line_w = font.getlength(line)
+                uy0 = y + text_h + h.padding_y + h.underline_gap
+                odraw.rectangle(
+                    (
+                        x - h.padding_x,
+                        uy0,
+                        x + line_w + h.padding_x,
+                        uy0 + h.underline_height,
+                    ),
+                    fill=_hex_rgb(h.underline_color),
+                )
+        canvas.alpha_composite(overlay)
 
     # Pass 2: all text glyphs (on top of any plates).
     for x, y, line in line_geom:
@@ -418,6 +505,8 @@ def compose(
     for _, layer in layers:
         if isinstance(layer, ImageLayer):
             _draw_image_layer(canvas, layer, assets_root=assets_root)
+        elif isinstance(layer, PatternDotsLayer):
+            _draw_pattern_dots(canvas, layer)
         elif isinstance(layer, FrameLayer):
             _draw_frame_layer(canvas, layer)
         elif isinstance(layer, GradientLayer):

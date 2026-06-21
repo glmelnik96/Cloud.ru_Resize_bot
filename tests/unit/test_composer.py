@@ -16,13 +16,14 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from infra.composer import _fit_text, _wrap_to_width, compose
+from infra.composer import _apply_orphan_glue, _fit_text, _wrap_to_width, compose
 from infra.template_manifest import (
     BoxBackground,
     FrameLayer,
     GradientLayer,
     HeroLayer,
     ImageLayer,
+    PatternDotsLayer,
     PerLineHighlight,
     TemplateSpec,
     TextLayer,
@@ -77,6 +78,54 @@ def test_wrap_breaks_overlong_word_mixed_with_normal():
     max_width = 200
     lines = _wrap_to_width("ок " + "x" * 80, font, max_width)
     assert all(font.getlength(ln) <= max_width for ln in lines)
+
+
+# ----- Orphan-preposition glue ------------------------------------------------
+
+_NBSP = "\u00a0"
+
+
+def test_orphan_glue_binds_one_letter_word():
+    """Single-letter words (и, в, с, к...) are glued to the FOLLOWING word with
+    a non-breaking space so they never get stranded at a line end."""
+    assert _apply_orphan_glue("Разработка и тестирование") == (
+        f"Разработка и{_NBSP}тестирование"
+    )
+
+
+def test_orphan_glue_binds_listed_preposition():
+    """Multi-letter prepositions/conjunctions from the glue set bind too."""
+    assert _apply_orphan_glue("Облако для работы") == f"Облако для{_NBSP}работы"
+
+
+def test_orphan_glue_chain_of_short_words():
+    """A run of short words each glue forward: 'для работы с GenAI'."""
+    assert _apply_orphan_glue("Облако для работы с GenAI") == (
+        f"Облако для{_NBSP}работы с{_NBSP}GenAI"
+    )
+
+
+def test_orphan_glue_trailing_glue_word_left_alone():
+    """A glue word with no following token can't bind — left as-is, no crash."""
+    assert _apply_orphan_glue("работаем в") == "работаем в"
+
+
+def test_orphan_glue_preserves_newlines():
+    assert _apply_orphan_glue("Разработка и\nтест в облаке") == (
+        f"Разработка и\nтест в{_NBSP}облаке"
+    )
+
+
+def test_orphan_glue_keeps_glued_pair_on_one_line():
+    """The glued NBSP pair must wrap as a single unit: a short width that would
+    otherwise strand 'в' at a line end keeps 'в облаке' together."""
+    font = ImageFont.truetype(str(FONT_DIR / "SBSansDisplay-Semibold.otf"), 30)
+    glued = _apply_orphan_glue("Разработка в облаке")
+    lines = _wrap_to_width(glued, font, 170)
+    # no line may end with a bare one-letter glue word
+    for ln in lines:
+        last = ln.split(" ")[-1]
+        assert last != "в", f"orphan preposition stranded in {lines!r}"
 
 
 # ----- Auto-shrink ------------------------------------------------------------
@@ -466,3 +515,138 @@ def test_cta_background_drawn():
     # corner of cta rect should be CFF500
     r, g, b, _ = img.getpixel((12, 12))
     assert r > 200 and g > 200 and b < 100  # roughly lemon
+
+
+# ----- Pattern dots -----------------------------------------------------------
+
+
+def test_pattern_dots_tiles_grid_with_gaps():
+    """Dots are drawn on a spacing_x/spacing_y grid: a pixel at the grid origin
+    is the dot color, a pixel in the gap between dots stays background."""
+    spec = TemplateSpec(
+        width=40,
+        height=40,
+        background_color="#222222",
+        layers=[
+            PatternDotsLayer(
+                type="pattern_dots",
+                x=0,
+                y=0,
+                width=40,
+                height=40,
+                color="#3D3D3D",
+                dot_size=2,
+                spacing_x=10,
+                spacing_y=10,
+                z=5,
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={}, assets_root=REPO_ROOT)
+    dot = (0x3D, 0x3D, 0x3D)
+    bg = (0x22, 0x22, 0x22)
+    # first dot at the rect origin
+    assert img.getpixel((0, 0))[:3] == dot
+    # next dot one spacing over
+    assert img.getpixel((10, 10))[:3] == dot
+    # mid-gap pixel untouched
+    assert img.getpixel((5, 5))[:3] == bg
+
+
+def test_pattern_dots_clipped_to_rect():
+    """Dots only fill the layer rect; pixels outside the rect stay background."""
+    spec = TemplateSpec(
+        width=40,
+        height=40,
+        background_color="#222222",
+        layers=[
+            PatternDotsLayer(
+                type="pattern_dots",
+                x=10,
+                y=10,
+                width=20,
+                height=20,
+                color="#3D3D3D",
+                dot_size=2,
+                spacing_x=10,
+                spacing_y=10,
+                z=5,
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={}, assets_root=REPO_ROOT)
+    bg = (0x22, 0x22, 0x22)
+    # above-left of the rect: no dots
+    assert img.getpixel((2, 2))[:3] == bg
+    # inside the rect at its local origin: a dot
+    assert img.getpixel((10, 10))[:3] == (0x3D, 0x3D, 0x3D)
+
+
+# ----- Per-line underline (two-pass) ------------------------------------------
+
+
+def test_underline_survives_next_line_plate():
+    """Regression: the underline under a SHORT line must NOT be painted over by
+    the next, WIDER line's plate. A short line followed by a wider line with a
+    tight line_height makes the wide plate fully cover the short underline under
+    single-pass drawing (only the wide line's own underline would survive -> 2
+    bands). Drawing all plates first and all underlines second keeps every
+    underline -> 3 bands. Green plate + red underline; count red bands."""
+    spec = TemplateSpec(
+        width=200,
+        height=140,
+        background_color="#FFFFFF",
+        layers=[
+            TextLayer(
+                type="text",
+                slot="slogan",
+                x=10,
+                y=10,
+                width=180,
+                height=120,
+                font_family="SBSansDisplay",
+                font_weight="Semibold",
+                font_size_max=28,
+                line_height=0.95,
+                color="#000000",
+                align_h="left",
+                align_v="top",
+                max_lines=3,
+                per_line_highlight=PerLineHighlight(
+                    color="#00FF00",
+                    padding_x=4,
+                    padding_y=0,
+                    underline_color="#FF0000",
+                    underline_height=2,
+                    underline_gap=1,
+                ),
+            ),
+        ],
+    )
+    img = compose(
+        spec,
+        hero=None,
+        texts={"slogan": "ок\nдлиннаястрока\nок"},
+        assets_root=REPO_ROOT,
+    )
+    pixels = img.load()
+    # Rows that contain underline-red. Under single-pass drawing, line 2's
+    # plate would bury line 1's underline, leaving only ONE red band; the
+    # two-pass order must yield TWO distinct bands (one per line).
+    red_rows = []
+    for y in range(img.height):
+        if any(
+            pixels[x, y][0] > 200 and pixels[x, y][1] < 60 and pixels[x, y][2] < 60
+            for x in range(img.width)
+        ):
+            red_rows.append(y)
+    bands = 0
+    prev = None
+    for y in red_rows:
+        if prev is None or y - prev > 2:
+            bands += 1
+        prev = y
+    assert bands == 3, (
+        f"expected 3 underline bands (one per line), got {bands} "
+        f"-> a short line's underline was painted over by the next wider plate"
+    )

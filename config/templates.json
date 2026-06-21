@@ -8,11 +8,25 @@
       "background_color": "#222222",
       "layers": [
         {
+          "type": "pattern_dots",
+          "name": "dots",
+          "x": 10,
+          "y": 50,
+          "width": 280,
+          "height": 540,
+          "color": "#3A3A3A",
+          "dot_size": 2,
+          "spacing_x": 11,
+          "spacing_y": 10,
+          "alpha": 255,
+          "z": 5
+        },
+        {
           "type": "hero_cutout",
           "name": "hero",
-          "x": 16,
-          "y": 56,
-          "width": 268,
+          "x": 14,
+          "y": 60,
+          "width": 272,
           "height": 300,
           "fit": "contain",
           "anchor_h": "center",
@@ -92,22 +106,9 @@
           "x": 0,
           "y": 50,
           "width": 300,
-          "height": 526,
+          "height": 550,
           "fit": "cover",
           "z": 10
-        },
-        {
-          "type": "gradient",
-          "name": "scrim",
-          "x": 0,
-          "y": 300,
-          "width": 300,
-          "height": 276,
-          "color": "#000000",
-          "from_alpha": 0,
-          "to_alpha": 190,
-          "direction": "vertical",
-          "z": 20
         },
         {
           "type": "image",
@@ -120,44 +121,42 @@
           "z": 100
         },
         {
-          "type": "image",
-          "name": "footer",
-          "path": "assets/brand/creatives/footer_300x24.png",
-          "x": 0,
-          "y": 576,
-          "width": 300,
-          "height": 24,
-          "z": 100
-        },
-        {
           "type": "text",
           "slot": "slogan",
           "x": 14,
-          "y": 336,
+          "y": 300,
           "width": 272,
-          "height": 150,
+          "height": 158,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 40,
-          "font_size_min": 26,
-          "line_height": 1.02,
-          "color": "#FFFFFF",
+          "font_size_max": 30,
+          "font_size_min": 22,
+          "line_height": 1.33,
+          "color": "#222222",
           "align_h": "left",
           "align_v": "bottom",
           "max_lines": 3,
+          "per_line_highlight": {
+            "color": "#26D07C",
+            "padding_x": 6,
+            "padding_y": 0,
+            "underline_color": "#222222",
+            "underline_height": 2,
+            "underline_gap": 1
+          },
           "z": 30
         },
         {
           "type": "text",
           "slot": "subtitle",
           "x": 14,
-          "y": 488,
+          "y": 470,
           "width": 272,
-          "height": 24,
+          "height": 28,
           "font_family": "SBSansText",
           "font_weight": "Regular",
-          "font_size_max": 12,
-          "font_size_min": 9,
+          "font_size_max": 11,
+          "font_size_min": 8,
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "middle",
@@ -168,7 +167,7 @@
           "type": "text",
           "slot": "cta",
           "x": 16,
-          "y": 532,
+          "y": 528,
           "width": 268,
           "height": 44,
           "font_family": "SBSansDisplay",
@@ -183,6 +182,16 @@
             "radius": 4
           },
           "z": 40
+        },
+        {
+          "type": "image",
+          "name": "footer",
+          "path": "assets/brand/creatives/footer_legal_300x14.png",
+          "x": 0,
+          "y": 586,
+          "width": 300,
+          "height": 14,
+          "z": 100
         }
       ]
     }

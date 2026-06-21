@@ -20,12 +20,25 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class PerLineHighlight(BaseModel):
-    """Rectangle drawn behind each text line, width follows the line itself."""
+    """Rectangle drawn behind each text line, width follows the line itself.
+
+    Optionally an underline stroke is drawn under each line (the photo banner
+    slogan has a green plate + a white underline). ``alpha`` lets the plate be
+    semi-transparent so the photo shows through (alpha-composited, not a flat
+    fill)."""
 
     color: str = Field(description="Fill color, e.g. '#222222'")
     padding_x: int = 0
     padding_y: int = 0
     radius: int = 0
+    alpha: int = Field(default=255, ge=0, le=255)
+    underline_color: str | None = None
+    underline_height: int = Field(default=0, ge=0)
+    underline_gap: int = Field(
+        default=0,
+        description="Vertical gap between the glyph baseline box and the "
+        "underline stroke.",
+    )
 
 
 class BoxBackground(BaseModel):
@@ -105,6 +118,25 @@ class HeroCutoutLayer(BaseModel):
         description="If False, a cutout smaller than the rect is not "
         "enlarged (avoids blurring small portraits).",
     )
+    z: int = 0
+
+
+class PatternDotsLayer(BaseModel):
+    """Tiled dot grid drawn over a rect (the render banner's subtle texture on
+    the dark body). Dots are ``dot_size`` px squares spaced ``spacing_x`` /
+    ``spacing_y`` apart, in ``color`` at ``alpha`` opacity."""
+
+    type: Literal["pattern_dots"]
+    name: str | None = None
+    x: int
+    y: int
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    color: str = "#3D3D3D"
+    dot_size: int = Field(default=2, gt=0)
+    spacing_x: int = Field(default=11, gt=0)
+    spacing_y: int = Field(default=10, gt=0)
+    alpha: int = Field(default=255, ge=0, le=255)
     z: int = 0
 
 
@@ -204,7 +236,13 @@ class TextLayer(BaseModel):
 
 
 Layer = Annotated[
-    ImageLayer | HeroLayer | HeroCutoutLayer | FrameLayer | GradientLayer | TextLayer,
+    ImageLayer
+    | HeroLayer
+    | HeroCutoutLayer
+    | PatternDotsLayer
+    | FrameLayer
+    | GradientLayer
+    | TextLayer,
     Field(discriminator="type"),
 ]
 

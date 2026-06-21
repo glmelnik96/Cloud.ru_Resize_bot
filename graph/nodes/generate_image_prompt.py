@@ -54,11 +54,18 @@ _VALID_STYLES = {"photo", "render"}
 # banners. Photo stays a plain full-scene cue.
 _STYLE_DIRECTIVE = {
     "render": (
-        "render (a clean 3D product render shown from an isometric "
-        "three-quarter viewpoint, ~30-degree isometric angle, single object "
-        "centered on a plain studio backdrop so the background can be cut out)"
+        "render (a premium 3D product render in the Cloud.ru brand style: a "
+        "single sleek matte-metal isometric module or platform shown from a "
+        "~30-degree three-quarter angle, with one tasteful centerpiece of "
+        "translucent emerald-green tinted glass geometric shapes resting on "
+        "it; clean soft studio lighting on a plain backdrop so the background "
+        "can be cut out — a recognisable object, not an abstract diagram)"
     ),
-    "photo": "photo",
+    "photo": (
+        "photo (an authentic, real photograph of a confident real person in a "
+        "genuine modern tech workplace — server room, office, or studio — "
+        "naturally lit and human, not a staged abstract metaphor)"
+    ),
 }
 
 _WORD_MIN = 40

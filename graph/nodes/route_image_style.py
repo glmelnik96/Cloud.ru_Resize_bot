@@ -44,6 +44,31 @@ log = structlog.get_logger(__name__)
 _AGENT_ID = "route_image_style"
 _SKILL_NAME = "route_image_style"
 
+# The 12-banner set must always carry SOME photo banners: the art-director
+# classifier skews to render for technical audiences (render = isometric device
+# render), which would route all 12 to render and lose the photo scenario the
+# redesign requires. If fewer than MIN_PHOTO photos come back, the lowest-ranked
+# render propositions are flipped to photo (top-ranked picks are preserved).
+MIN_PHOTO = 4
+
+
+def _ensure_min_photo(scenarios: list[str]) -> list[str]:
+    """Guarantee at least MIN_PHOTO photo scenarios by flipping the worst-ranked
+    render propositions (end of the best-first list) to photo. No-op when the
+    classifier already produced enough photos, or when there aren't enough
+    candidates to reach the quota."""
+    out = list(scenarios)
+    quota = min(MIN_PHOTO, len(out))
+    if out.count("photo") >= quota:
+        return out
+    # Flip render -> photo from the tail (worst-ranked) until the quota is met.
+    for i in range(len(out) - 1, -1, -1):
+        if out.count("photo") >= quota:
+            break
+        if out[i] == "render":
+            out[i] = "photo"
+    return out
+
 
 def _to_scenario(raw: str) -> str:
     """Collapse the classifier's verdict into a brand banner scenario.
@@ -81,16 +106,21 @@ async def route_image_style(state: GraphState) -> dict:
             for cand in candidates
         )
     )
-    scenarios = list(scenarios)
+    raw_scenarios = list(scenarios)
+    scenarios = _ensure_min_photo(raw_scenarios)
 
+    flipped = sum(1 for a, b in zip(raw_scenarios, scenarios) if a != b)
     log.info(
         "route_image_style_ok",
         session_id=session_id,
         n=len(scenarios),
         render=scenarios.count("render"),
         photo=scenarios.count("photo"),
+        flipped_to_photo=flipped,
     )
-    return {"scenarios": scenarios, "image_style": scenarios[0]}
+    # image_style keeps the top-ranked CLASSIFIER pick (it's never flipped, since
+    # flips start from the tail) so the HITL display matches the art direction.
+    return {"scenarios": scenarios, "image_style": raw_scenarios[0]}
 
 
 async def _classify_one(

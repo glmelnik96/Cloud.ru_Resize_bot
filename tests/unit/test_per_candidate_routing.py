@@ -115,6 +115,43 @@ async def test_route_scenarios_unknown_falls_back_photo(monkeypatch):
     assert set(out["scenarios"]) == {"photo"}
 
 
+@pytest.mark.asyncio
+async def test_route_guarantees_photo_when_classifier_all_render(monkeypatch):
+    """The art-director classifier skews to render for technical audiences; the
+    redesign demands SOME photo banners among the 12. When the classifier
+    returns all-render, the node must flip the lowest-ranked propositions to
+    photo so at least MIN_PHOTO photos exist. Top-ranked picks are preserved."""
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        return ImageStyleChoice(style="render", rationale="x")
+
+    monkeypatch.setattr(ris, "run_agent", fake_run_agent)
+    out = await ris.route_image_style(_state())  # type: ignore[arg-type]
+    scenarios = out["scenarios"]
+    assert len(scenarios) == 12
+    assert scenarios.count("photo") >= ris.MIN_PHOTO
+    assert scenarios.count("render") >= 1  # not everything flipped
+    # the flips land at the tail (worst-ranked); the top stays render
+    assert scenarios[0] == "render"
+    assert out["image_style"] == "render"  # top-ranked still its classifier pick
+
+
+@pytest.mark.asyncio
+async def test_route_does_not_flip_when_enough_photo(monkeypatch):
+    """If the classifier already yields >= MIN_PHOTO photos, nothing is flipped:
+    the per-candidate verdicts are respected verbatim."""
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        user = messages[1]["content"]
+        idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
+        style = "photo" if idx % 2 == 0 else "render"
+        return ImageStyleChoice(style=style, rationale="x")
+
+    monkeypatch.setattr(ris, "run_agent", fake_run_agent)
+    out = await ris.route_image_style(_state())  # type: ignore[arg-type]
+    assert out["scenarios"] == [
+        "photo" if i % 2 == 0 else "render" for i in range(12)
+    ]
+
+
 # ----- generate_image_prompt: 12 prompts -----------------------------------
 
 
