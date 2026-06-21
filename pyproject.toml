@@ -2,7 +2,7 @@
 name = "resize-bot"
 version = "0.1.0"
 description = "Audience-driven ad generation Telegram bot — Cloud.ru FM + user-uploaded hero + PIL template composer (M3.3)"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 readme = "HANDOFF.md"
 
 # Shared core: the LangGraph /new pipeline, Cloud.ru FM client, PIL composer.
@@ -51,7 +51,7 @@ web = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
