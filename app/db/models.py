@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -34,6 +34,30 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tasks: Mapped[list["Task"]] = relationship(back_populates="user")
+
+
+class UsageEvent(Base):
+    """Append-only usage log (cross-app contract 2026-06-22). One row per
+    completed creatives operation; identity comes from the gateway headers.
+    Retention NEVER touches this table — it is anonymised (no files, no full
+    prompt; meta holds only safe whitelisted params)."""
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+    app: Mapped[str] = mapped_column(String(16), index=True)  # creatives
+    gateway_user_id: Mapped[Optional[str]] = mapped_column(
+        String(64), index=True, nullable=True
+    )
+    email: Mapped[str] = mapped_column(String(255), default="", index=True)
+    event: Mapped[str] = mapped_column(String(32))  # variant
+    workflow: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # done|failed|cancelled
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class Task(Base):

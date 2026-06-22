@@ -23,6 +23,7 @@ from typing import Any, Optional
 import structlog
 from sqlalchemy import func, select
 
+from app import usage
 from app.db import models
 from app.services.hero_gen import HeroGenerator, HeroGenUnavailable, NullHeroGenerator
 from app.tasks.events import EventBus
@@ -378,7 +379,8 @@ class CreativesService:
 
         result_url = self._collect_results(task_uid, final)
         await reporter.done(result_url=result_url)
-        await self._finish(task_uid, "done", result_url=result_url)
+        meta = {"ratios": ["300x600"], "count": len(final.get("rendered_files") or [])}
+        await self._finish(task_uid, "done", result_url=result_url, meta=meta)
         log.info("task_done", task_uid=task_uid, result_url=result_url)
 
     def _collect_results(self, task_uid: str, final: dict) -> Optional[str]:
@@ -471,6 +473,7 @@ class CreativesService:
         *,
         result_url: Optional[str] = None,
         error: Optional[str] = None,
+        meta: Optional[dict[str, Any]] = None,
     ) -> None:
         async with self.Session() as s:
             res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
@@ -481,4 +484,13 @@ class CreativesService:
             task.result_url = result_url
             task.error = error
             task.finished_at = datetime.now(timezone.utc)
+            # Append-only usage log (one row per terminal status). Best-effort:
+            # a logging failure must never break task completion.
+            try:
+                user = await s.get(models.User, task.user_id)
+                await usage.log_creative_usage(
+                    s, task=task, user=user, status=status, meta=meta or {}
+                )
+            except Exception:  # noqa: BLE001
+                log.warning("usage_log_failed", task_uid=task_uid, exc_info=True)
             await s.commit()
