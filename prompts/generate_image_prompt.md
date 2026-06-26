@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.4.2
+version: 0.5.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -62,19 +62,26 @@ recognisable subject that a viewer instantly understands.
   may instead be a people-free scene (a workspace, hardware, a server
   aisle) when the chosen style directive asks for one. VARY the scene:
   do not default every photo to the same person/age/framing. Follow the
-  specifics of the chosen style directive (demographics, framing,
-  setting, with/without people). Tie the setting loosely to
-  brief.product + winner.hook_angle, kept believable and grounded.
-- RENDER: the Cloud.ru product-render aesthetic — a single large,
-  chunky, roughly-square matte-metal isometric module or platform that
-  fills most of the frame and reads big and bold. Resting on it is a
-  BIG, bright, vivid emerald-and-lime green translucent faceted glass
-  crystal (faceted hex / crystalline forms) — the dominant glowing focal
-  hero, about a third of the object, unmistakably green, NEVER blue, grey
-  or clear. A premium, recognisable object, not an abstract schematic.
-  Keep only a small even margin on every side so the object stays fully
-  visible and is never cropped or touching an edge, on a plain seamless
-  backdrop, so its background can be removed cleanly.
+  subject, action and mood of the chosen style directive (with/without
+  people). Describe ONLY subject + action + setting + mood — leave the
+  palette, film stock, lens, depth of field and lighting UNSPECIFIED. A
+  separate brand photo enhancer adds the grade (Kodak Portra look, cool
+  base + warm skin), the lens / depth of field, the lighting and the
+  single green environmental accent, so do not prescribe them here. Tie
+  the setting loosely to brief.product + winner.hook_angle, kept
+  believable and grounded.
+- RENDER: a single concrete three-dimensional object or device that
+  embodies the proposition's idea (the metaphor made tangible), shown in
+  an isometric view from a ~30-degree three-quarter angle, the one
+  dominant subject. Describe ONLY its form, the metaphor and the angle —
+  leave its colour, material, finish and lighting UNSPECIFIED. A separate
+  brand render enhancer adds all of that (the brand-green accent,
+  materials, studio look), so do not prescribe metal, glass, a green
+  crystal, a backdrop or lighting here; over-specifying them fights the
+  enhancer. Keep only a small even margin on every side so the object
+  stays fully visible and is never cropped or touching an edge, so its
+  background can be removed cleanly. A recognisable object, not an
+  abstract schematic.
 
 PROMPT MUST INCLUDE
 1. A concrete subject tied to brief.product AND winner.hook_angle.
@@ -83,31 +90,28 @@ PROMPT MUST INCLUDE
    hardware scene when the directive says so. Match its demographics,
    framing and setting; never reuse the same generic person across
    banners.
-   Render: a large chunky roughly-square brand metal isometric module
-   filling most of the frame, topped by a BIG bright vivid emerald-and-
-   lime green translucent crystal centerpiece (the dominant focal hero,
-   never blue/grey/clear), shown from a ~30-degree three-quarter angle,
-   fully visible with a small even margin on a plain studio backdrop so
-   the background can later be cut out.
-2. Style modifiers consistent with the chosen image_style category.
-   Photo: natural light, documentary, shallow depth of field, 50mm
-   lens, slight grain, real skin and textures. Render: 3D product
-   render, isometric three-quarter angle, studio lighting, soft shadow,
-   matte metal + translucent green glass materials, octane-like, subtle
-   ambient occlusion, plain seamless backdrop.
+   Render: a single concrete 3D object/device embodying the proposition's
+   idea, shown from a ~30-degree isometric three-quarter angle, fully
+   visible and centered with a small even margin so the background can
+   later be cut out. Leave colour, material, finish and lighting
+   unspecified — the brand enhancer adds them.
+2. Style modifiers consistent with the chosen image_style category, but
+   ONLY the ones the brand enhancer does not own. Photo: name the subject,
+   action, setting and mood (the enhancer adds the grade, lens and light).
+   Render: name the object form and the isometric three-quarter angle (the
+   enhancer adds the materials, colour, finish and lighting). Do not list
+   film stock, lens, depth of field, metal/glass materials or lighting.
 3. Composition guidance: the main subject biased toward the RIGHT or
    CENTER-RIGHT of the frame; leave the left third intentionally
    uncluttered with calm background tones (a slogan plate will sit
    on top of it at compose time, so that area must remain visually
    quiet — no important detail there).
-4. Mood and palette consistent with the persona and channel —
-   muted neutrals, light greys, soft warm wood or matte studio
-   surfaces. Photo: NO green or saturated brand colours in the scene
-   (the brand accent is added later by the composer). Render: a
-   restrained translucent emerald-green geometric centerpiece IS the
-   intended brand motif and is allowed, but keep the rest of the
-   render neutral metal/grey — no lemon-green (#CFF500), no flat green
-   highlight stripes, no brand logos.
+4. Mood matching the persona and channel. Do NOT prescribe a palette or
+   brand colours — the brand enhancer (and the composer) own colour.
+   Photo: NO green or saturated brand colours in the scene. Render: do
+   not name any colour (not green, not metal-grey) — leave it to the
+   enhancer; no lemon-green (#CFF500), no flat green highlight stripes,
+   no brand logos.
 5. Atmosphere matching winner.hook_angle (rational → calm/analytical,
    emotional → warm/human, social_proof → group dynamic, direct_benefit
    → confident/clear, fear_of_missing_out → urgent/now, curiosity →
@@ -119,9 +123,9 @@ HARD RULES — NO BRAND ARTEFACTS IN THE IMAGE
   at the end of the prompt: "no text, no letters, no logos, no
   watermarks".
 - No lemon-green (#CFF500) accents, no Cloud.ru brand marks, no flat
-  green highlight stripes — those are added by the composer. (A render's
-  translucent emerald-green glass centerpiece is the one allowed
-  exception; photo scenes stay green-free.)
+  green highlight stripes — those are added by the composer. Do not name
+  the brand-green accent at all in either scenario; the brand enhancer
+  places it.
 - No frame, no border, no rectangular plate, no banner layout — the
   output must be a continuous scene, not a pre-composed ad mock.
 - No people if the chosen style is render or isometric.
@@ -181,6 +185,20 @@ Return ONLY valid JSON:
 
 ## Changelog
 
+- v0.5.0 (2026-06-26) — directive de-duplication. App1 runs its own brand
+  render/photo enhancers (AMPLIFIERS that add ALL styling: the green accent,
+  materials, finish, isometric/3D look, studio lighting for render; the Kodak
+  Portra grade, lens, depth of field, lighting and the single green
+  environmental accent for photo). The node directives and this system message
+  used to duplicate and override that work, so every render looked identical
+  (the forced "big green crystal" even rendered blue/clear, fighting the
+  enhancer's small restrained #25D07B accent). Stripped both directives and the
+  RENDER/PHOTO bullets to carry ONLY what the enhancer can't invent: render =
+  the metaphor "device" + isometric ~30° angle + cutout positioning; photo =
+  subject + action + setting + mood + people/no-people marker. Colour, material,
+  finish, lighting, palette, film stock, lens and depth of field are now left
+  unspecified. (Composer change pairs with this: the render frame gained the
+  reference's broken/stepped corner tabs.)
 - v0.1.0 (2026-06-05) — M3.3 initial. Separate post-winner node
   replacing the bundled image-prompt field on MessageCandidate. EN
   output because the prompt is consumed by image generators, not by

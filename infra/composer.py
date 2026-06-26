@@ -356,6 +356,11 @@ def _draw_frame_layer(canvas: Image.Image, layer: FrameLayer) -> None:
     draw.rectangle((x0, y1 - t, x1, y1), fill=layer.color)            # bottom
     draw.rectangle((x0, y0, x0 + t, y1), fill=layer.color)            # left
     draw.rectangle((x1 - t, y0, x1, y1), fill=layer.color)            # right
+    # corner tabs that thicken the frame so it reads 'broken'/stepped
+    for tab in layer.tabs:
+        draw.rectangle(
+            (tab.x, tab.y, tab.x + tab.width, tab.y + tab.height), fill=layer.color
+        )
 
 
 def _draw_gradient_layer(canvas: Image.Image, layer: GradientLayer) -> None:

@@ -48,71 +48,69 @@ _SKILL_NAME = "generate_image_prompt"
 
 _VALID_STYLES = {"photo", "render"}
 
-# The downstream hero generator (App1 `render` scenario) produces a 3D product
-# render, not an isometric line-art. To get the isometric LOOK the brand wants,
-# we bake an explicit isometric viewpoint into the EN prompt itself for render
-# banners.
-#
-# OBJECT POSITIONING IS PINNED IN THE PROMPT (not just the composer). The
-# composer crops the cutout to its alpha bbox, but it cannot recover an object
-# that App1 generated touching/cropped by a frame edge (Photoroom then slices
-# it). So the render directive explicitly demands a single, fully-visible,
-# centered object with generous even margins — that is what makes the 12 render
-# cutouts come back consistently framed.
+# The downstream hero generator (App1 `render` scenario) runs its own brand
+# render enhancer — an AMPLIFIER that adds ALL the styling (the brand-green
+# accent, materials, finish, studio lighting, the 3D/isometric brand look). Our
+# directive must therefore carry ONLY what the enhancer can't invent for us:
+#   1. the conceptual "device" (the per-banner metaphor, derived by the model
+#      from the proposition's hook), expressed as one concrete object;
+#   2. the isometric ~30-degree three-quarter angle (the brand viewpoint);
+#   3. positioning for a clean cutout — a single fully-visible, centered object
+#      with generous even margins (the composer crops to the alpha bbox but
+#      can't recover an object App1 generated touching/cropped at an edge).
+# Everything else (colour, green accent, material, lighting, backdrop) is left
+# UNSPECIFIED on purpose — prescribing it here fights the enhancer (the old
+# "big green crystal" demand kept rendering blue/clear because the enhancer adds
+# only a small restrained #25D07B accent, never a dominant crystal).
 _STYLE_DIRECTIVE_RENDER = (
-    "render (a premium 3D product render in the Cloud.ru brand style: a single "
-    "large, chunky, roughly-square isometric module or platform shown from a "
-    "~30-degree three-quarter angle, the dominant subject that fills most of the "
-    "frame and reads big and bold. Resting on top of it is a BIG, bright, vivid "
-    "emerald-and-lime green translucent faceted glass crystal centerpiece — the "
-    "clear glowing focal hero of the image, large (about a third of the object) "
-    "and unmistakably green, NEVER blue, grey or clear glass. Clean soft studio "
-    "lighting on a plain seamless light backdrop. Keep only a small, even margin "
-    "of empty background on every side so the whole object is fully visible and "
-    "never cropped or touching an edge, letting the background be removed "
-    "cleanly — a recognisable object, not an abstract diagram)"
+    "render (express this proposition's core idea as ONE single concrete "
+    "three-dimensional object or device — the metaphor made tangible — shown in "
+    "an isometric view from a ~30-degree three-quarter angle. Make it the one "
+    "dominant subject, fully visible and centered with a generous even margin of "
+    "empty space on every side so nothing touches or is cropped by an edge and "
+    "the background can be removed cleanly. Describe only the object's form, the "
+    "metaphor and the angle; leave its colour, material, finish and lighting "
+    "unspecified — a recognisable object, not an abstract diagram)"
 )
 
 # Photo banners must NOT all be the same stock "confident man in an office".
-# We vary the scene per banner (demographics / framing / setting) and make ~1/3
-# of them people-free (objects, workspaces, hardware) for subject variety. The
-# variant is chosen deterministically by the photo's position so a run stays
+# We vary the scene per banner (subject / setting / mood) and make ~1/3 of them
+# people-free (objects, workspaces, hardware) for subject variety. The variant
+# is chosen deterministically by the photo's position so a run stays
 # reproducible. Each people-free variant carries the literal marker
 # "no people in the scene" (used by the composer-agnostic tests + as a clear
-# cue to App1). None of the photo variants mention 3D / isometric / green.
+# cue to App1).
+#
+# Like the render directive, these carry ONLY subject + action (the mood
+# metaphor), the framing intent and the people/no-people marker. App1's photo
+# enhancer is an AMPLIFIER that adds the palette (Kodak Portra grade, cool base
+# + warm skin), the lens / depth of field, the lighting and the single green
+# environmental accent — so prescribing any of that here is duplication. None
+# of the photo variants mention 3D / isometric / green.
 _PHOTO_PEOPLE = (
-    "photo (an authentic photograph of a calm operator standing with a coffee, "
-    "back turned to a softly glowing wall of status screens in a control room; "
-    "cool ambient light, seen from behind, unhurried — a quiet sense of "
-    "everything being under control)",
-    "photo (an authentic photograph of a single on-call engineer in a dim night "
-    "operations room, face lit softly by monitor glow, relaxed and unworried; "
-    "moody low light, mid-shot — the calm of reliable round-the-clock "
-    "infrastructure)",
-    "photo (an authentic close-up of a hand resting lightly on a laptop "
-    "trackpad at the very edge of the frame, the person soft and out of focus "
-    "behind; gentle daylight, shallow depth of field, 50mm — the feeling of "
-    "control right at your fingertips)",
-    "photo (an authentic close-up portrait of a woman in her late 20s in a "
-    "modern startup loft, a calm confident half-smile looking just off-camera; "
-    "warm window light, shallow depth of field, 50mm; real skin and texture)",
-    "photo (an authentic photograph of a man in his late 20s at a standing desk "
-    "in a bright open-plan office, unhurried and quietly focused; soft daylight "
-    "from a window, mid-shot — a relaxed, in-control workday)",
+    "photo (a calm operator standing with a coffee, back turned to a wall of "
+    "status screens in a control room, seen from behind, unhurried — a quiet "
+    "sense of everything being under control)",
+    "photo (a single on-call engineer at the monitors in a night operations "
+    "room, relaxed and unworried, a mid-shot — the calm of reliable round-the-"
+    "clock infrastructure)",
+    "photo (a close-up of a hand resting lightly on a laptop trackpad at the "
+    "very edge of the frame, the person soft behind — the feeling of control "
+    "right at your fingertips)",
+    "photo (a portrait of a woman in her late 20s in a modern startup space, a "
+    "calm confident half-smile — quietly in command)",
+    "photo (a man in his late 20s at a standing desk in an open-plan office, "
+    "unhurried and quietly focused, a mid-shot — a relaxed, in-control workday)",
 )
 _PHOTO_NO_PEOPLE = (
-    "photo (an authentic photograph of a long data-center aisle of server racks "
-    "vanishing into deep perspective, subtle status lights receding into the "
-    "distance; cool ambient light, deep depth of field, and no people in the "
-    "scene — a sense of vast, scalable capacity)",
-    "photo (an authentic macro photograph of immaculately routed fibre-optic "
-    "cables in clean parallel rows on a matte surface, every strand in perfect "
-    "order; soft directional light, crisp detail with bokeh, and no people in "
-    "the scene — the calm of a perfectly ordered system)",
-    "photo (an authentic still-life of a calm, uncluttered desk at dawn — a "
-    "closed laptop and a single coffee, soft first light across the surface; "
-    "gentle daylight, shallow depth of field, and no people in the scene — a "
-    "quiet, ready, in-control start)",
+    "photo (a long data-center aisle of server racks vanishing into deep "
+    "perspective, status lights receding into the distance, and no people in "
+    "the scene — a sense of vast, scalable capacity)",
+    "photo (immaculately routed fibre-optic cables in clean parallel rows, "
+    "every strand in perfect order, a tight macro, and no people in the scene "
+    "— the calm of a perfectly ordered system)",
+    "photo (a calm, uncluttered desk at dawn — a closed laptop and a single "
+    "coffee, and no people in the scene — a quiet, ready, in-control start)",
 )
 
 

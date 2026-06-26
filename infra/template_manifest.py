@@ -140,13 +140,26 @@ class PatternDotsLayer(BaseModel):
     z: int = 0
 
 
+class FrameTab(BaseModel):
+    """A solid-colour rectangle painted in the frame colour, on top of the thin
+    border. Used to thicken specific corners so the frame reads 'broken'/stepped
+    (the Cloud.ru render banner has a thick top-left and bottom-right tab)."""
+
+    x: int
+    y: int
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
 class FrameLayer(BaseModel):
     """Solid-colour border drawn around a rect (interior untouched).
 
     The Cloud.ru creatives 300x600 render banner frames the dark body with a
     10px green border. ``thickness`` is the border width in px; the interior
     (rect inset by thickness) is left transparent so the body / hero show
-    through.
+    through. ``tabs`` are extra filled rectangles in the frame colour that
+    thicken chosen corners — the reference frame is not an even rectangle but
+    has a heavy top-left and bottom-right tab ('broken'/stepped look).
     """
 
     type: Literal["frame"]
@@ -157,6 +170,7 @@ class FrameLayer(BaseModel):
     height: int = Field(gt=0)
     thickness: int = Field(gt=0)
     color: str = Field(description="Border fill, e.g. '#26D07C'")
+    tabs: list[FrameTab] = Field(default_factory=list)
     z: int = 0
 
 

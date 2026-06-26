@@ -477,6 +477,26 @@ def test_render_banner_has_green_frame_and_header():
     assert img.getpixel((150, 595))[:3] == green    # bottom frame border
 
 
+def test_render_frame_has_broken_corner_tabs():
+    """The reference frame (Figma 3460-1390) is not an even rectangle: it has
+    two diagonal thick green tabs — top-left (x0-140, y40-70) and bottom-right
+    (x160-300, y570-600) — that make it read 'broken'/stepped. The thin 10px
+    border alone leaves the interior dark there; the tabs must paint green deep
+    inside those two corners."""
+    manifest = load_manifest(MANIFEST)
+    spec = manifest.templates["banner_300x600_render"]
+    hero = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    img = compose(spec, hero=hero, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
+    green = (0x26, 0xD0, 0x7C)
+    # top-left tab interior (below the 50px header, beyond the 10px border)
+    assert img.getpixel((70, 60))[:3] == green
+    # bottom-right tab interior (beyond the 10px border, above the bottom bar)
+    assert img.getpixel((250, 580))[:3] == green
+    # the OPPOSITE corners stay thin: no tab, interior is the dark body there
+    assert img.getpixel((70, 580))[:3] != green   # bottom-left stays thin
+    assert img.getpixel((250, 60))[:3] != green    # top-right stays thin
+
+
 def test_render_hero_is_large_uncropped_and_crosses_middle():
     """The render device must be LARGE (fills the full-width hero band and
     crosses the horizontal middle y=300) but must NEVER be cropped — its tips

@@ -279,6 +279,37 @@ async def test_one_third_of_photos_have_no_people(monkeypatch):
     assert not any("no people in the scene" in u for u in render_users)
 
 
+def test_render_directive_delegates_styling_to_app1():
+    """The render directive must carry ONLY the metaphor 'device', the isometric
+    angle and the positioning for a clean cutout. Materials, colour (the brand
+    green accent), finish and lighting are added by App1's render enhancer, so
+    the directive must NOT prescribe them — over-specifying them here fights the
+    enhancer (e.g. the forced 'big green crystal' kept rendering blue/clear)."""
+    low = gip._STYLE_DIRECTIVE_RENDER.lower()
+    # keeps: isometric angle + positioning (cutout pins)
+    assert "isometric" in low
+    assert "center" in low and "margin" in low
+    # drops: brand styling the App1 enhancer owns
+    for banned in ("crystal", "emerald", "lime", "green", "metal", "glass",
+                   "studio lighting", "matte", "backdrop"):
+        assert banned not in low, f"render directive must not prescribe {banned!r}"
+
+
+def test_photo_directives_delegate_styling_to_app1():
+    """Photo directives must carry ONLY subject + action (the mood metaphor),
+    framing intent and the people/no-people marker. Palette, film stock, lens,
+    depth of field, lighting and the green accent are added by App1's photo
+    enhancer — the directive must not duplicate them."""
+    for d in gip._PHOTO_PEOPLE + gip._PHOTO_NO_PEOPLE:
+        low = d.lower()
+        for banned in ("kodak", "portra 400", "50mm", "35mm", "85mm", "f/1.8",
+                       "depth of field", "ambient light", "window light",
+                       "directional light", "bokeh", "grain", "#25d07b"):
+            assert banned not in low, f"photo directive must not prescribe {banned!r}: {d}"
+    # the people-free variants still carry the literal cutting marker
+    assert all("no people in the scene" in d for d in gip._PHOTO_NO_PEOPLE)
+
+
 @pytest.mark.asyncio
 async def test_render_directive_fixes_object_positioning(monkeypatch):
     """The render directive sent to App1 must pin object positioning (fully

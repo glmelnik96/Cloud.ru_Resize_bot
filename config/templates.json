@@ -43,6 +43,10 @@
           "height": 560,
           "thickness": 10,
           "color": "#26D07C",
+          "tabs": [
+            { "x": 0, "y": 40, "width": 140, "height": 30 },
+            { "x": 160, "y": 570, "width": 140, "height": 30 }
+          ],
           "z": 20
         },
         {
