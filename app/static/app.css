@@ -161,3 +161,14 @@ textarea:focus,select:focus,input[type="text"]:focus{outline:none;border-color:v
   padding:6px 13px;border-radius:var(--r-sm);font-weight:600;font-size:13px;transition:background .15s;}
 .task-dl:hover{background:var(--accent-2);}
 .task-err{font-size:12px;color:var(--danger);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.retention-note{font-size:12px;color:var(--muted);margin:0 0 10px;}
+.task-row.is-expandable{cursor:pointer;}
+.task-row.is-expandable .task-title::before{content:"\25B8";display:inline-block;margin-right:7px;
+  color:var(--muted);transition:transform .12s;}
+.task-row.is-open .task-title::before{transform:rotate(90deg);}
+.task-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;
+  padding:10px 4px 4px;}
+.task-thumb{display:block;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;
+  transition:border-color .12s;}
+.task-thumb:hover{border-color:var(--accent-line);}
+.task-thumb img{display:block;width:100%;height:auto;}

@@ -17,7 +17,20 @@ from app.services.creatives import CapacityError
 router = APIRouter(prefix="/api", tags=["tasks"])
 
 
-def _task_out(t: models.Task) -> TaskOut:
+def _task_images(t: models.Task, results_dir: Path | None) -> list[str]:
+    """Banner PNGs of a finished run, derived from disk (self-healing: after
+    the 24h retention purge the dir is gone → empty list, no broken links).
+    Zero-padded names (01_photo, 02_render, …) sort into banner order; the ZIP
+    is excluded."""
+    if t.status != "done" or results_dir is None:
+        return []
+    task_dir = results_dir / t.task_uid
+    if not task_dir.is_dir():
+        return []
+    return [f"/results/{t.task_uid}/{p.name}" for p in sorted(task_dir.glob("*.png"))]
+
+
+def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
     return TaskOut(
         task_uid=t.task_uid,
         workflow=t.workflow,
@@ -26,7 +39,13 @@ def _task_out(t: models.Task) -> TaskOut:
         result_url=t.result_url,
         error=t.error,
         created_at=t.created_at.isoformat() if t.created_at else None,
+        images=_task_images(t, results_dir),
     )
+
+
+def _results_dir(request: Request) -> Path | None:
+    service = getattr(request.app.state, "creatives", None)
+    return getattr(service, "results_dir", None)
 
 
 @router.post("/tasks")
@@ -53,7 +72,8 @@ async def list_tasks(request: Request):
             .order_by(models.Task.id.desc())
             .limit(100)
         )
-        return [_task_out(t) for t in res.scalars().all()]
+        results_dir = _results_dir(request)
+        return [_task_out(t, results_dir) for t in res.scalars().all()]
 
 
 @router.get("/tasks/{uid}")
@@ -65,7 +85,7 @@ async def get_task(uid: str, request: Request):
         task = res.scalar_one_or_none()
         if task is None or task.user_id != user.id:
             raise HTTPException(404, "task not found")
-        return _task_out(task)
+        return _task_out(task, _results_dir(request))
 
 
 async def _load_owned(request: Request, uid: str, user) -> models.Task:

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260621v6">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260626v7">
 </head>
 <body>
   <header class="topbar">
@@ -87,11 +87,12 @@
     <!-- 6. recent tasks (history within the 24h retention window) -->
     <section class="panel hidden" id="tasksPanel">
       <h2>Последние креативы</h2>
+      <p class="retention-note">История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
       <div class="task-list" id="tasksList"></div>
     </section>
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260621v6"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260626v7"></script>
 </body>
 </html>

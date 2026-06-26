@@ -108,6 +108,66 @@ def test_list_tasks_includes_prompt_and_result(tmp_path, monkeypatch):
         assert rows[0]["result_url"] == "/results/done1/done1.zip"
 
 
+def _app_with_results(tmp_path, monkeypatch, results_dir):
+    async def fake_init_graph(checkpoint_db):
+        return object(), None
+
+    monkeypatch.setattr(creatives_mod, "init_graph", fake_init_graph)
+    return create_app(
+        {
+            "db_url": f"sqlite+aiosqlite:///{tmp_path / 'r.db'}",
+            "results_dir": str(results_dir),
+        }
+    )
+
+
+def test_list_tasks_includes_banner_images(tmp_path, monkeypatch):
+    """A finished run exposes its individual banner PNGs (sorted, ZIP excluded)
+    so the history grid can render them without a second request."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        d = results / "done1"
+        d.mkdir(parents=True)
+        # intentionally out of order on disk; zero-padded names sort correctly
+        for name in ["02_render.png", "01_photo.png", "03_photo.png"]:
+            (d / name).write_bytes(b"\x89PNG")
+        (d / "done1.zip").write_bytes(b"PK\x03\x04")  # ZIP must NOT appear
+        _seed_task(db, "done1", "done", me["id"], result_url="/results/done1/done1.zip")
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert rows[0]["images"] == [
+            "/results/done1/01_photo.png",
+            "/results/done1/02_render.png",
+            "/results/done1/03_photo.png",
+        ]
+
+
+def test_list_tasks_images_empty_for_non_done(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "run1", "running", me["id"])
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert rows[0]["images"] == []
+
+
+def test_list_tasks_images_empty_after_files_purged(tmp_path, monkeypatch):
+    """Files are derived from disk, so after 24h retention purge the grid is
+    empty rather than showing broken links."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "gone1", "done", me["id"], result_url="/results/gone1/gone1.zip")
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert rows[0]["images"] == []
+
+
 def test_decision_text_409_when_not_awaiting(tmp_path, monkeypatch):
     db = tmp_path / "r.db"
     app = _app(tmp_path, monkeypatch, graph_ok=True)

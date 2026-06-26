@@ -79,6 +79,30 @@ def test_creatives_js_loads_recent_tasks(tmp_path, monkeypatch):
         assert "result_url" in js  # done rows expose the ZIP download
 
 
+def test_index_shows_retention_notice_from_config(tmp_path, monkeypatch):
+    """The history panel tells the user how long runs are kept; the number is
+    derived from RETENTION_TTL_SEC, not hard-coded."""
+    with TestClient(_app(tmp_path, monkeypatch, retention_ttl_sec=7200)) as c:
+        html = c.get("/", headers=_HDR).text
+        assert "2 ч" in html  # 7200s // 3600 = 2 hours
+        assert "удаляются" in html
+
+
+def test_index_retention_notice_defaults_to_24h(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/", headers=_HDR).text
+        assert "24 ч" in html
+
+
+def test_creatives_js_renders_banner_grid(tmp_path, monkeypatch):
+    """Finished task rows expand into a grid of their banner images; clicking a
+    thumbnail opens the full-size PNG in a new tab."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "images" in js  # consume the per-task image URLs
+        assert "task-grid" in js  # the expandable grid container
+
+
 def test_creatives_js_rehydrates_active_task(tmp_path, monkeypatch):
     """Canon-header nav is a full reload; the JS must restore an in-flight run:
     persist the uid, look it up (localStorage / GET /api/tasks), snapshot via

@@ -188,22 +188,52 @@
     const d = new Date(iso);
     return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
   }
+  // Per-task banner URLs, kept out of the DOM so the grid's <img> elements are
+  // built lazily on first expand (a full history of 100×12 images at once would
+  // hammer the DOM and the network).
+  const imagesByUid = {};
   function taskRow(t) {
     const label = STATUS_LABEL[t.status] || t.status;
     const title = escapeHtml(t.prompt || "(без названия)");
+    const imgs = Array.isArray(t.images) ? t.images : [];
+    const expandable = imgs.length > 0;
+    if (expandable) imagesByUid[t.task_uid] = imgs;
     let action = "";
     if (t.status === "done" && t.result_url) {
       action = `<a class="task-dl" href="${P}${t.result_url}" download>⬇ ZIP</a>`;
     } else if (t.status === "failed" && t.error) {
       action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
     }
+    const cls = expandable ? "task-row is-expandable" : "task-row";
+    const uidAttr = expandable ? ` data-uid="${escapeHtml(t.task_uid)}"` : "";
+    const grid = expandable
+      ? `<div class="task-grid hidden" data-grid="${escapeHtml(t.task_uid)}"></div>`
+      : "";
     return (
-      `<div class="task-row">` +
+      `<div class="${cls}"${uidAttr}>` +
       `<span class="task-title">${title}</span>` +
       `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>` +
       `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span>` +
-      `</div>`
+      `</div>` + grid
     );
+  }
+  // Build the thumbnail grid the first time its row is opened; each thumb links
+  // to the full-size PNG opened in a new tab.
+  function fillGrid(grid, uid) {
+    const imgs = imagesByUid[uid] || [];
+    grid.innerHTML = imgs.map((u, i) =>
+      `<a class="task-thumb" href="${P}${u}" target="_blank" rel="noopener">` +
+      `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy"></a>`
+    ).join("");
+  }
+  function toggleGrid(row) {
+    const uid = row.getAttribute("data-uid");
+    if (!uid) return;
+    const grid = row.parentElement.querySelector(`[data-grid="${uid}"]`);
+    if (!grid) return;
+    if (grid.classList.contains("hidden") && !grid.childElementCount) fillGrid(grid, uid);
+    grid.classList.toggle("hidden");
+    row.classList.toggle("is-open");
   }
   async function loadRecentTasks() {
     try {
@@ -215,6 +245,13 @@
       show($("tasksPanel"));
     } catch (_) { /* leave the panel hidden on any error */ }
   }
+  // Delegated: a click on an expandable row toggles its banner grid (clicks on
+  // the ZIP link / thumbnails keep their own default behaviour).
+  $("tasksList").addEventListener("click", (ev) => {
+    if (ev.target.closest("a")) return;
+    const row = ev.target.closest(".task-row.is-expandable");
+    if (row) toggleGrid(row);
+  });
 
   // ── rehydrate active task on page load ─────────────────
   // Canon-header navigation is a full reload that drops JS state + the

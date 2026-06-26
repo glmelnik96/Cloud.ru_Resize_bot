@@ -1,7 +1,7 @@
 """Pydantic response/request schemas for the App3 API."""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,7 @@ class TaskOut(BaseModel):
     result_url: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[str] = None
+    images: List[str] = Field(default_factory=list)
 
 
 class TextDecisionIn(BaseModel):
