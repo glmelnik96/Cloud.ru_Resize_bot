@@ -188,16 +188,29 @@
     const d = new Date(iso);
     return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
   }
-  // Per-task banner URLs, kept out of the DOM so the grid's <img> elements are
-  // built lazily on first expand (a full history of 100×12 images at once would
-  // hammer the DOM and the network).
+  // Per-task banner URLs + brief, kept out of the DOM so the grid's <img>
+  // elements are built lazily on first expand (a full history of 100×12 images
+  // at once would hammer the DOM and the network).
   const imagesByUid = {};
+  const briefByUid = {};
+  const BRIEF_LABELS = {
+    product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
+  };
+  const fileNameOf = (u) => String(u).split("/").pop();
+  function briefHtml(brief) {
+    if (!brief) return "";
+    const rows = Object.keys(BRIEF_LABELS)
+      .filter((k) => brief[k])
+      .map((k) => `<div class="kv"><b>${BRIEF_LABELS[k]}:</b> ${escapeHtml(brief[k])}</div>`)
+      .join("");
+    return rows ? `<div class="task-brief">${rows}</div>` : "";
+  }
   function taskRow(t) {
     const label = STATUS_LABEL[t.status] || t.status;
     const title = escapeHtml(t.prompt || "(без названия)");
     const imgs = Array.isArray(t.images) ? t.images : [];
     const expandable = imgs.length > 0;
-    if (expandable) imagesByUid[t.task_uid] = imgs;
+    if (expandable) { imagesByUid[t.task_uid] = imgs; briefByUid[t.task_uid] = t.brief || {}; }
     let action = "";
     if (t.status === "done" && t.result_url) {
       action = `<a class="task-dl" href="${P}${t.result_url}" download>⬇ ZIP</a>`;
@@ -217,14 +230,17 @@
       `</div>` + grid
     );
   }
-  // Build the thumbnail grid the first time its row is opened; each thumb links
-  // to the full-size PNG opened in a new tab.
+  // Build the brief + thumbnail grid the first time its row is opened. Each
+  // thumb carries an index (→ lightbox) and its own download link.
   function fillGrid(grid, uid) {
     const imgs = imagesByUid[uid] || [];
-    grid.innerHTML = imgs.map((u, i) =>
-      `<a class="task-thumb" href="${P}${u}" target="_blank" rel="noopener">` +
-      `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy"></a>`
+    const thumbs = imgs.map((u, i) =>
+      `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
+      `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy">` +
+      `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
+      `title="Скачать баннер ${i + 1}">⬇</a></figure>`
     ).join("");
+    grid.innerHTML = briefHtml(briefByUid[uid]) + `<div class="task-thumbs">${thumbs}</div>`;
   }
   function toggleGrid(row) {
     const uid = row.getAttribute("data-uid");
@@ -245,12 +261,67 @@
       show($("tasksPanel"));
     } catch (_) { /* leave the panel hidden on any error */ }
   }
-  // Delegated: a click on an expandable row toggles its banner grid (clicks on
-  // the ZIP link / thumbnails keep their own default behaviour).
+  // Delegated: download links keep their default; a thumbnail opens the
+  // lightbox; an expandable row header toggles its grid.
   $("tasksList").addEventListener("click", (ev) => {
-    if (ev.target.closest("a")) return;
+    if (ev.target.closest("a")) return; // ZIP + per-thumb download links
+    const thumb = ev.target.closest(".task-thumb");
+    if (thumb) { openLightbox(thumb.dataset.uid, +thumb.dataset.idx); return; }
     const row = ev.target.closest(".task-row.is-expandable");
     if (row) toggleGrid(row);
+  });
+
+  // ── lightbox gallery ───────────────────────────────────
+  // Page through a task's banners full-size without leaving the page.
+  let lbUid = null, lbIdx = 0;
+  function ensureLightbox() {
+    let lb = $("lightbox");
+    if (lb) return lb;
+    lb = document.createElement("div");
+    lb.id = "lightbox";
+    lb.className = "lightbox hidden";
+    lb.innerHTML =
+      `<button class="lb-close" data-lb="close" aria-label="Закрыть">×</button>` +
+      `<button class="lb-nav lb-prev" data-lb="prev" aria-label="Назад">‹</button>` +
+      `<img id="lbImg" class="lb-img" alt="">` +
+      `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
+      `<div class="lb-bar"><span id="lbCount"></span>` +
+      `<a id="lbDl" class="lb-dl" download>⬇ Скачать</a></div>`;
+    document.body.appendChild(lb);
+    lb.addEventListener("click", (ev) => {
+      const act = ev.target.getAttribute("data-lb");
+      if (act === "next") lbNav(1);
+      else if (act === "prev") lbNav(-1);
+      else if (act === "close" || ev.target === lb) closeLightbox();
+    });
+    return lb;
+  }
+  function renderLightbox() {
+    const imgs = imagesByUid[lbUid] || [];
+    const u = imgs[lbIdx];
+    if (!u) return;
+    $("lbImg").src = `${P}${u}`;
+    $("lbImg").alt = `Баннер ${lbIdx + 1}`;
+    $("lbCount").textContent = `${lbIdx + 1} / ${imgs.length}`;
+    const dl = $("lbDl"); dl.href = `${P}${u}`; dl.download = fileNameOf(u);
+  }
+  function openLightbox(uid, idx) {
+    lbUid = uid; lbIdx = idx || 0;
+    ensureLightbox(); renderLightbox(); show($("lightbox"));
+  }
+  function closeLightbox() { const lb = $("lightbox"); if (lb) hide(lb); }
+  function lbNav(delta) {
+    const imgs = imagesByUid[lbUid] || [];
+    if (!imgs.length) return;
+    lbIdx = (lbIdx + delta + imgs.length) % imgs.length;
+    renderLightbox();
+  }
+  document.addEventListener("keydown", (ev) => {
+    const lb = $("lightbox");
+    if (!lb || lb.classList.contains("hidden")) return;
+    if (ev.key === "ArrowRight") lbNav(1);
+    else if (ev.key === "ArrowLeft") lbNav(-1);
+    else if (ev.key === "Escape") closeLightbox();
   });
 
   // ── rehydrate active task on page load ─────────────────

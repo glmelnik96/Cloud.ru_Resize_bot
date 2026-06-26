@@ -95,12 +95,23 @@ def test_index_retention_notice_defaults_to_24h(tmp_path, monkeypatch):
 
 
 def test_creatives_js_renders_banner_grid(tmp_path, monkeypatch):
-    """Finished task rows expand into a grid of their banner images; clicking a
-    thumbnail opens the full-size PNG in a new tab."""
+    """Finished task rows expand into a grid of their banner images with the
+    original brief, per-thumb download, and a swipeable lightbox."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
         assert "images" in js  # consume the per-task image URLs
         assert "task-grid" in js  # the expandable grid container
+        assert "brief" in js  # show the brief fields on expand
+        assert "download" in js  # per-thumbnail download affordance
+        assert "lightbox" in js  # gallery overlay to page through banners
+
+
+def test_creatives_js_lightbox_navigation(tmp_path, monkeypatch):
+    """The lightbox can page between banners (prev/next + keyboard)."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "ArrowRight" in js  # keyboard paging
+        assert "ArrowLeft" in js
 
 
 def test_creatives_js_rehydrates_active_task(tmp_path, monkeypatch):

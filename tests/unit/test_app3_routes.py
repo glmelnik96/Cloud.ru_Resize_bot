@@ -144,6 +144,42 @@ def test_list_tasks_includes_banner_images(tmp_path, monkeypatch):
         ]
 
 
+def test_list_tasks_exposes_brief_fields(tmp_path, monkeypatch):
+    """Expanding a history row shows what the user originally briefed, so the
+    brief (product/audience/emotion) travels with the task list."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "brief1", "done", me["id"],
+            params={"product": "Cloud.ru Evolution", "audience": "DevOps", "emotion": "контроль"},
+        )
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert rows[0]["brief"] == {
+            "product": "Cloud.ru Evolution",
+            "audience": "DevOps",
+            "emotion": "контроль",
+        }
+
+
+def test_list_tasks_brief_whitelists_known_keys(tmp_path, monkeypatch):
+    """Only the three brief fields are surfaced — any other internal params
+    must not leak into the response."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "brief2", "done", me["id"],
+            params={"product": "p", "audience": "a", "emotion": "e", "secret": "x"},
+        )
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert set(rows[0]["brief"].keys()) == {"product", "audience", "emotion"}
+
+
 def test_list_tasks_images_empty_for_non_done(tmp_path, monkeypatch):
     db = tmp_path / "r.db"
     results = tmp_path / "results"

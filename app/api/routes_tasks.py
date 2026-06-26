@@ -30,6 +30,16 @@ def _task_images(t: models.Task, results_dir: Path | None) -> list[str]:
     return [f"/results/{t.task_uid}/{p.name}" for p in sorted(task_dir.glob("*.png"))]
 
 
+_BRIEF_KEYS = ("product", "audience", "emotion")
+
+
+def _task_brief(t: models.Task) -> dict[str, str]:
+    """The original brief fields, whitelisted so no other internal params can
+    leak into the response."""
+    params = t.params or {}
+    return {k: params[k] for k in _BRIEF_KEYS if k in params}
+
+
 def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
     return TaskOut(
         task_uid=t.task_uid,
@@ -40,6 +50,7 @@ def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
         error=t.error,
         created_at=t.created_at.isoformat() if t.created_at else None,
         images=_task_images(t, results_dir),
+        brief=_task_brief(t),
     )
 
 
