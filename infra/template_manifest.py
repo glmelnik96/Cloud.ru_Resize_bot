@@ -224,6 +224,13 @@ class TextLayer(BaseModel):
         description="If None, no auto-shrink (single size).",
     )
     line_height: float = 1.0
+    letter_spacing: float = Field(
+        default=0.0,
+        description="Tracking as a fraction of the font size (em), matching "
+        "Figma's percentage (e.g. Figma -4% -> -0.04). Positive spreads "
+        "glyphs apart, negative pulls them together. 0.0 keeps PIL's native "
+        "kerning (no per-glyph drawing).",
+    )
     color: str
     align_h: Literal["left", "center", "right"] = "left"
     align_v: Literal["top", "middle", "bottom"] = "top"

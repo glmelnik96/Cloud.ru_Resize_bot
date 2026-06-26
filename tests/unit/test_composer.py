@@ -904,3 +904,130 @@ def test_underline_survives_next_line_plate():
         f"expected 3 underline bands (one per line), got {bands} "
         f"-> a short line's underline was painted over by the next wider plate"
     )
+
+
+# ----- Letter spacing (tracking) ---------------------------------------------
+
+
+def _ink_right_edge(img: Image.Image) -> int:
+    """Rightmost column containing white ink on a dark canvas."""
+    px = img.load()
+    right = 0
+    for x in range(img.width):
+        for y in range(img.height):
+            r, g, b, _ = px[x, y]
+            if r > 200 and g > 200 and b > 200:
+                right = x
+                break
+    return right
+
+
+def _ls_spec(letter_spacing: float) -> TemplateSpec:
+    return TemplateSpec(
+        width=400,
+        height=80,
+        background_color="#000000",
+        layers=[
+            TextLayer(
+                type="text",
+                slot="slogan",
+                x=10,
+                y=10,
+                width=380,
+                height=60,
+                font_family="SBSansDisplay",
+                font_weight="Regular",
+                font_size_max=40,
+                color="#FFFFFF",
+                align_h="left",
+                align_v="top",
+                max_lines=1,
+                letter_spacing=letter_spacing,
+            ),
+        ],
+    )
+
+
+def test_negative_letter_spacing_tightens_line():
+    """Negative tracking pulls glyphs closer, so the same word ends further
+    left than with zero tracking (the Figma photo slogan uses -4%)."""
+    wide = compose(_ls_spec(0.0), hero=None, texts={"slogan": "Облако"}, assets_root=REPO_ROOT)
+    tight = compose(
+        _ls_spec(-0.08), hero=None, texts={"slogan": "Облако"}, assets_root=REPO_ROOT
+    )
+    assert _ink_right_edge(tight) < _ink_right_edge(wide) - 3, (
+        "negative letter_spacing should visibly narrow the rendered word"
+    )
+
+
+def test_letter_spacing_default_is_zero_noop():
+    """A layer without letter_spacing renders identically to one with 0.0 — the
+    fast path must not change existing output."""
+    a = compose(_ls_spec(0.0), hero=None, texts={"slogan": "Тест"}, assets_root=REPO_ROOT)
+    layer = TextLayer(
+        type="text", slot="slogan", x=10, y=10, width=380, height=60,
+        font_family="SBSansDisplay", font_weight="Regular", font_size_max=40,
+        color="#FFFFFF", align_h="left", align_v="top", max_lines=1,
+    )
+    assert layer.letter_spacing == 0.0
+    b = compose(
+        TemplateSpec(width=400, height=80, background_color="#000000", layers=[layer]),
+        hero=None, texts={"slogan": "Тест"}, assets_root=REPO_ROOT,
+    )
+    assert list(a.getdata()) == list(b.getdata())
+
+
+# ----- Per-line plate gap guarantee ------------------------------------------
+
+
+def test_per_line_plates_never_merge_at_tight_line_height():
+    """Adjacent green plates must keep a visible gap even when line_height is
+    tight enough that the full-metrics plate would otherwise overlap the next
+    line's plate (the photo slogan auto-shrinks; plates were merging into one
+    solid block). Three lines -> three distinct green bands."""
+    spec = TemplateSpec(
+        width=200,
+        height=140,
+        background_color="#FFFFFF",
+        layers=[
+            TextLayer(
+                type="text",
+                slot="slogan",
+                x=10,
+                y=10,
+                width=180,
+                height=120,
+                font_family="SBSansDisplay",
+                font_weight="Regular",
+                font_size_max=30,
+                font_size_min=30,
+                line_height=1.05,
+                color="#000000",
+                align_h="left",
+                align_v="top",
+                max_lines=3,
+                per_line_highlight=PerLineHighlight(
+                    color="#00FF00", padding_x=4, padding_y=2
+                ),
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={"slogan": "раз\nдва\nтри"}, assets_root=REPO_ROOT)
+    px = img.load()
+    green_rows = [
+        y
+        for y in range(img.height)
+        if any(
+            px[x, y][0] < 60 and px[x, y][1] > 200 and px[x, y][2] < 60
+            for x in range(img.width)
+        )
+    ]
+    bands = 0
+    prev = None
+    for y in green_rows:
+        if prev is None or y - prev > 1:
+            bands += 1
+        prev = y
+    assert bands == 3, (
+        f"expected 3 separated plates, got {bands} -> plates merged (no gap)"
+    )

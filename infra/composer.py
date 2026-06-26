@@ -38,6 +38,10 @@ _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 _ELLIPSIS = "\u2026"
 _NBSP = "\u00a0"
 
+# Minimum background gap kept between consecutive per-line highlight plates so
+# they never merge into one solid block when line_height is tight.
+_MIN_PLATE_GAP = 2
+
 # Russian prepositions / conjunctions / particles that must never end a line
 # ("висячие предлоги"). They are glued to the FOLLOWING word with a
 # non-breaking space so the wrapper keeps them together. Any 1-letter word is
@@ -86,10 +90,26 @@ def _font_path(family: str, weight: str) -> Path:
     return path
 
 
+def _text_width(
+    font: ImageFont.FreeTypeFont, text: str, tracking: float = 0.0
+) -> float:
+    """Rendered width of ``text`` including letter spacing. With tracking=0 this
+    is PIL's native ``getlength`` (kerning preserved); otherwise we add
+    ``tracking`` px after every glyph except the last, matching the per-glyph
+    advance used when drawing tracked text."""
+    if not text:
+        return 0.0
+    w = font.getlength(text)
+    if tracking:
+        w += tracking * (len(text) - 1)
+    return w
+
+
 def _break_long_word(
     word: str,
     font: ImageFont.FreeTypeFont,
     max_width: int,
+    tracking: float = 0.0,
 ) -> list[str]:
     """Hard-break a single word that is wider than max_width at the character
     level so it never overflows the layer rect (long URLs, compound nouns,
@@ -98,7 +118,7 @@ def _break_long_word(
     chunks: list[str] = []
     cur = ""
     for ch in word:
-        if not cur or font.getlength(cur + ch) <= max_width:
+        if not cur or _text_width(font, cur + ch, tracking) <= max_width:
             cur += ch
         else:
             chunks.append(cur)
@@ -112,6 +132,7 @@ def _wrap_to_width(
     text: str,
     font: ImageFont.FreeTypeFont,
     max_width: int,
+    tracking: float = 0.0,
 ) -> list[str]:
     """Greedy word-wrap. Respects existing newlines; words wider than
     max_width are hard-broken at the character level so text never spills
@@ -127,18 +148,18 @@ def _wrap_to_width(
         line = ""
         for word in words:
             candidate = f"{line} {word}".strip()
-            if font.getlength(candidate) <= max_width:
+            if _text_width(font, candidate, tracking) <= max_width:
                 line = candidate
                 continue
             # word doesn't fit on the current line
             if line:
                 out.append(line)
                 line = ""
-            if font.getlength(word) <= max_width:
+            if _text_width(font, word, tracking) <= max_width:
                 line = word
             else:
                 # word itself is wider than the rect — hard-break it
-                parts = _break_long_word(word, font, max_width)
+                parts = _break_long_word(word, font, max_width, tracking)
                 out.extend(parts[:-1])
                 line = parts[-1]
         out.append(line)
@@ -149,14 +170,15 @@ def _ellipsize(
     line: str,
     font: ImageFont.FreeTypeFont,
     max_width: int,
+    tracking: float = 0.0,
 ) -> str:
     """Trim the line's tail so that line + ellipsis fits max_width."""
-    if font.getlength(line + _ELLIPSIS) <= max_width:
+    if _text_width(font, line + _ELLIPSIS, tracking) <= max_width:
         return line + _ELLIPSIS
     trimmed = line
     while trimmed:
         trimmed = trimmed[:-1].rstrip()
-        if font.getlength(trimmed + _ELLIPSIS) <= max_width:
+        if _text_width(font, trimmed + _ELLIPSIS, tracking) <= max_width:
             return trimmed + _ELLIPSIS
     return _ELLIPSIS
 
@@ -188,11 +210,14 @@ def _fit_text(
     inner_h = max(1, layer.height - 2 * layer.padding_y)
     last_font = None
     last_lines: list[str] = []
+    last_size = sizes[-1]
     for size in sizes:
         font = ImageFont.truetype(str(fp), size=size)
-        lines = _wrap_to_width(text, font, wrap_width)
+        tracking = layer.letter_spacing * size
+        lines = _wrap_to_width(text, font, wrap_width, tracking)
         last_font = font
         last_lines = lines
+        last_size = size
         if len(lines) <= layer.max_lines:
             # Also need vertical fit
             line_h = size * layer.line_height
@@ -204,7 +229,9 @@ def _fit_text(
     truncated = len(last_lines) > layer.max_lines
     clipped = last_lines[: layer.max_lines]
     if truncated and clipped:
-        clipped[-1] = _ellipsize(clipped[-1], last_font, wrap_width)
+        clipped[-1] = _ellipsize(
+            clipped[-1], last_font, wrap_width, layer.letter_spacing * last_size
+        )
     return last_font, clipped, sizes[-1], truncated
 
 
@@ -408,6 +435,7 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     if not text:
         return False
     font, lines, used_size, truncated = _fit_text(text, layer=layer)
+    tracking = layer.letter_spacing * used_size
     draw = ImageDraw.Draw(canvas)
     # Use real font metrics so highlight covers descenders (р, д, у, etc).
     ascent, descent = font.getmetrics()
@@ -460,7 +488,7 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     # and chops the bottom off the previous line's glyphs.
     line_geom: list[tuple[float, float, str]] = []
     for i, line in enumerate(lines):
-        line_w = font.getlength(line)
+        line_w = _text_width(font, line, tracking)
         if layer.align_h == "left":
             x = inner_x0
         elif layer.align_h == "center":
@@ -477,16 +505,29 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
         overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         odraw = ImageDraw.Draw(overlay)
         plate_fill = (*_hex_rgb(h.color), h.alpha)
+
+        # Plate bottom, clamped so a plate never reaches into the next line's
+        # plate: with a tight line_height the full-metrics plate height
+        # (text_h + 2*padding_y) can exceed the line pitch and adjacent green
+        # plates merge into one solid block. Cap the bottom edge so at least
+        # _MIN_PLATE_GAP px of background survive between consecutive plates.
+        def _plate_bottom(i: int, y: float) -> float:
+            full = y + text_h + h.padding_y
+            if i + 1 < len(line_geom):
+                next_top = line_geom[i + 1][1] - h.padding_y
+                return min(full, next_top - _MIN_PLATE_GAP)
+            return full
+
         # Sub-pass A: all plates.
-        for x, y, line in line_geom:
+        for i, (x, y, line) in enumerate(line_geom):
             if not line.strip():
                 continue
-            line_w = font.getlength(line)
+            line_w = _text_width(font, line, tracking)
             box = (
                 x - h.padding_x,
                 y - h.padding_y,
                 x + line_w + h.padding_x,
-                y + text_h + h.padding_y,
+                _plate_bottom(i, y),
             )
             if h.radius > 0:
                 odraw.rounded_rectangle(box, radius=h.radius, fill=plate_fill)
@@ -498,7 +539,7 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
             for x, y, line in line_geom:
                 if not line.strip():
                     continue
-                line_w = font.getlength(line)
+                line_w = _text_width(font, line, tracking)
                 uy0 = y + text_h + h.padding_y + h.underline_gap
                 odraw.rectangle(
                     (
@@ -511,9 +552,17 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
                 )
         canvas.alpha_composite(overlay)
 
-    # Pass 2: all text glyphs (on top of any plates).
+    # Pass 2: all text glyphs (on top of any plates). With letter spacing we
+    # advance glyph-by-glyph (PIL has no native tracking); otherwise draw the
+    # whole line at once so kerning is preserved byte-for-byte.
     for x, y, line in line_geom:
-        draw.text((x, y), line, font=font, fill=layer.color)
+        if tracking:
+            cx = x
+            for ch in line:
+                draw.text((cx, y), ch, font=font, fill=layer.color)
+                cx += font.getlength(ch) + tracking
+        else:
+            draw.text((x, y), line, font=font, fill=layer.color)
 
     return truncated
 

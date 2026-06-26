@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
+  "version": "0.7.1",
   "comment": "M5: single 300x600 format, two brand layouts (render / photo) matching Figma aZQYa8ye6EQj5WzjXAdQvC nodes 3460:1390 (render) + 3460:1404 (photo) + 3460:1431 (footer strip). Each of the 12 propositions is routed to render (transparent isometric device cutout on a green-framed #222 panel, white headline, white CTA) or photo (full-bleed photo with a dark legibility scrim, white headline + subtitle, white CTA, baked green legal footer). Brand header (logo + 'облачные и ИИ-сервисы' + green divider) is a shared cropped asset; the green frame and the photo scrim are drawn by the composer. Geometry measured from the 300x600 Figma exports.",
   "templates": {
     "banner_300x600_render": {
@@ -70,7 +70,7 @@
           "font_weight": "Semibold",
           "font_size_max": 30,
           "font_size_min": 20,
-          "line_height": 1.05,
+          "line_height": 1.10,
           "color": "#FFFFFF",
           "align_h": "left",
           "align_v": "top",
@@ -86,7 +86,7 @@
           "height": 44,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 16,
+          "font_size_max": 14,
           "color": "#222222",
           "align_h": "center",
           "align_v": "middle",
@@ -132,10 +132,11 @@
           "width": 272,
           "height": 158,
           "font_family": "SBSansDisplay",
-          "font_weight": "Semibold",
+          "font_weight": "Regular",
           "font_size_max": 30,
           "font_size_min": 22,
           "line_height": 1.33,
+          "letter_spacing": -0.04,
           "color": "#222222",
           "align_h": "left",
           "align_v": "bottom",
@@ -143,7 +144,7 @@
           "per_line_highlight": {
             "color": "#26D07C",
             "padding_x": 6,
-            "padding_y": 1
+            "padding_y": 0
           },
           "z": 30
         },
@@ -154,7 +155,7 @@
           "y": 470,
           "width": 272,
           "height": 28,
-          "font_family": "SBSansText",
+          "font_family": "SBSansDisplay",
           "font_weight": "Regular",
           "font_size_max": 11,
           "font_size_min": 8,
@@ -173,7 +174,7 @@
           "height": 44,
           "font_family": "SBSansDisplay",
           "font_weight": "Semibold",
-          "font_size_max": 16,
+          "font_size_max": 14,
           "color": "#222222",
           "align_h": "center",
           "align_v": "middle",
