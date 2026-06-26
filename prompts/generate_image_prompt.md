@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.5.0
+version: 0.5.1
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-5.1
@@ -73,15 +73,20 @@ recognisable subject that a viewer instantly understands.
 - RENDER: a single concrete three-dimensional object or device that
   embodies the proposition's idea (the metaphor made tangible), shown in
   an isometric view from a ~30-degree three-quarter angle, the one
-  dominant subject. Describe ONLY its form, the metaphor and the angle —
-  leave its colour, material, finish and lighting UNSPECIFIED. A separate
-  brand render enhancer adds all of that (the brand-green accent,
-  materials, studio look), so do not prescribe metal, glass, a green
-  crystal, a backdrop or lighting here; over-specifying them fights the
-  enhancer. Keep only a small even margin on every side so the object
-  stays fully visible and is never cropped or touching an edge, so its
-  background can be removed cleanly. A recognisable object, not an
-  abstract schematic.
+  dominant subject. Give it compact, roughly square (~1:1) overall
+  proportions — a chunky, substantial object that fills the frame in both
+  width and height, never wide-and-flat nor tall-and-thin. The composer
+  alpha-crops the cutout and scales it to fill a full-width band, so a flat
+  or thin object letterboxes small and floats; only a near-square,
+  frame-filling object reads large. Describe ONLY its form, its proportion,
+  the metaphor and the angle — leave its colour, material, finish and
+  lighting UNSPECIFIED. A separate brand render enhancer adds all of that
+  (the brand-green accent, materials, studio look), so do not prescribe
+  metal, glass, a green crystal, a backdrop or lighting here;
+  over-specifying them fights the enhancer. Keep only a small even margin
+  on every side so the object stays fully visible and is never cropped or
+  touching an edge, so its background can be removed cleanly. A
+  recognisable object, not an abstract schematic.
 
 PROMPT MUST INCLUDE
 1. A concrete subject tied to brief.product AND winner.hook_angle.
@@ -91,16 +96,18 @@ PROMPT MUST INCLUDE
    framing and setting; never reuse the same generic person across
    banners.
    Render: a single concrete 3D object/device embodying the proposition's
-   idea, shown from a ~30-degree isometric three-quarter angle, fully
-   visible and centered with a small even margin so the background can
-   later be cut out. Leave colour, material, finish and lighting
-   unspecified — the brand enhancer adds them.
+   idea, shown from a ~30-degree isometric three-quarter angle, with
+   compact ~square (1:1) proportions that fill the frame (never wide-flat
+   or tall-thin), fully visible and centered with a small even margin so
+   the background can later be cut out. Leave colour, material, finish and
+   lighting unspecified — the brand enhancer adds them.
 2. Style modifiers consistent with the chosen image_style category, but
    ONLY the ones the brand enhancer does not own. Photo: name the subject,
    action, setting and mood (the enhancer adds the grade, lens and light).
-   Render: name the object form and the isometric three-quarter angle (the
-   enhancer adds the materials, colour, finish and lighting). Do not list
-   film stock, lens, depth of field, metal/glass materials or lighting.
+   Render: name the object form, its compact ~square frame-filling
+   proportion and the isometric three-quarter angle (the enhancer adds the
+   materials, colour, finish and lighting). Do not list film stock, lens,
+   depth of field, metal/glass materials or lighting.
 3. Composition guidance: the main subject biased toward the RIGHT or
    CENTER-RIGHT of the frame; leave the left third intentionally
    uncluttered with calm background tones (a slogan plate will sit
@@ -185,6 +192,16 @@ Return ONLY valid JSON:
 
 ## Changelog
 
+- v0.5.1 (2026-06-26) — render device size/placement. After the v0.5.0 strip,
+  render heroes came back wide-and-flat (control consoles, mixing desks), which
+  the composer's alpha-bbox crop + contain fit letterboxed small and floating —
+  the device read tiny vs the reference's large near-square object. The fix is
+  the only size lever the App1 enhancer can't supply: the object's ASPECT RATIO.
+  Re-added a compact, roughly-square (~1:1), frame-filling proportion (never
+  wide-flat or tall-thin) to the RENDER bullet + items 1/2, WITHOUT re-adding any
+  material/colour/finish/lighting (the enhancer still owns those). Pairs with the
+  composer reclaiming the dead vertical band space (hero_cutout y58/h304 ->
+  y54/h328, spanning header bottom to slogan top).
 - v0.5.0 (2026-06-26) — directive de-duplication. App1 runs its own brand
   render/photo enhancers (AMPLIFIERS that add ALL styling: the green accent,
   materials, finish, isometric/3D look, studio lighting for render; the Kodak

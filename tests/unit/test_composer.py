@@ -511,6 +511,15 @@ def test_render_hero_is_large_uncropped_and_crosses_middle():
     assert hero_layer.fit == "contain"
     assert hero_layer.x == 0 and hero_layer.x + hero_layer.width == 300
     assert hero_layer.y < 300 < hero_layer.y + hero_layer.height
+    # the band must reclaim the full vertical space between the header (ends
+    # y=50) and the slogan (starts y=384): a square device is width-bound at
+    # 300px, but a taller-than-wide device needs the room, and dead bands above
+    # /below made the device float. The band must span >=320px of that gap.
+    slogan_layer = next(l for l in spec.layers if getattr(l, "slot", None) == "slogan")
+    assert hero_layer.y <= 56  # starts just below the header
+    assert hero_layer.y + hero_layer.height >= 378  # reaches down to the slogan
+    assert hero_layer.y + hero_layer.height <= slogan_layer.y  # never under the text
+    assert hero_layer.height >= 320
     # behaviour: a near-square object fills the width and crosses the middle row
     hero = _solid_hero(200, 200, "#FF00FF")
     img = compose(spec, hero=hero, texts={"slogan": "X", "cta": "Go"}, assets_root=REPO_ROOT)
@@ -674,6 +683,54 @@ def test_cta_background_drawn():
     # corner of cta rect should be CFF500
     r, g, b, _ = img.getpixel((12, 12))
     assert r > 200 and g > 200 and b < 100  # roughly lemon
+
+
+def test_cta_text_optically_centered_in_plate():
+    """The CTA glyph INK (not the font's design box) must be vertically
+    centered within its plate. PIL's top-left anchor leaves the font's
+    internal top leading uncounted, so naive `used_size * line_height`
+    centering drifts the visible text low. Assert the ink band's centre
+    sits within 1px of the plate centre."""
+    spec = TemplateSpec(
+        width=120,
+        height=80,
+        background_color="#FFFFFF",
+        layers=[
+            TextLayer(
+                type="text",
+                slot="cta",
+                x=10,
+                y=20,
+                width=100,
+                height=44,
+                font_family="SBSansDisplay",
+                font_weight="Semibold",
+                font_size_max=16,
+                color="#000000",
+                align_h="center",
+                align_v="middle",
+                max_lines=1,
+                background=BoxBackground(color="#CFF500"),
+            ),
+        ],
+    )
+    img = compose(spec, hero=None, texts={"cta": "Попробовать"}, assets_root=REPO_ROOT)
+    px = img.load()
+    # find black-ink rows inside the plate x-span
+    ink_rows = [
+        y
+        for y in range(20, 64)
+        if any(
+            px[x, y][0] < 60 and px[x, y][1] < 60 and px[x, y][2] < 60
+            for x in range(10, 110)
+        )
+    ]
+    assert ink_rows, "no CTA ink found"
+    ink_center = (min(ink_rows) + max(ink_rows)) / 2
+    plate_center = 20 + 44 / 2  # 42
+    assert abs(ink_center - plate_center) <= 1.0, (
+        f"CTA ink centre {ink_center} vs plate centre {plate_center}"
+    )
 
 
 # ----- Pattern dots -----------------------------------------------------------

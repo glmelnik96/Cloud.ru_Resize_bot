@@ -417,7 +417,19 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     if layer.align_v == "top":
         y0 = inner_y0
     elif layer.align_v == "middle":
-        y0 = inner_y0 + (inner_h - block_h) // 2
+        # Center on the real glyph INK, not the font's design box. PIL's top
+        # anchor places y at the ascender line, leaving the font's internal top
+        # leading above the ink (and the descent below it) uncounted; centering
+        # on `block_h` alone drifts the visible text low (CTA plate looked
+        # bottom-heavy). Measure the ink span of the actual lines and center it.
+        inked = [ln for ln in lines if ln.strip()]
+        if inked:
+            first_top = min(font.getbbox(ln)[1] for ln in inked)
+            last_bottom = max(font.getbbox(ln)[3] for ln in inked)
+        else:
+            first_top, last_bottom = 0, text_h
+        ink_h = (len(lines) - 1) * line_h + (last_bottom - first_top)
+        y0 = inner_y0 + (inner_h - ink_h) / 2 - first_top
     else:  # bottom
         y0 = inner_y0 + inner_h - block_h
 

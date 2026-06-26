@@ -65,12 +65,16 @@ _VALID_STYLES = {"photo", "render"}
 _STYLE_DIRECTIVE_RENDER = (
     "render (express this proposition's core idea as ONE single concrete "
     "three-dimensional object or device — the metaphor made tangible — shown in "
-    "an isometric view from a ~30-degree three-quarter angle. Make it the one "
-    "dominant subject, fully visible and centered with a generous even margin of "
-    "empty space on every side so nothing touches or is cropped by an edge and "
-    "the background can be removed cleanly. Describe only the object's form, the "
-    "metaphor and the angle; leave its colour, material, finish and lighting "
-    "unspecified — a recognisable object, not an abstract diagram)"
+    "an isometric view from a ~30-degree three-quarter angle. Give it compact, "
+    "roughly square (about 1:1) overall proportions — a chunky, substantial "
+    "object that fills the frame in both width and height, never wide-and-flat "
+    "nor tall-and-thin (the composer scales the cutout to fill a full-width band, "
+    "so a flat or thin object would letterbox small). Make it the one dominant "
+    "subject, fully visible and centered with only a small even margin so nothing "
+    "touches or is cropped by an edge and the background can be removed cleanly. "
+    "Describe only the object's form, its proportion, the metaphor and the angle; "
+    "leave its colour, material, finish and lighting unspecified — a recognisable "
+    "object, not an abstract diagram)"
 )
 
 # Photo banners must NOT all be the same stock "confident man in an office".

@@ -295,6 +295,19 @@ def test_render_directive_delegates_styling_to_app1():
         assert banned not in low, f"render directive must not prescribe {banned!r}"
 
 
+def test_render_directive_pins_near_square_filling_proportion():
+    """The composer alpha-bbox-crops then contain-fits the cutout into a
+    full-width band, so the device's *aspect ratio* — not its source size —
+    decides how large it reads. A wide-flat or tall-thin object letterboxes
+    small; only a roughly-square, frame-filling object fills the band. The
+    directive must therefore pin a compact ~square proportion that fills the
+    composition (this is the size/placement fix App1's enhancer can't supply)."""
+    low = gip._STYLE_DIRECTIVE_RENDER.lower()
+    assert "square" in low, "render directive must pin a near-square proportion"
+    assert "fill" in low, "render directive must ask the object to fill the frame"
+    assert "flat" in low, "render directive must warn against wide-and-flat objects"
+
+
 def test_photo_directives_delegate_styling_to_app1():
     """Photo directives must carry ONLY subject + action (the mood metaphor),
     framing intent and the people/no-people marker. Palette, film stock, lens,
