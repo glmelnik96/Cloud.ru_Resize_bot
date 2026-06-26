@@ -381,6 +381,44 @@ def test_hero_cutout_crops_transparent_padding_before_fit():
         assert img.getpixel((x, y))[:3] == (0, 255, 0), f"({x},{y}) not object"
 
 
+def test_hero_cutout_ignores_faint_alpha_halo():
+    """Background removal (App1/Photoroom) often leaves a faint near-transparent
+    halo of stray pixels far from the real object. `Image.getbbox()` treats any
+    alpha>0 pixel as content, so that halo blows the crop box out to almost the
+    whole frame — the real object then scales DOWN and floats small (live: the
+    isometric devices that came back tiny/high). The crop must threshold the
+    alpha so a faint halo is ignored and the SOLID object drives the scale."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="contain",
+                anchor_h="center",
+                anchor_v="middle",
+                allow_upscale=True,
+                z=0,
+            )
+        ],
+    )
+    # 40x40 solid object centered in a 200x200 transparent canvas, PLUS one
+    # faint (alpha=8) stray pixel in the far corner (the bg-removal halo).
+    hero = _padded_cutout((200, 200), (80, 80, 120, 120), "#00FF00")
+    hero.putpixel((3, 3), (255, 0, 0, 8))
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # The faint halo must be ignored: the 40x40 object still upscales to fill
+    # the 100x100 rect (object colour at the centre AND near the edges).
+    assert img.getpixel((50, 50))[:3] == (0, 255, 0)
+    for x, y in [(2, 50), (97, 50), (50, 2), (50, 97)]:
+        assert img.getpixel((x, y))[:3] == (0, 255, 0), f"({x},{y}) not object — halo shrank it"
+
+
 def test_hero_cutout_bottom_anchor_uses_object_not_padding():
     """With bottom anchoring, the visible object must sit on the rect's bottom
     edge regardless of transparent padding below it in the source PNG."""

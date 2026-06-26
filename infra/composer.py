@@ -247,6 +247,27 @@ def _draw_hero_layer(
         canvas.paste(resized, (x, y))
 
 
+# Background-removal tools (App1/Photoroom) leave faint near-transparent stray
+# pixels around the cutout. `Image.getbbox()` counts any alpha>0 pixel as
+# content, so that halo blows the crop box out toward the whole frame and the
+# real object scales down and floats. Crop on alpha>=this threshold instead so
+# only the solid object drives the scale; the real object's anti-aliased edge is
+# alpha ~100-255, well above this, so legitimate detail is never clipped.
+_ALPHA_CROP_THRESHOLD = 32
+
+
+def _content_bbox(hero: Image.Image) -> tuple[int, int, int, int] | None:
+    """Bounding box of the solid cutout, ignoring a faint bg-removal halo.
+
+    For images with an alpha channel we threshold the alpha so near-transparent
+    stray pixels don't inflate the box; opaque images fall back to getbbox()."""
+    if "A" in hero.getbands():
+        alpha = hero.getchannel("A")
+        mask = alpha.point(lambda v: 255 if v >= _ALPHA_CROP_THRESHOLD else 0)
+        return mask.getbbox()
+    return hero.getbbox()
+
+
 def _draw_hero_cutout_layer(
     canvas: Image.Image,
     layer: HeroCutoutLayer,
@@ -269,7 +290,7 @@ def _draw_hero_cutout_layer(
     space the cutter happened to leave. A fully transparent hero (no bbox) is a
     no-op.
     """
-    bbox = hero.getbbox()
+    bbox = _content_bbox(hero)
     if bbox is None:
         return
     if bbox != (0, 0, hero.width, hero.height):
