@@ -37,7 +37,7 @@ class AdBrief(BaseModel):
     channel: str = Field(description="tg_post | vk_ad | ig_story | yandex_promo | ...")
     formats: list[str] = Field(
         default_factory=list,
-        description="Slugs шаблонов из config/templates.json, например banner_240x400",
+        description="Slugs шаблонов из config/templates.json, например banner_300x600_render",
     )
     tone_hints: str | None = None
     constraints: list[str] = Field(
