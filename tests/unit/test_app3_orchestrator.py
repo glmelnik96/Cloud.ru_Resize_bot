@@ -681,3 +681,85 @@ async def test_submit_decision_flips_to_running_then_enqueues(tmp_path, monkeypa
     # status flips to running synchronously (closes the double-submit window)
     assert task.status == "running"
     assert submitted.get("called") is True
+
+
+@pytest.mark.asyncio
+async def test_submit_decision_queue_full_restores_status_and_raises(tmp_path, monkeypatch):
+    """If the lane queue is full, the decision must NOT be silently dropped:
+    status is restored to the parked value and CapacityError is raised so the
+    route can answer 429 (the graph is still parked — the user can retry)."""
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="qf1", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    async def full_submit(user_id, runner):
+        return False
+
+    monkeypatch.setattr(svc.manager, "submit", full_submit)
+    with pytest.raises(CapacityError):
+        await svc.submit_decision("qf1", "1", {"action": "approve"})
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "qf1"))
+        task = res.scalar_one()
+    assert task.status == "awaiting_text"
+
+
+@pytest.mark.asyncio
+async def test_generate_decision_queue_full_restores_awaiting_image(tmp_path, monkeypatch):
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen())
+    async with Session() as s:
+        s.add(models.Task(task_uid="qf2", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    async def full_submit(user_id, runner):
+        return False
+
+    monkeypatch.setattr(svc.manager, "submit", full_submit)
+    with pytest.raises(CapacityError):
+        await svc.generate_decision("qf2", "1")
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "qf2"))
+        task = res.scalar_one()
+    assert task.status == "awaiting_image"
+
+
+@pytest.mark.asyncio
+async def test_hero_generation_publishes_incremental_progress(tmp_path):
+    """Hero generation must publish step events counting completions (1/N …
+    N/N), not sit at 0/N until the whole gather finishes."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    graph = _ResumableGraph()
+    graph.values = {
+        "image_prompts": ["P1", "P2", "P3"],
+        "scenarios": ["render", "photo", "render"],
+    }
+    svc = _service(
+        Session, graph, bus=bus, tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen()
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="pr1", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    q = bus.subscribe("pr1")
+    captured = {}
+
+    async def fake_submit(user_id, runner):
+        captured["runner"] = runner
+        return True
+
+    svc.manager.submit = fake_submit  # type: ignore[assignment]
+    await svc.generate_decision("pr1", "1")
+    await captured["runner"]()
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    steps = [e["step"] for e in events if e.get("kind") == "step"]
+    assert any("1/3" in s for s in steps)
+    assert any("3/3" in s for s in steps)

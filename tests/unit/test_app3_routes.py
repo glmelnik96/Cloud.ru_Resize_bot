@@ -276,6 +276,36 @@ def test_decision_image_upload_saves_and_resumes(tmp_path, monkeypatch):
         assert seen["decision"]["local_path"].endswith("hero.png")
 
 
+def test_decision_image_upload_sanitizes_hostile_filename(tmp_path, monkeypatch):
+    """Client filename must never influence the stored path: fixed stem 'hero',
+    extension whitelisted (non-image ext falls back to .png), no traversal."""
+    from pathlib import Path as _P
+
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        seen = {}
+
+        class _Stub:
+            async def submit_decision(self, uid, user_id, decision):
+                seen["decision"] = decision
+
+        app.state.creatives = _Stub()
+        _seed_task(db, "ih", "awaiting_image", me["id"])
+        r = c.post(
+            "/api/tasks/ih/decision/image",
+            data={"action": "upload"},
+            files={"file": ("..\\..\\evil.exe", b"\x89PNG", "image/png")},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        saved = _P(seen["decision"]["local_path"])
+        assert saved.name == "hero.png"  # stem fixed, .exe rejected -> .png
+        # stays inside the manager's tmp root for this task
+        assert str(saved.resolve()).startswith(str(_P(app.state.manager.tmp_root).resolve()))
+
+
 def test_decision_image_cancel(tmp_path, monkeypatch):
     db = tmp_path / "r.db"
     app = _app(tmp_path, monkeypatch, graph_ok=True)

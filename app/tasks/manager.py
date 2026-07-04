@@ -14,7 +14,7 @@ import asyncio
 import shutil
 from collections import Counter
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 import structlog
 
@@ -22,6 +22,7 @@ log = structlog.get_logger(__name__)
 
 MAX_PER_USER_INFLIGHT = 2
 USER_QUEUE_LIMIT = 5
+LANE_IDLE_TTL = 300.0  # seconds a lane may sit fully idle before being dismantled
 
 TaskRunner = Callable[[], Awaitable[None]]
 
@@ -34,11 +35,13 @@ class TaskManager:
         max_concurrency: int = 5,
         max_per_user_inflight: int = MAX_PER_USER_INFLIGHT,
         user_queue_limit: int = USER_QUEUE_LIMIT,
+        lane_idle_ttl: float = LANE_IDLE_TTL,
     ) -> None:
         self.tmp_root = Path(tmp_root)
         self.global_sem = asyncio.Semaphore(max_concurrency)
         self.max_per_user_inflight = max_per_user_inflight
         self.user_queue_limit = user_queue_limit
+        self.lane_idle_ttl = lane_idle_ttl
 
         self.user_queues: dict[str, asyncio.Queue[TaskRunner]] = {}
         self.user_workers: dict[str, asyncio.Task] = {}
@@ -72,7 +75,20 @@ class TaskManager:
         q = self.user_queues[user_id]
         sem = self.user_sems[user_id]
         while True:
-            runner = await q.get()
+            try:
+                runner = await asyncio.wait_for(q.get(), timeout=self.lane_idle_ttl)
+            except asyncio.TimeoutError:
+                # Fully idle (nothing queued, nothing in flight) → dismantle the
+                # lane so user_queues/user_sems/user_workers don't grow forever.
+                # No await between the check and the pops, so submit() can't
+                # race us; a later submit simply recreates the lane.
+                if q.empty() and self.user_inflight.get(user_id, 0) == 0:
+                    self.user_queues.pop(user_id, None)
+                    self.user_sems.pop(user_id, None)
+                    self.user_workers.pop(user_id, None)
+                    log.debug("user_lane_cleaned", user_id=user_id)
+                    return
+                continue
             await sem.acquire()
             asyncio.create_task(
                 self._run_one(user_id, runner, sem, q), name=f"user-task-{user_id}"

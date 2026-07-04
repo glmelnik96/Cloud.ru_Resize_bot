@@ -164,9 +164,15 @@ class CreativesService:
 
         Flips status → running synchronously to close the double-submit window
         (a second POST then sees running, not awaiting_*, → 409 upstream).
+
+        If the lane queue is full the decision must NOT be silently dropped:
+        the parked status is restored (the graph checkpoint never moved) and
+        CapacityError bubbles up so the route can answer 429 — the user just
+        retries the same button.
         """
         from langgraph.types import Command
 
+        prior = await self._get_status(task_uid)
         self._cancel_timeout(task_uid)
         await self._set_status(task_uid, "running")
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
@@ -177,7 +183,13 @@ class CreativesService:
                 task_uid, user_id, payload, reporter, first_label="Продолжаю"
             )
 
-        await self.manager.submit(user_id, runner)
+        if not await self.manager.submit(user_id, runner):
+            restored = prior if prior in ("awaiting_text", "awaiting_image") else "awaiting_text"
+            await self._set_status(task_uid, restored)
+            if restored == "awaiting_image":
+                self._arm_image_timeout(task_uid)
+            log.warning("decision_queue_full", task_uid=task_uid, restored=restored)
+            raise CapacityError("queue full")
 
     async def generate_decision(
         self,
@@ -222,17 +234,22 @@ class CreativesService:
                 for i in range(len(prompts))
             ]
             tmp_dir = self.manager.task_tmp(user_id, task_uid)
-            await reporter.start(f"Генерирую hero-картинки (0/{len(prompts)})")
+            total = len(prompts)
+            await reporter.start(f"Генерирую hero-картинки (0/{total})")
 
             sem = asyncio.Semaphore(_HERO_GEN_CONCURRENCY)
+            done_count = 0
 
             async def _one(i: int, prompt: str, scenario: str) -> dict:
+                nonlocal done_count
                 dest = tmp_dir / f"hero_{i}.png"
                 async with sem:
                     await self.hero_generator.generate(
                         prompt=prompt, style=scenario, dest=dest,
                         user_id=end_user_id, email=end_user_email,
                     )
+                done_count += 1
+                await reporter.step(f"Генерирую hero-картинки ({done_count}/{total})")
                 return {
                     "url": None,
                     "local_path": str(dest),
@@ -281,7 +298,13 @@ class CreativesService:
                 reporter, first_label="Накладываю в шаблоны",
             )
 
-        await self.manager.submit(user_id, runner)
+        if not await self.manager.submit(user_id, runner):
+            # Lane queue full — nothing was generated; restore the parked state
+            # so the user keeps the generate/upload affordances and can retry.
+            await self._set_status(task_uid, "awaiting_image")
+            self._arm_image_timeout(task_uid)
+            log.warning("generate_queue_full", task_uid=task_uid)
+            raise CapacityError("queue full")
 
     async def pending(self, task_uid: str, status: str) -> Optional[dict]:
         """Re-fetch the parked interrupt payload from the checkpoint, so a
@@ -429,7 +452,12 @@ class CreativesService:
             if task is None or task.status != "awaiting_image":
                 return
             log.warning("image_upload_timeout", task_uid=task_uid)
-            await self.submit_decision(task_uid, str(task.user_id), {"action": "timeout"})
+            try:
+                await self.submit_decision(task_uid, str(task.user_id), {"action": "timeout"})
+            except CapacityError:
+                # Lane full at the exact timeout moment — submit_decision already
+                # restored awaiting_image and re-armed the timeout; just log.
+                log.warning("image_timeout_resume_deferred", task_uid=task_uid)
 
         try:
             self._timeouts[task_uid] = asyncio.create_task(_sleeper(), name=f"img-timeout-{task_uid}")
@@ -454,6 +482,12 @@ class CreativesService:
                 .where(models.Task.status.in_(_OPEN_STATUSES))
             )
             return int(res.scalar_one())
+
+    async def _get_status(self, task_uid: str) -> Optional[str]:
+        async with self.Session() as s:
+            res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
+            task = res.scalar_one_or_none()
+            return task.status if task is not None else None
 
     async def _set_status(self, task_uid: str, status: str, *, started: bool = False) -> None:
         async with self.Session() as s:

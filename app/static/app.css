@@ -201,3 +201,5 @@ textarea:focus,select:focus,input[type="text"]:focus{outline:none;border-color:v
 .lb-dl{text-decoration:none;background:var(--accent);color:var(--accent-ink);
   padding:7px 15px;border-radius:var(--r-sm);font-weight:600;font-size:13px;transition:background .15s;}
 .lb-dl:hover{background:var(--accent-2);}
+/* HITL busy state: controls frozen while a decision request is in flight */
+.is-busy{opacity:.5;pointer-events:none;}

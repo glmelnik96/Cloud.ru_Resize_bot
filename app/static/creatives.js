@@ -34,34 +34,81 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product, audience, emotion }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(errText(r.status));
       const data = await r.json();
       taskUid = data.task_uid;
       saveActive(taskUid);
       $("briefStatus").textContent = "";
+      // restore the step line (a previous onError replaces this markup)
+      $("progress").innerHTML =
+        '<span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span>';
+      hide($("resultsPanel"));
       show($("progressPanel"));
       subscribe();
     } catch (e) {
-      $("briefStatus").innerHTML = `<span class="err">Ошибка: ${e.message}</span>`;
+      $("briefStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
       $("startBtn").disabled = false;
     }
   });
 
   // ── SSE ────────────────────────────────────────────────
+  // A dropped connection (gateway restart, wifi blip) also fires an "error"
+  // event, but WITHOUT data — that must NOT be rendered as a task failure.
+  // Instead we resync state via /pending and reattach with backoff.
+  let esBackoff = 1000;
+  const ES_BACKOFF_MAX = 15000;
   function subscribe() {
     if (es) es.close();
     es = new EventSource(`${P}/api/tasks/${taskUid}/events`);
+    es.onopen = () => { esBackoff = 1000; };
     es.addEventListener("queued", () => setStep("В очереди…"));
     es.addEventListener("start", (e) => setStep(stepOf(e)));
     es.addEventListener("step", (e) => setStep(stepOf(e)));
     es.addEventListener("awaiting_input", (e) => onAwaiting(JSON.parse(e.data)));
     es.addEventListener("resumed", () => { hideHitl(); setStep("Продолжаю…"); });
     es.addEventListener("done", (e) => onDone(JSON.parse(e.data)));
-    es.addEventListener("error", (e) => onError(e));
+    es.addEventListener("error", (e) => {
+      if (typeof e.data === "undefined") { onStreamDrop(); return; } // connection, not task
+      onError(e);
+    });
     es.addEventListener("cancelled", (e) => onCancelled(JSON.parse(e.data)));
   }
   const stepOf = (e) => { try { return JSON.parse(e.data).step || "…"; } catch { return "…"; } };
-  function setStep(t) { $("stepLabel").textContent = t; show($("progressPanel")); }
+  function setStep(t) {
+    const el = $("stepLabel");
+    if (el) el.textContent = t;
+    show($("progressPanel"));
+  }
+
+  function onStreamDrop() {
+    if (!taskUid) return;
+    if (es) es.close();
+    setStep("Соединение потеряно, переподключаюсь…");
+    const delay = esBackoff;
+    esBackoff = Math.min(esBackoff * 2, ES_BACKOFF_MAX);
+    setTimeout(resync, delay);
+  }
+
+  // Re-fetch where the task actually is (events may have been missed while
+  // offline), re-render that state, then resubscribe.
+  async function resync() {
+    if (!taskUid) return;
+    try {
+      const r = await fetch(`${P}/api/tasks/${taskUid}/pending`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d.phase) { onAwaiting(d); subscribe(); return; }
+      if (ACTIVE.includes(d.status)) { subscribe(); return; }
+      // went terminal while we were offline
+      const tr = await fetch(`${P}/api/tasks/${taskUid}`);
+      const t = tr.ok ? await tr.json() : null;
+      if (t && t.status === "done") onDone({ result_url: t.result_url });
+      else if (t && t.status === "cancelled") onCancelled({ reason: "" });
+      else onError({ data: JSON.stringify({ message: (t && t.error) || "Сбой генерации." }) });
+    } catch (_) {
+      onStreamDrop(); // network still down → keep backing off
+    }
+  }
 
   // ── awaiting (HITL) ────────────────────────────────────
   // A HITL pause means the pipeline is BLOCKED on the user. Hide the running
@@ -72,12 +119,17 @@
     hide($("progressPanel"));
     if (d.phase === "text_approve") {
       renderCandidates(d.candidates || []);
+      setBusy($("textPanel"), false);
       hide($("imagePanel")); show($("textPanel"));
       focusPanel($("textPanel"));
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
       if (d.can_generate) show($("genBtn")); else hide($("genBtn"));
-      $("imageStatus").textContent = d.gen_error ? `Генерация не удалась: ${d.gen_error}. Загрузи картинку.` : "";
+      let msg = "";
+      if (d.gen_error) msg = `Генерация не удалась: ${d.gen_error}. Загрузи картинку.`;
+      else if (!d.can_generate) msg = "Автогенерация hero на сервере недоступна — загрузи свою картинку.";
+      $("imageStatus").textContent = msg;
+      setBusy($("imagePanel"), false);
       hide($("textPanel")); show($("imagePanel"));
       focusPanel($("imagePanel"));
     }
@@ -102,32 +154,71 @@
 
   function hideHitl() { hide($("textPanel")); hide($("imagePanel")); }
 
+  // Double-click protection: freeze every control in a HITL panel while its
+  // request is in flight; unfreeze if the request fails (panel stays visible).
+  function setBusy(panel, busy) {
+    panel.querySelectorAll("button, input, label.btn").forEach((el) => {
+      if ("disabled" in el) el.disabled = busy;
+      el.classList.toggle("is-busy", busy);
+    });
+  }
+  function errText(status) {
+    if (!status) return "Нет соединения с сервером — проверь сеть и попробуй ещё раз.";
+    if (status === 429) return "Сервер занят — попробуй ещё раз через пару минут.";
+    if (status === 409) return "Задача уже в другом состоянии — обнови страницу.";
+    if (status === 501) return "Генерация недоступна — загрузи картинку.";
+    return `Ошибка ${status}`;
+  }
+
   // text decisions (approve all / regenerate all / cancel)
   document.querySelectorAll("#textPanel [data-act]").forEach((btn) => {
     btn.addEventListener("click", () => sendText(btn.dataset.act));
   });
 
   async function sendText(action) {
-    hideHitl(); setStep("Применяю решение…");
-    await post(`${P}/api/tasks/${taskUid}/decision/text`, { action });
+    if (action === "cancel" && !window.confirm("Отменить задачу? Прогресс будет потерян.")) return;
+    const panel = $("textPanel");
+    $("textStatus").textContent = "";
+    setBusy(panel, true);
+    const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, { action });
+    if (r && r.ok) {
+      setBusy(panel, false);
+      hideHitl(); setStep("Применяю решение…");
+      return;
+    }
+    setBusy(panel, false); // stay on the panel so the user can retry
+    $("textStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
   }
 
   // image decisions
-  $("genBtn").addEventListener("click", async () => {
-    $("imageStatus").textContent = "Генерирую 12 hero…"; hideHitl(); setStep("Генерирую 12 hero…");
+  async function sendImage(fd, progressLabel) {
+    const panel = $("imagePanel");
+    $("imageStatus").textContent = "";
+    setBusy(panel, true);
+    const r = await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
+    if (r && r.ok) {
+      setBusy(panel, false);
+      hideHitl(); setStep(progressLabel);
+      return;
+    }
+    setBusy(panel, false); // stay on the panel so the user can retry
+    $("imageStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
+    show($("imagePanel"));
+  }
+  $("genBtn").addEventListener("click", () => {
     const fd = new FormData(); fd.append("action", "generate");
-    await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
+    sendImage(fd, "Генерирую 12 hero…");
   });
-  $("heroFile").addEventListener("change", async (ev) => {
+  $("heroFile").addEventListener("change", (ev) => {
     const f = ev.target.files[0]; if (!f) return;
-    hideHitl(); setStep("Загружаю картинку…");
+    ev.target.value = ""; // re-selecting the same file must re-trigger change
     const fd = new FormData(); fd.append("action", "upload"); fd.append("file", f);
-    await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
+    sendImage(fd, "Загружаю картинку…");
   });
-  $("imgCancel").addEventListener("click", async () => {
-    hideHitl();
+  $("imgCancel").addEventListener("click", () => {
+    if (!window.confirm("Отменить задачу? Прогресс будет потерян.")) return;
     const fd = new FormData(); fd.append("action", "cancel");
-    await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
+    sendImage(fd, "Отменяю…");
   });
 
   // ── terminal ───────────────────────────────────────────
@@ -139,6 +230,7 @@
     $("resultMsg").innerHTML = url
       ? `<a class="dl" href="${url}" download>⬇ Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
+    $("startBtn").disabled = false;
     loadRecentTasks();
   }
   function onError(e) {
@@ -147,6 +239,7 @@
     let msg = "Сбой генерации.";
     try { msg = JSON.parse(e.data).message || msg; } catch {}
     $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+    $("startBtn").disabled = false;
     loadRecentTasks();
   }
   function onCancelled(d) {
@@ -159,16 +252,17 @@
   }
 
   // ── helpers ────────────────────────────────────────────
+  // Both return the Response (or null on network failure); the caller renders
+  // the error in ITS panel and decides whether to restore the HITL UI.
   async function post(url, body) {
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!r.ok) $("progress").innerHTML = `<span class="err">Ошибка ${r.status}</span>`;
+    try {
+      return await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } catch (_) { return null; }
   }
   async function postForm(url, fd) {
-    const r = await fetch(url, { method: "POST", body: fd });
-    if (!r.ok) {
-      const t = r.status === 501 ? "Генерация недоступна — загрузи картинку." : `Ошибка ${r.status}`;
-      $("imageStatus").innerHTML = `<span class="err">${t}</span>`; show($("imagePanel"));
-    }
+    try {
+      return await fetch(url, { method: "POST", body: fd });
+    } catch (_) { return null; }
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

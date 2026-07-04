@@ -134,7 +134,10 @@ async def decide_text(uid: str, body: TextDecisionIn, request: Request):
     if service is None:
         raise HTTPException(503, "service unavailable")
     decision = {"action": body.action}
-    await service.submit_decision(uid, str(user.id), decision)
+    try:
+        await service.submit_decision(uid, str(user.id), decision)
+    except CapacityError as exc:
+        raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "action": body.action}
 
 
@@ -169,7 +172,10 @@ async def decide_image(
         raise HTTPException(503, "service unavailable")
 
     if action == "cancel":
-        await service.submit_decision(uid, str(user.id), {"action": "cancel"})
+        try:
+            await service.submit_decision(uid, str(user.id), {"action": "cancel"})
+        except CapacityError as exc:
+            raise HTTPException(429, str(exc)) from exc
         return {"ok": True, "action": "cancel"}
 
     if action == "generate":
@@ -183,6 +189,8 @@ async def decide_image(
             )
         except HeroGenUnavailable as exc:
             raise HTTPException(501, str(exc)) from exc
+        except CapacityError as exc:
+            raise HTTPException(429, str(exc)) from exc
         return {"ok": True, "action": "generate"}
 
     # upload
@@ -194,5 +202,8 @@ async def decide_image(
     data = await file.read()
     dest.write_bytes(data)
     decision = {"action": "upload", "local_path": str(dest)}
-    await service.submit_decision(uid, str(user.id), decision)
+    try:
+        await service.submit_decision(uid, str(user.id), decision)
+    except CapacityError as exc:
+        raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "action": "upload"}
