@@ -62,18 +62,49 @@ h1,h2,h3,.brand{font-family:var(--font-display);letter-spacing:-0.01em;}
   transition:border-color .12s,color .12s;}
 .logout-form button:hover{border-color:var(--muted);color:var(--text);}
 
-/* ── разметка страницы ───────────────────────────────────── */
-.wrap{max-width:880px;margin:0 auto;padding:40px 28px 64px;}
+/* ── разметка страницы (канон v4: 1240px + лёгкое акцент-свечение) ── */
+.wrap{max-width:1240px;margin:0 auto;padding:40px 28px 64px;position:relative;}
+/* Дозированное радиальное свечение — оживляет пустую тёмную плоскость (см. .landing::before эталона) */
+.wrap::before{content:"";position:absolute;top:-120px;right:-140px;width:520px;height:520px;
+  pointer-events:none;background:radial-gradient(circle,rgba(38,208,124,.06),transparent 65%);}
+.wrap>*{position:relative;}
 /* Заголовок раздела с фирменным диагональным штрихом-стрелкой слева */
 .page-title{font-size:30px;line-height:1.12;margin:0 0 6px;position:relative;padding-left:22px;}
 .page-title::before{content:"";position:absolute;left:0;top:4px;width:10px;height:26px;
   background:var(--accent);
   clip-path:polygon(0 0, 100% 0, 100% 30%, 42% 30%, 42% 100%, 0 100%);}
 .page-sub{margin:0 0 28px;color:var(--muted);}
-.intro{border:1px solid var(--line);border-left:3px solid var(--accent);
-  border-radius:var(--r);padding:16px 18px;margin:0 0 28px;background:var(--bg-soft);}
-.intro p{margin:0;color:var(--muted);line-height:1.55;font-size:14px;}
 .hidden{display:none !important;}
+
+/* ── канон v4: двухколоночный workspace ──────────────────────
+   Управление (бриф + hero-HITL) — левая sticky-колонка; выдача (прогресс,
+   12 предложений, баннеры, история) — правая, за 1px-хайрлайном.
+   Скопировано из эталона gateway/static/app.css@6791254 (.workspace*). */
+.workspace{display:grid;grid-template-columns:minmax(340px,420px) minmax(0,1fr);
+  gap:44px;align-items:start;}
+.workspace__controls{position:sticky;top:28px;}
+.workspace__output{display:flex;flex-direction:column;gap:30px;min-height:400px;
+  border-left:1px solid var(--line-soft);padding-left:44px;}
+.workspace__output>*{margin-top:0;}
+.workspace__output .panel{margin-bottom:0;}
+@media (max-width:1023px){
+  .workspace{grid-template-columns:1fr;gap:8px;}
+  .workspace__controls{position:static;}
+  .workspace__output{border-left:none;padding-left:0;margin-top:24px;}
+}
+
+/* ── канон v4: empty-state правой колонки (первый вход) ─────
+   Стиль .empty из эталона: прозрачная панель, 1px хайрлайн,
+   капс-заголовок, лёгкое радиальное свечение. */
+.empty{margin-top:0;padding:30px 34px;border:1px solid var(--line);border-radius:var(--r-lg);
+  color:var(--muted);
+  background:
+    radial-gradient(560px 300px at 85% -10%,rgba(38,208,124,.07),transparent 70%),
+    rgba(255,255,255,.015);}
+.empty h2{margin:0 0 14px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-2);}
+.empty p{margin:0 0 14px;font-size:14px;line-height:1.6;}
+.empty ul{margin:0;padding-left:18px;line-height:1.9;font-size:14px;}
+.empty ul b{color:var(--text);font-weight:600;}
 
 /* ── панели: структура на хайрлайнах, фон прозрачный ──────── */
 .panel{background:transparent;border:1px solid var(--line);border-radius:var(--r-lg);

@@ -4,8 +4,21 @@
   "use strict";
   const P = window.APP_PREFIX || "";
   const $ = (id) => document.getElementById(id);
-  const show = (el) => el.classList.remove("hidden");
-  const hide = (el) => el.classList.add("hidden");
+  const show = (el) => { el.classList.remove("hidden"); updateEmpty(); };
+  const hide = (el) => { el.classList.add("hidden"); updateEmpty(); };
+
+  // Канон v4: empty-state в правой колонке виден только пока там нет контента
+  // (прогресс/HITL/результаты/история). Пересчитывается на каждом show/hide.
+  const OUTPUT_PANELS = ["progressPanel", "textPanel", "imagePanel", "resultsPanel", "tasksPanel"];
+  function updateEmpty() {
+    const empty = $("emptyState");
+    if (!empty) return;
+    const hasContent = OUTPUT_PANELS.some((id) => {
+      const p = $(id);
+      return p && !p.classList.contains("hidden");
+    });
+    empty.classList.toggle("hidden", hasContent);
+  }
 
   let taskUid = null;
   let es = null; // EventSource

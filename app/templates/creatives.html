@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260704v9">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260705v10">
 </head>
 <body>
   <header class="topbar">
@@ -24,13 +24,13 @@
     <h1 class="page-title">Генерация креативов</h1>
     <p class="page-sub">Бриф → 12 предложений под аудиторию → 12 hero-картинок → 12 баннеров 300×600 (render + photo).</p>
 
-    <div class="intro">
-      <p>Этот раздел собирает рекламные баннеры под конкретную аудиторию из короткого брифа. От вас нужно три вещи: что рекламируете, на кого и какую эмоцию или образ хотите вызвать. По брифу система предложит 12 текстовых углов, отсортированных по предсказанному отклику ЦА, — вы их просматриваете и принимаете. Затем под каждое предложение генерируются 12 hero-картинок (сценарий render или photo выбирается автоматически) либо вы загружаете свою. На выходе — 12 готовых баннеров 300×600, где текст, CTA и логотип уже наложены композером. Весь путь — три шага с подтверждением на каждом, готовые баннеры можно скачать.</p>
-    </div>
+    <!-- Канон v4: двухколоночный workspace — управление слева (sticky), выдача справа -->
+    <div class="workspace">
+    <div class="workspace__controls">
 
     <!-- 1. brief -->
     <section class="panel" id="briefPanel">
-      <h2>Бриф</h2>
+      <h2>01 · Бриф</h2>
       <label for="product">Что рекламируем</label>
       <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
       <label for="audience">Целевая аудитория</label>
@@ -44,29 +44,9 @@
       <div class="status" id="briefStatus"></div>
     </section>
 
-    <!-- 2. progress -->
-    <section class="panel hidden" id="progressPanel">
-      <h2>Прогресс</h2>
-      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
-      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
-    </section>
-
-    <!-- 3. text HITL -->
-    <section class="panel hidden" id="textPanel">
-      <h2>12 предложений под аудиторию</h2>
-      <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
-      <div id="candidates" class="candidates"></div>
-      <div class="btn-row">
-        <button class="btn btn--accent" data-act="approve">Принять все</button>
-        <button class="btn" data-act="regenerate">Перегенерить все</button>
-        <button class="btn btn--danger" data-act="cancel">Отменить</button>
-      </div>
-      <div class="status" id="textStatus"></div>
-    </section>
-
-    <!-- 4. image HITL -->
+    <!-- 4. image HITL (управление: генерация/загрузка hero) -->
     <section class="panel hidden" id="imagePanel">
-      <h2>Hero-картинки</h2>
+      <h2>03 · Hero-картинки</h2>
       <p class="page-sub">12 hero-картинок (по одной на предложение, сценарий render/photo выбран под каждое). Можно сгенерировать на сервере все сразу или загрузить свою одну картинку. Ниже — пример промпта первого предложения:</p>
       <pre class="prompt" id="imagePrompt"></pre>
       <div class="btn-row">
@@ -78,9 +58,44 @@
       <div class="status" id="imageStatus"></div>
     </section>
 
+    </div><!-- /.workspace__controls -->
+    <div class="workspace__output">
+
+    <!-- 0. empty-state: первый вход — правая колонка не пустая (канон v4) -->
+    <div class="empty" id="emptyState">
+      <h2>Как это работает</h2>
+      <p>Раздел собирает рекламные баннеры под конкретную аудиторию из короткого брифа: что рекламируете, на кого и какую эмоцию хотите вызвать. Готовые баннеры можно скачать по одному или ZIP-архивом.</p>
+      <ul>
+        <li><b>01 · Бриф</b> — три поля слева: продукт, аудитория, эмоция/образ.</li>
+        <li><b>02 · Тексты</b> — 12 предложений под аудиторию, отсортированы по предсказанному отклику ЦА; вы просматриваете и принимаете.</li>
+        <li><b>03 · Hero</b> — под каждое предложение генерируется своя картинка (render или photo — выбирается автоматически), либо вы загружаете одну свою.</li>
+        <li><b>04 · Баннеры</b> — 12 готовых 300×600, текст, CTA и логотип уже наложены композером.</li>
+      </ul>
+    </div>
+
+    <!-- 2. progress -->
+    <section class="panel hidden" id="progressPanel">
+      <h2>Прогресс</h2>
+      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
+      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
+    </section>
+
+    <!-- 3. text HITL -->
+    <section class="panel hidden" id="textPanel">
+      <h2>02 · Тексты — 12 предложений под аудиторию</h2>
+      <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
+      <div id="candidates" class="candidates"></div>
+      <div class="btn-row">
+        <button class="btn btn--accent" data-act="approve">Принять все</button>
+        <button class="btn" data-act="regenerate">Перегенерить все</button>
+        <button class="btn btn--danger" data-act="cancel">Отменить</button>
+      </div>
+      <div class="status" id="textStatus"></div>
+    </section>
+
     <!-- 5. results -->
     <section class="panel hidden" id="resultsPanel">
-      <h2>Готово</h2>
+      <h2>04 · Баннеры</h2>
       <div id="resultMsg"></div>
       <div class="results" id="results"></div>
     </section>
@@ -91,9 +106,12 @@
       <p class="retention-note">История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
       <div class="task-list" id="tasksList"></div>
     </section>
+
+    </div><!-- /.workspace__output -->
+    </div><!-- /.workspace -->
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260704v9"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260705v10"></script>
 </body>
 </html>
