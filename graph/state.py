@@ -93,6 +93,19 @@ class MessageCandidate(BaseModel):
     )
 
 
+class DraftCandidate(MessageCandidate):
+    """Generation-time constraints on top of MessageCandidate (2026-07-10).
+
+    slogan is hard-capped at 42 chars — at the 300x600 slogan zone that is at
+    most 3 lines at the full 30px, so the composer never has to shrink into the
+    unreadable 20-22px floor. The cap lives HERE (not on MessageCandidate) so
+    the LLM retry-with-feedback loop enforces it at generation, while parked
+    checkpoints written before the cap still coerce fine on resume.
+    """
+
+    slogan: str = Field(max_length=42)
+
+
 class CandidateSet(BaseModel):
     """Wrapper for generate_message_candidates structured output.
 
@@ -102,7 +115,7 @@ class CandidateSet(BaseModel):
     user (HITL approves the set), so there is no single-winner selection.
     """
 
-    candidates: list[MessageCandidate] = Field(min_length=12, max_length=12)
+    candidates: list[DraftCandidate] = Field(min_length=12, max_length=12)
 
 
 # ----- Ranking (single light ranker) ---------------------------------------
@@ -162,16 +175,18 @@ class GeneratedImage(BaseModel):
     prompt: str = ""
 
 
-class ImagePromptOutput(BaseModel):
-    """Output of generate_image_prompt — what we show the user in TG.
+class ImageMetaphorOutput(BaseModel):
+    """Output of generate_image_prompt (metaphor-only redesign 2026-07-10).
 
-    `prompt` is an EN single-paragraph string ready to paste into an image
-    generator (MJ, DALL-E, SDXL, etc). `rationale` is the LLM's 1-sentence
-    note on why this composition fits the brief; we log it but don't show
-    it to the user.
+    The LLM returns ONE concrete visual METAPHOR per proposition — the
+    message's idea made tangible (an object for render, a documentary scene
+    for photo). Styling (brand green, materials, lighting, film look) and the
+    anti-text guard are added downstream by App1's brand enhancers; the fixed
+    composition/cutout-positioning clause is appended by our node. `rationale`
+    is logged only.
     """
 
-    prompt: str = Field(min_length=20)
+    metaphor: str = Field(min_length=10)
     rationale: str
 
 

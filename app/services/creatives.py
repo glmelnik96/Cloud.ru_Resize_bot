@@ -401,10 +401,37 @@ class CreativesService:
             return
 
         result_url = self._collect_results(task_uid, final)
+        cards = await self._collect_cards(task_uid)
         await reporter.done(result_url=result_url)
         meta = {"ratios": ["300x600"], "count": len(final.get("rendered_files") or [])}
-        await self._finish(task_uid, "done", result_url=result_url, meta=meta)
+        await self._finish(task_uid, "done", result_url=result_url, meta=meta, cards=cards)
         log.info("task_done", task_uid=task_uid, result_url=result_url)
+
+    # Per-banner card fields surfaced on the final grid (Block 3, 2026-07-10).
+    # Whitelist so internal candidate fields (id, …) never leak into params.
+    _CARD_KEYS = ("slogan", "body", "cta", "hook_angle", "score", "reason")
+
+    async def _collect_cards(self, task_uid: str) -> list[dict]:
+        """Snapshot the ranked propositions (+ per-banner scenario) from the
+        checkpoint. `final` only carries the LAST segment's updates (ranked was
+        produced before the text HITL pause), so we read the full state.
+        Best-effort: any failure → no cards, never a broken task."""
+        try:
+            snapshot = await self.graph.aget_state(self._config(task_uid))
+            values = dict(snapshot.values or {})
+        except Exception:  # noqa: BLE001
+            log.warning("collect_cards_failed", task_uid=task_uid, exc_info=True)
+            return []
+        ranked = values.get("ranked") or []
+        scenarios = values.get("scenarios") or []
+        cards: list[dict] = []
+        for i, cand in enumerate(ranked):
+            if not isinstance(cand, dict):
+                continue
+            card = {k: cand[k] for k in self._CARD_KEYS if k in cand}
+            card["scenario"] = scenarios[i] if i < len(scenarios) else ""
+            cards.append(card)
+        return cards
 
     def _collect_results(self, task_uid: str, final: dict) -> Optional[str]:
         """Move the graph's per-format PNGs + ZIP into results/<uid>/ and return
@@ -508,6 +535,7 @@ class CreativesService:
         result_url: Optional[str] = None,
         error: Optional[str] = None,
         meta: Optional[dict[str, Any]] = None,
+        cards: Optional[list[dict]] = None,
     ) -> None:
         async with self.Session() as s:
             res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
@@ -518,6 +546,9 @@ class CreativesService:
             task.result_url = result_url
             task.error = error
             task.finished_at = datetime.now(timezone.utc)
+            if cards:
+                # reassign (not mutate) so the JSON column change is tracked
+                task.params = {**(task.params or {}), "cards": cards}
             # Append-only usage log (one row per terminal status). Best-effort:
             # a logging failure must never break task completion.
             try:

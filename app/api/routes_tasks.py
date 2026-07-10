@@ -40,6 +40,22 @@ def _task_brief(t: models.Task) -> dict[str, str]:
     return {k: params[k] for k in _BRIEF_KEYS if k in params}
 
 
+_CARD_KEYS = ("scenario", "slogan", "body", "cta", "hook_angle", "score", "reason")
+
+
+def _task_cards(t: models.Task) -> list[dict]:
+    """Per-banner ranked cards persisted at 'done' (Block 3, 2026-07-10),
+    whitelisted so internal candidate fields never leak."""
+    cards = (t.params or {}).get("cards")
+    if not isinstance(cards, list):
+        return []
+    return [
+        {k: c[k] for k in _CARD_KEYS if k in c}
+        for c in cards
+        if isinstance(c, dict)
+    ]
+
+
 def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
     return TaskOut(
         task_uid=t.task_uid,
@@ -51,6 +67,7 @@ def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
         created_at=t.created_at.isoformat() if t.created_at else None,
         images=_task_images(t, results_dir),
         brief=_task_brief(t),
+        cards=_task_cards(t),
     )
 
 

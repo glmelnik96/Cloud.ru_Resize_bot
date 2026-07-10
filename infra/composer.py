@@ -567,6 +567,26 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     return truncated
 
 
+# Layer groups for the `only` filter (Block 1, 2026-07-10): each rendered
+# banner additionally ships alpha artifacts — the message plates, the hero
+# frame, and the brand strips as a third layer. Grouping:
+#   brand   — static ImageLayer strips (header/footer),
+#   message — every TextLayer (incl. its plate/CTA background),
+#   hero    — the hero itself plus its decor (cutout frame, dots, scrim).
+_LAYER_GROUPS: dict[str, tuple[type, ...]] = {
+    "brand": (ImageLayer,),
+    "message": (TextLayer,),
+    "hero": (HeroLayer, HeroCutoutLayer, FrameLayer, PatternDotsLayer, GradientLayer),
+}
+
+
+def _layer_group(layer: object) -> str:
+    for name, types in _LAYER_GROUPS.items():
+        if isinstance(layer, types):
+            return name
+    return "hero"  # future decor layer types default to the hero group
+
+
 def compose(
     spec: TemplateSpec,
     *,
@@ -574,6 +594,7 @@ def compose(
     texts: dict[str, str],
     assets_root: Path,
     slug: str | None = None,
+    only: set[str] | frozenset[str] | None = None,
 ) -> Image.Image:
     """Render one PNG from spec + hero + slot texts.
 
@@ -586,6 +607,10 @@ def compose(
             title/date/speaker_* in M4) to string.
         assets_root: project root (used to resolve ImageLayer.path).
         slug: optional format slug, used only in text_truncated logging.
+        only: optional layer-group filter ({"brand"|"message"|"hero"}).
+            When set, ONLY those groups are drawn on a fully TRANSPARENT
+            canvas (no background fill) — used for the per-banner alpha
+            artifacts. Filtered-out hero layers never require a hero.
 
     Returns:
         PIL.Image.Image in RGBA mode, caller is responsible for saving.
@@ -599,10 +624,15 @@ def compose(
     else:
         hero_img = hero.convert("RGBA") if hero.mode != "RGBA" else hero
 
-    canvas = Image.new("RGBA", (spec.width, spec.height), spec.background_color)
+    background = (0, 0, 0, 0) if only is not None else spec.background_color
+    canvas = Image.new("RGBA", (spec.width, spec.height), background)
 
-    # Stable sort by z; preserve declaration order for equal z.
+    # Stable sort by z; preserve declaration order for equal z. The group
+    # filter runs BEFORE the loop so an excluded hero layer never demands a
+    # hero (message/brand artifacts are rendered with hero=None).
     layers = sorted(enumerate(spec.layers), key=lambda iv: (iv[1].z, iv[0]))
+    if only is not None:
+        layers = [iv for iv in layers if _layer_group(iv[1]) in only]
 
     for _, layer in layers:
         if isinstance(layer, ImageLayer):

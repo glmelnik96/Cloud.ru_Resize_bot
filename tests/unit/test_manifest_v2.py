@@ -175,6 +175,19 @@ def test_production_manifest_still_loads():
     assert m.scenarios == {}
 
 
+def test_production_slogan_floor_is_readable():
+    """2026-07-10: with the 42-char slogan cap the composer should never have
+    to shrink below 24px — a lower floor produced unreadable 20-22px slogans on
+    long messages."""
+    m = load_manifest(MANIFEST)
+    for slug in ("banner_300x600_render", "banner_300x600_photo"):
+        slogan = next(
+            l for l in m.templates[slug].layers
+            if getattr(l, "slot", None) == "slogan"
+        )
+        assert slogan.font_size_min == 24, f"{slug}: {slogan.font_size_min}"
+
+
 # ----- apply_variant ----------------------------------------------------------
 
 

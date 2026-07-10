@@ -180,6 +180,51 @@ def test_list_tasks_brief_whitelists_known_keys(tmp_path, monkeypatch):
         assert set(rows[0]["brief"].keys()) == {"product", "audience", "emotion"}
 
 
+def test_list_tasks_exposes_banner_cards(tmp_path, monkeypatch):
+    """Block 3 (2026-07-10): the extended per-banner text (slogan/cta/hook/
+    reason/body + scenario) must survive to the final result — the UI draws a
+    caption under each banner. Cards travel in params['cards'], whitelisted."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "cards1", "done", me["id"],
+            params={
+                "product": "p",
+                "cards": [
+                    {
+                        "slogan": "Инфра без сюрпризов", "body": "идея",
+                        "cta": "Начать", "hook_angle": "rational",
+                        "score": 9.5, "reason": "почему зайдёт",
+                        "scenario": "render",
+                        "internal_leak": "x",  # must be dropped
+                    }
+                ],
+            },
+        )
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        cards = rows[0]["cards"]
+        assert len(cards) == 1
+        assert cards[0]["slogan"] == "Инфра без сюрпризов"
+        assert cards[0]["scenario"] == "render"
+        assert cards[0]["reason"] == "почему зайдёт"
+        assert "internal_leak" not in cards[0]
+
+
+def test_list_tasks_cards_empty_when_absent(tmp_path, monkeypatch):
+    """Old tasks (pre-Block-3) have no cards in params → empty list, no crash."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "old1", "done", me["id"], params={"product": "p"})
+        rows = c.get("/api/tasks", headers=_HDR).json()
+        assert rows[0]["cards"] == []
+
+
 def test_list_tasks_images_empty_for_non_done(tmp_path, monkeypatch):
     db = tmp_path / "r.db"
     results = tmp_path / "results"

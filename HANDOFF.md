@@ -115,7 +115,7 @@ Resize_bot/
 ├─ llm/
 │  └─ cloudru.py                   # model-aware thinking-toggle, retry-with-feedback
 ├─ graph/
-│  ├─ state.py                     # AdBrief / Persona / MessageCandidate / ImagePromptOutput
+│  ├─ state.py                     # AdBrief / Persona / MessageCandidate / ImageMetaphorOutput
 │  ├─ builder.py                   # state graph wiring
 │  └─ nodes/                       # parse_brief, derive_persona, generate_message_candidates,
 │                                  #   evaluate_as_persona_loop, hitl_text_approve,

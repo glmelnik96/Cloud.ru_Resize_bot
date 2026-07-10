@@ -53,9 +53,17 @@ async def render_all(state: GraphState) -> dict:
 
 
 def _build_zip_sync(zip_path: Path, files: list[dict]) -> None:
-    """Write the ZIP archive. Runs in a worker thread."""
+    """Write the ZIP archive. Runs in a worker thread.
+
+    Alpha layer artifacts (Block 1, 2026-07-10) go under layers/ so the
+    top-level of the archive — and the results-dir *.png glob that feeds the
+    web grid — stays composites-only."""
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for entry in files:
             src = Path(entry["path"])
             arcname = f"{entry['format']}{src.suffix}"
             zf.write(src, arcname=arcname)
+            for name, lpath in (entry.get("layers") or {}).items():
+                lsrc = Path(lpath)
+                if lsrc.exists():
+                    zf.write(lsrc, arcname=f"layers/{entry['format']}_{name}{lsrc.suffix}")

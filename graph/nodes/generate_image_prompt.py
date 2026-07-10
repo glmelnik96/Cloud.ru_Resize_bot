@@ -1,25 +1,31 @@
-"""generate_image_prompt node — GLM-5.1 hero-image prompt writer (M3.3).
+"""generate_image_prompt node — per-message visual METAPHOR writer.
+
+Metaphor-only redesign (2026-07-10): the downstream hero generator (App1)
+runs its own brand enhancers — AMPLIFIERS that add ALL the styling (brand
+green, materials, finish, lighting, film look) AND the anti-text guard. Our
+old full prompts duplicated that work, so heroes came out varied-but-generic
+and unrelated to the banner's message.
+
+Now the LLM derives ONE concrete visual METAPHOR from THE MESSAGE itself
+(slogan + body + hook_angle) — the idea made tangible — and the node appends
+OUR fixed composition clause, the only thing the enhancer can't invent:
+cutout positioning for render (isometric angle, near-square frame-filling
+proportion, centered with even margins) and safe-crop framing for photo
+(central subject, the frame is later cover-cropped to a tall vertical
+banner).
 
 Input:
   - GraphState.brief (AdBrief)
   - GraphState.personas (list[Persona]) — single persona, [0]
   - GraphState.ranked (all 12 propositions, best-first)
-  - GraphState.scenarios (list[str], one ∈ {render, photo} per proposition) —
-    set by route_image_style upstream
+  - GraphState.scenarios (list[str], one ∈ {render, photo} per proposition)
 Output:
-  - GraphState.image_prompts (list[str]) — one EN single-paragraph hero
-    prompt per proposition, the per-banner generation input.
-  - GraphState.image_prompt (str) — the top-ranked prompt, kept so the HITL
-    image gate / manual-upload fallback still has one prompt to display.
+  - GraphState.image_prompts (list[str]) — metaphor + composition clause per
+    proposition, the per-banner generation input.
+  - GraphState.image_prompt (str) — the top-ranked prompt (HITL display).
 
-The 12-banner redesign (2026-06-21) writes one hero prompt per proposition,
-each cued by that proposition's scenario (render -> isometric 3D device on a
-clean studio backdrop; photo -> full scene). We no longer auto-generate here;
-heroes are produced by App1 in CreativesService.generate_decision.
-
-Soft validation: we warn (don't retry) when a prompt is outside the
-40-90 word band, contains Cyrillic, or is missing "no text"/"no letters".
-The schema only enforces min_length=20 on the prompt.
+Soft validation: warn (don't retry) when a metaphor is outside the word band
+or contains Cyrillic. No "no text" check — App1's enhancer owns that guard.
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ from graph.prompts import load_skill
 from graph.state import (
     AdBrief,
     GraphState,
-    ImagePromptOutput,
+    ImageMetaphorOutput,
     MessageCandidate,
     Persona,
 )
@@ -48,96 +54,52 @@ _SKILL_NAME = "generate_image_prompt"
 
 _VALID_STYLES = {"photo", "render"}
 
-# The downstream hero generator (App1 `render` scenario) runs its own brand
-# render enhancer — an AMPLIFIER that adds ALL the styling (the brand-green
-# accent, materials, finish, studio lighting, the 3D/isometric brand look). Our
-# directive must therefore carry ONLY what the enhancer can't invent for us:
-#   1. the conceptual "device" (the per-banner metaphor, derived by the model
-#      from the proposition's hook), expressed as one concrete object;
-#   2. the isometric ~30-degree three-quarter angle (the brand viewpoint);
-#   3. positioning for a clean cutout — a single fully-visible, centered object
-#      with generous even margins (the composer crops to the alpha bbox but
-#      can't recover an object App1 generated touching/cropped at an edge).
-# Everything else (colour, green accent, material, lighting, backdrop) is left
-# UNSPECIFIED on purpose — prescribing it here fights the enhancer (the old
-# "big green crystal" demand kept rendering blue/clear because the enhancer adds
-# only a small restrained #25D07B accent, never a dominant crystal).
-_STYLE_DIRECTIVE_RENDER = (
-    "render (express this proposition's core idea as ONE single concrete "
-    "three-dimensional object or device — the metaphor made tangible — shown in "
-    "an isometric view from a ~30-degree three-quarter angle. Give it compact, "
-    "roughly square (about 1:1) overall proportions — a chunky, substantial "
-    "object that fills the frame in both width and height, never wide-and-flat "
-    "nor tall-and-thin (the composer scales the cutout to fill a full-width band, "
-    "so a flat or thin object would letterbox small). Make it the one dominant "
-    "subject, fully visible and centered with only a small even margin so nothing "
-    "touches or is cropped by an edge and the background can be removed cleanly. "
-    "Describe only the object's form, its proportion, the metaphor and the angle; "
-    "leave its colour, material, finish and lighting unspecified — a recognisable "
-    "object, not an abstract diagram)"
-)
-
-# Photo banners must NOT all be the same stock "confident man in an office".
-# We vary the scene per banner (subject / setting / mood) and make ~1/3 of them
-# people-free (objects, workspaces, hardware) for subject variety. The variant
-# is chosen deterministically by the photo's position so a run stays
-# reproducible. Each people-free variant carries the literal marker
-# "no people in the scene" (used by the composer-agnostic tests + as a clear
-# cue to App1).
+# OUR composition clauses — geometry/positioning ONLY. Styling (colour,
+# materials, lighting, film look, brand green) and the anti-text guard belong
+# to App1's brand enhancers; prescribing them here fights the enhancer.
 #
-# Like the render directive, these carry ONLY subject + action (the mood
-# metaphor), the framing intent and the people/no-people marker. App1's photo
-# enhancer is an AMPLIFIER that adds the palette (Kodak Portra grade, cool base
-# + warm skin), the lens / depth of field, the lighting and the single green
-# environmental accent — so prescribing any of that here is duplication. None
-# of the photo variants mention 3D / isometric / green.
-_PHOTO_PEOPLE = (
-    "photo (a calm operator standing with a coffee, back turned to a wall of "
-    "status screens in a control room, seen from behind, unhurried — a quiet "
-    "sense of everything being under control)",
-    "photo (a single on-call engineer at the monitors in a night operations "
-    "room, relaxed and unworried, a mid-shot — the calm of reliable round-the-"
-    "clock infrastructure)",
-    "photo (a close-up of a hand resting lightly on a laptop trackpad at the "
-    "very edge of the frame, the person soft behind — the feeling of control "
-    "right at your fingertips)",
-    "photo (a portrait of a woman in her late 20s in a modern startup space, a "
-    "calm confident half-smile — quietly in command)",
-    "photo (a man in his late 20s at a standing desk in an open-plan office, "
-    "unhurried and quietly focused, a mid-shot — a relaxed, in-control workday)",
-)
-_PHOTO_NO_PEOPLE = (
-    "photo (a long data-center aisle of server racks vanishing into deep "
-    "perspective, status lights receding into the distance, and no people in "
-    "the scene — a sense of vast, scalable capacity)",
-    "photo (immaculately routed fibre-optic cables in clean parallel rows, "
-    "every strand in perfect order, a tight macro, and no people in the scene "
-    "— the calm of a perfectly ordered system)",
-    "photo (a calm, uncluttered desk at dawn — a closed laptop and a single "
-    "coffee, and no people in the scene — a quiet, ready, in-control start)",
+# Render: the composer alpha-crops the cutout and scales it to fill a
+# full-width band, so the object must be near-square and frame-filling
+# (wide-flat or tall-thin letterboxes small), fully visible with even margins
+# (an edge-cropped object can't be background-removed cleanly).
+_COMPOSITION_RENDER = (
+    "Show it as one single concrete three-dimensional object in an isometric "
+    "view from a ~30-degree three-quarter angle, with compact, roughly square "
+    "(about 1:1) overall proportions that fill the frame in both width and "
+    "height, never wide-and-flat nor tall-and-thin. The one dominant subject, "
+    "fully visible and centered with a small even margin on every side so "
+    "nothing touches or is cropped by an edge."
 )
 
+# Photo: the composer cover-crops the frame into a tall 300x550 banner, so
+# the subject must live in the central vertical band — anything near the
+# left/right edges is discarded by the crop.
+_COMPOSITION_PHOTO = (
+    "A real, grounded documentary scene. Keep the main subject in the central "
+    "vertical band of the frame with calm, uncluttered space above and below "
+    "— the frame is later cover-cropped to a tall vertical banner, so nothing "
+    "important should sit near the left or right edges."
+)
 
-def _photo_directives(n_photos: int) -> list[str]:
-    """Assign a distinct scene directive to each of the ``n_photos`` photo
-    banners, making every 3rd one (position % 3 == 2) people-free — ~1/3 of the
-    set. People and people-free variants are indexed by their own running
-    counters so consecutive picks stay distinct. With the production 6/6 lock
-    this yields exactly 2 people-free photos out of 6."""
-    out: list[str] = []
-    people_i = 0
-    nopeople_i = 0
-    for pos in range(n_photos):
-        if pos % 3 == 2:
-            out.append(_PHOTO_NO_PEOPLE[nopeople_i % len(_PHOTO_NO_PEOPLE)])
-            nopeople_i += 1
-        else:
-            out.append(_PHOTO_PEOPLE[people_i % len(_PHOTO_PEOPLE)])
-            people_i += 1
-    return out
+_COMPOSITION = {"render": _COMPOSITION_RENDER, "photo": _COMPOSITION_PHOTO}
 
-_WORD_MIN = 40
-_WORD_MAX = 90
+# What kind of metaphor we ask the LLM for, per scenario (goes into the LLM
+# input, NOT into the wire prompt).
+_METAPHOR_KIND = {
+    "render": (
+        "one single concrete three-dimensional OBJECT or device that makes "
+        "this message's idea tangible — a recognisable object, not an "
+        "abstract diagram"
+    ),
+    "photo": (
+        "one real, believable documentary SCENE (a person, a place or a "
+        "grounded object arrangement) that makes this message's idea "
+        "tangible — not a contrived or surreal construction"
+    ),
+}
+
+_WORD_MIN = 5
+_WORD_MAX = 40
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
 
 
@@ -165,19 +127,16 @@ async def generate_image_prompt(state: GraphState) -> dict:
             scenarios[i] if i < len(scenarios) else "photo"
             for i in range(len(candidates))
         ]
+    styles = [s if s in _VALID_STYLES else "photo" for s in scenarios]
 
     skill = load_skill(_SKILL_NAME)
     system_msg = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
 
-    directives = _resolve_directives(scenarios)
-
     prompts = await asyncio.gather(
         *(
-            _build_one(
-                system_msg, user_tpl, brief, persona, cand, directive, session_id
-            )
-            for cand, directive in zip(candidates, directives)
+            _build_one(system_msg, user_tpl, brief, persona, cand, style, session_id)
+            for cand, style in zip(candidates, styles)
         )
     )
     prompts = list(prompts)
@@ -190,32 +149,13 @@ async def generate_image_prompt(state: GraphState) -> dict:
     return {"image_prompts": prompts, "image_prompt": prompts[0]}
 
 
-def _resolve_directives(scenarios: list[str]) -> list[str]:
-    """Map each per-banner scenario to its visual-style directive: render -> the
-    fixed isometric/positioning directive; photo -> a varied scene directive
-    (with ~1/3 people-free), assigned by the photo's position in the set so the
-    12 photos don't collapse into one identical stock person."""
-    n_photos = sum(1 for s in scenarios if (s if s in _VALID_STYLES else "photo") == "photo")
-    photo_dirs = _photo_directives(n_photos)
-    out: list[str] = []
-    photo_cursor = 0
-    for scen in scenarios:
-        style = scen if scen in _VALID_STYLES else "photo"
-        if style == "render":
-            out.append(_STYLE_DIRECTIVE_RENDER)
-        else:
-            out.append(photo_dirs[photo_cursor])
-            photo_cursor += 1
-    return out
-
-
 async def _build_one(
     system_msg: str,
     user_tpl: str,
     brief: AdBrief,
     persona: Persona,
     cand: MessageCandidate,
-    style_directive: str,
+    style: str,
     session_id: str | None,
 ) -> str:
     user_msg = _render(
@@ -229,10 +169,11 @@ async def _build_one(
             "persona.age_range": persona.age_range,
             "persona.pain_points": ", ".join(persona.pain_points),
             "persona.communication_style": persona.communication_style,
-            "winner.slogan": cand.slogan,
-            "winner.cta": cand.cta,
-            "winner.hook_angle": cand.hook_angle,
-            "image_style": style_directive,
+            "message.slogan": cand.slogan,
+            "message.body": cand.body,
+            "message.cta": cand.cta,
+            "message.hook_angle": cand.hook_angle,
+            "metaphor_kind": _METAPHOR_KIND[style],
         },
     )
     result = await run_agent(
@@ -241,32 +182,26 @@ async def _build_one(
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
         ],
-        schema=ImagePromptOutput,
+        schema=ImageMetaphorOutput,
         session_id=session_id,
     )
-    prompt = result.prompt.strip()
-    _soft_validate(prompt, session_id=session_id)
-    return prompt
+    metaphor = result.metaphor.strip()
+    _soft_validate(metaphor, session_id=session_id)
+    return f"{metaphor.rstrip('.')}. {_COMPOSITION[style]}"
 
 
-def _soft_validate(prompt: str, *, session_id: str | None) -> None:
-    words = _word_count(prompt)
+def _soft_validate(metaphor: str, *, session_id: str | None) -> None:
+    words = _word_count(metaphor)
     if not (_WORD_MIN <= words <= _WORD_MAX):
         log.warning(
-            "image_prompt_length_out_of_band",
+            "image_metaphor_length_out_of_band",
             session_id=session_id,
             words=words,
             target=f"{_WORD_MIN}-{_WORD_MAX}",
         )
-    if _CYRILLIC_RE.search(prompt):
+    if _CYRILLIC_RE.search(metaphor):
         log.warning(
-            "image_prompt_contains_cyrillic",
-            session_id=session_id,
-        )
-    low = prompt.lower()
-    if "no text" not in low and "no letters" not in low:
-        log.warning(
-            "image_prompt_missing_no_text_guard",
+            "image_metaphor_contains_cyrillic",
             session_id=session_id,
         )
 

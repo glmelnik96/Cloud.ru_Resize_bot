@@ -3,8 +3,9 @@
 The 12-banner redesign drops the single-hero image stage. Instead:
   - route_image_style classifies EACH of the 12 ranked propositions into a
     brand scenario (render|photo); isometric folds into render.
-  - generate_image_prompt writes ONE EN prompt per proposition, using that
-    proposition's scenario as the visual-style cue.
+  - generate_image_prompt derives ONE visual METAPHOR per proposition
+    (metaphor-only redesign 2026-07-10) and wraps it in our fixed composition
+    clause; App1's brand enhancer owns all styling + the anti-text guard.
 
 Both nodes keep the legacy single fields (image_style / image_prompt = the
 top-ranked one) so the HITL image gate still has something to display.
@@ -16,7 +17,7 @@ import pytest
 from graph.nodes import generate_image_prompt as gip
 from graph.nodes import ranked_candidates
 from graph.nodes import route_image_style as ris
-from graph.state import ImagePromptOutput, ImageStyleChoice, MessageCandidate
+from graph.state import ImageMetaphorOutput, ImageStyleChoice, MessageCandidate
 
 
 def _brief() -> dict:
@@ -169,75 +170,21 @@ async def test_route_keeps_balanced_split_verbatim(monkeypatch):
     assert out["scenarios"].count("render") == 6
 
 
-# ----- generate_image_prompt: 12 prompts -----------------------------------
-
-
-@pytest.mark.asyncio
-async def test_build_image_prompts_one_per_candidate(monkeypatch):
-    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
-        user = messages[1]["content"]
-        idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
-        # echo the image_style cue so we can assert scenario routing
-        style = "render" if "render" in user else "photo"
-        return ImagePromptOutput(
-            prompt=f"prompt for SLOGAN{idx} as {style}, no text",
-            rationale="r",
-        )
-
-    monkeypatch.setattr(gip, "run_agent", fake_run_agent)
-    state = _state()
-    state["scenarios"] = [
-        "render" if i % 2 == 0 else "photo" for i in range(12)
-    ]
-    out = await gip.generate_image_prompt(state)  # type: ignore[arg-type]
-    prompts = out["image_prompts"]
-    assert len(prompts) == 12
-    for i, p in enumerate(prompts):
-        assert f"SLOGAN{i}" in p
-        expected_style = "render" if i % 2 == 0 else "photo"
-        assert expected_style in p
-    # legacy single field = top-ranked prompt
-    assert out["image_prompt"] == prompts[0]
-
-
-@pytest.mark.asyncio
-async def test_render_scenario_bakes_isometric_into_prompt_input(monkeypatch):
-    """render must carry an explicit isometric viewpoint into the LLM input;
-    photo must NOT (App1 render = 3D product shot, we want it isometric)."""
-    seen: dict[int, str] = {}
-
-    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
-        user = messages[1]["content"]
-        idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
-        seen[idx] = user
-        return ImagePromptOutput(
-            prompt=f"prompt number {idx} for the hero, no text", rationale="r"
-        )
-
-    monkeypatch.setattr(gip, "run_agent", fake_run_agent)
-    state = _state()
-    state["scenarios"] = [
-        "render" if i % 2 == 0 else "photo" for i in range(12)
-    ]
-    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
-    for i, user in seen.items():
-        if i % 2 == 0:  # render
-            assert "isometric" in user.lower()
-        else:  # photo
-            assert "isometric" not in user.lower()
+# ----- generate_image_prompt: 12 metaphors → 12 wire prompts ----------------
 
 
 def _capture_users(monkeypatch) -> dict[int, str]:
     """Run generate_image_prompt over a render/photo split and return the LLM
-    user-message per ranked index."""
+    user-message per ranked index. The stubbed agent answers with a metaphor
+    echoing the slogan so the wire prompt stays attributable."""
     seen: dict[int, str] = {}
 
     async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
         user = messages[1]["content"]
         idx = next(i for i in range(11, -1, -1) if f"SLOGAN{i}" in user)
         seen[idx] = user
-        return ImagePromptOutput(
-            prompt=f"hero prompt number {idx} for the banner, no text",
+        return ImageMetaphorOutput(
+            metaphor=f"a tangible visual metaphor for SLOGAN{idx}",
             rationale="r",
         )
 
@@ -246,92 +193,81 @@ def _capture_users(monkeypatch) -> dict[int, str]:
 
 
 @pytest.mark.asyncio
-async def test_photo_directives_are_distinct_per_banner(monkeypatch):
-    """All photo banners must NOT share one identical visual directive — each
-    photo carries its own varied scene cue (demographics / framing / setting)."""
+async def test_build_image_prompts_one_per_candidate(monkeypatch):
     seen = _capture_users(monkeypatch)
     state = _state()
-    # 6 render + 6 photo (the production 6/6 lock).
-    state["scenarios"] = ["render"] * 6 + ["photo"] * 6
-    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
-    photo_users = [seen[i] for i in range(6, 12)]
-    # The injected CHOSEN VISUAL STYLE line must differ across photos.
-    style_lines = [
-        next(ln for ln in u.splitlines() if "CHOSEN VISUAL STYLE" in ln)
-        for u in photo_users
+    state["scenarios"] = [
+        "render" if i % 2 == 0 else "photo" for i in range(12)
     ]
-    assert len(set(style_lines)) == len(style_lines), "photo directives repeat"
+    out = await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    prompts = out["image_prompts"]
+    assert len(prompts) == 12
+    for i, p in enumerate(prompts):
+        assert f"SLOGAN{i}" in p, "wire prompt must carry the per-message metaphor"
+    # legacy single field = top-ranked prompt
+    assert out["image_prompt"] == prompts[0]
+    assert len(seen) == 12
 
 
 @pytest.mark.asyncio
-async def test_one_third_of_photos_have_no_people(monkeypatch):
-    """~1/3 of the photo banners must be people-free scenes (objects / spaces),
-    the rest feature a real person. With 6 photos that is exactly 2 no-people."""
+async def test_llm_input_carries_message_not_scene_pool(monkeypatch):
+    """The metaphor must derive from THE MESSAGE (slogan + body + hook), not
+    from a canned scene pool — the LLM input carries the candidate's own
+    fields, and the node no longer owns any prewritten photo scenes."""
     seen = _capture_users(monkeypatch)
     state = _state()
     state["scenarios"] = ["render"] * 6 + ["photo"] * 6
     await gip.generate_image_prompt(state)  # type: ignore[arg-type]
-    photo_users = [seen[i] for i in range(6, 12)]
-    no_people = [u for u in photo_users if "no people in the scene" in u]
-    assert len(no_people) == 2, f"expected 2 no-people photos, got {len(no_people)}"
-    # render banners are never tagged with the photo no-people marker
-    render_users = [seen[i] for i in range(6)]
-    assert not any("no people in the scene" in u for u in render_users)
-
-
-def test_render_directive_delegates_styling_to_app1():
-    """The render directive must carry ONLY the metaphor 'device', the isometric
-    angle and the positioning for a clean cutout. Materials, colour (the brand
-    green accent), finish and lighting are added by App1's render enhancer, so
-    the directive must NOT prescribe them — over-specifying them here fights the
-    enhancer (e.g. the forced 'big green crystal' kept rendering blue/clear)."""
-    low = gip._STYLE_DIRECTIVE_RENDER.lower()
-    # keeps: isometric angle + positioning (cutout pins)
-    assert "isometric" in low
-    assert "center" in low and "margin" in low
-    # drops: brand styling the App1 enhancer owns
-    for banned in ("crystal", "emerald", "lime", "green", "metal", "glass",
-                   "studio lighting", "matte", "backdrop"):
-        assert banned not in low, f"render directive must not prescribe {banned!r}"
-
-
-def test_render_directive_pins_near_square_filling_proportion():
-    """The composer alpha-bbox-crops then contain-fits the cutout into a
-    full-width band, so the device's *aspect ratio* — not its source size —
-    decides how large it reads. A wide-flat or tall-thin object letterboxes
-    small; only a roughly-square, frame-filling object fills the band. The
-    directive must therefore pin a compact ~square proportion that fills the
-    composition (this is the size/placement fix App1's enhancer can't supply)."""
-    low = gip._STYLE_DIRECTIVE_RENDER.lower()
-    assert "square" in low, "render directive must pin a near-square proportion"
-    assert "fill" in low, "render directive must ask the object to fill the frame"
-    assert "flat" in low, "render directive must warn against wide-and-flat objects"
-
-
-def test_photo_directives_delegate_styling_to_app1():
-    """Photo directives must carry ONLY subject + action (the mood metaphor),
-    framing intent and the people/no-people marker. Palette, film stock, lens,
-    depth of field, lighting and the green accent are added by App1's photo
-    enhancer — the directive must not duplicate them."""
-    for d in gip._PHOTO_PEOPLE + gip._PHOTO_NO_PEOPLE:
-        low = d.lower()
-        for banned in ("kodak", "portra 400", "50mm", "35mm", "85mm", "f/1.8",
-                       "depth of field", "ambient light", "window light",
-                       "directional light", "bokeh", "grain", "#25d07b"):
-            assert banned not in low, f"photo directive must not prescribe {banned!r}: {d}"
-    # the people-free variants still carry the literal cutting marker
-    assert all("no people in the scene" in d for d in gip._PHOTO_NO_PEOPLE)
+    for i, user in seen.items():
+        assert f"SLOGAN{i}" in user
+        assert f"body{i}" in user, "candidate body must reach the LLM"
+    # the 2026-06 canned photo-scene pool is gone
+    assert not hasattr(gip, "_PHOTO_PEOPLE")
+    assert not hasattr(gip, "_PHOTO_NO_PEOPLE")
+    assert not hasattr(gip, "_photo_directives")
 
 
 @pytest.mark.asyncio
-async def test_render_directive_fixes_object_positioning(monkeypatch):
-    """The render directive sent to App1 must pin object positioning (fully
-    visible, centered, even margins) so cutouts come back consistently framed."""
-    seen = _capture_users(monkeypatch)
+async def test_render_wire_prompt_carries_our_composition(monkeypatch):
+    """Positioning/composition is OURS (App1's enhancer can't invent it): the
+    render wire prompt pins isometric angle, near-square frame-filling
+    proportion and centered/even-margin cutout positioning."""
+    _capture_users(monkeypatch)
     state = _state()
     state["scenarios"] = ["render"] * 6 + ["photo"] * 6
-    await gip.generate_image_prompt(state)  # type: ignore[arg-type]
-    for i in range(6):
-        low = seen[i].lower()
-        assert "centered" in low or "center" in low
+    out = await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    for p in out["image_prompts"][:6]:
+        low = p.lower()
+        assert "isometric" in low
+        assert "square" in low
         assert "margin" in low
+        assert "center" in low
+
+
+@pytest.mark.asyncio
+async def test_photo_wire_prompt_composition_no_isometric(monkeypatch):
+    """Photo wire prompts carry the photo composition clause (central subject —
+    the frame is cover-cropped to a tall banner) and never isometric/3D cues."""
+    _capture_users(monkeypatch)
+    state = _state()
+    state["scenarios"] = ["render"] * 6 + ["photo"] * 6
+    out = await gip.generate_image_prompt(state)  # type: ignore[arg-type]
+    for p in out["image_prompts"][6:]:
+        low = p.lower()
+        assert "isometric" not in low
+        assert "vertical" in low, "photo clause must warn about the tall crop"
+
+
+def test_composition_clauses_delegate_styling_to_app1():
+    """Both composition clauses carry ONLY geometry/positioning. Styling
+    (colour, materials, lighting, film look, brand green) and the anti-text
+    guard are owned by App1's enhancers — prescribing them here fights the
+    enhancer."""
+    for clause in (gip._COMPOSITION_RENDER, gip._COMPOSITION_PHOTO):
+        low = clause.lower()
+        for banned in ("crystal", "emerald", "lime", "green", "metal", "glass",
+                       "studio lighting", "matte", "backdrop", "kodak", "bokeh",
+                       "no text", "no logos"):
+            assert banned not in low, f"composition must not prescribe {banned!r}"
+    low_r = gip._COMPOSITION_RENDER.lower()
+    assert "square" in low_r and "fill" in low_r and "flat" in low_r

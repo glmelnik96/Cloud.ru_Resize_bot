@@ -325,6 +325,90 @@ async def test_terminal_collects_results_to_results_dir(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_terminal_persists_banner_cards(tmp_path):
+    """Block 3 (2026-07-10): at 'done' the orchestrator snapshots the ranked
+    propositions (+ per-banner scenario) from the checkpoint into
+    task.params['cards'], so the final grid can caption each banner even
+    after the graph checkpoint is gone."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    png = tmp_path / "b.png"
+    png.write_bytes(b"x")
+    graph = _TerminalGraph([{"format": "01_render", "path": str(png)}], None)
+    graph.values = {
+        "ranked": [
+            {"id": "c1", "slogan": "S1", "body": "B1", "cta": "CTA1",
+             "hook_angle": "rational", "score": 9.0, "reason": "R1",
+             "internal": "leak"},
+            {"id": "c2", "slogan": "S2", "body": "B2", "cta": "CTA2",
+             "hook_angle": "curiosity", "score": 8.0, "reason": "R2"},
+        ],
+        "scenarios": ["render", "photo"],
+    }
+
+    async def _aget_state(config):
+        return _FakeState(graph.values)
+
+    graph.aget_state = _aget_state
+    svc = _service(Session, graph, bus=bus, tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    async with Session() as s:
+        s.add(models.Task(task_uid="cards1", user_id=1, workflow="creatives",
+                          status="awaiting_image", params={"product": "p"}))
+        await s.commit()
+
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="cards1", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "cards1", "1", Command(resume={"action": "upload", "local_path": "x"}), reporter
+    )
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "cards1"))
+        task = res.scalar_one()
+    assert task.status == "done"
+    cards = task.params["cards"]
+    assert [c["slogan"] for c in cards] == ["S1", "S2"]
+    assert [c["scenario"] for c in cards] == ["render", "photo"]
+    assert cards[0]["reason"] == "R1" and cards[0]["cta"] == "CTA1"
+    assert "internal" not in cards[0] and "id" not in cards[0]
+    # the original brief params survive the merge
+    assert task.params["product"] == "p"
+
+
+@pytest.mark.asyncio
+async def test_terminal_without_aget_state_still_finishes(tmp_path):
+    """Cards are best-effort: a graph without aget_state (or a snapshot
+    failure) must not break task completion."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    png = tmp_path / "b.png"
+    png.write_bytes(b"x")
+    svc = _service(
+        Session, _TerminalGraph([{"format": "f1", "path": str(png)}], None),
+        bus=bus, tmp=tmp_path / "tmp", results_dir=tmp_path / "res",
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="nog1", user_id=1, workflow="creatives",
+                          status="awaiting_image"))
+        await s.commit()
+
+    from langgraph.types import Command
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="nog1", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "nog1", "1", Command(resume={"action": "upload", "local_path": "x"}), reporter
+    )
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "nog1"))
+        task = res.scalar_one()
+    assert task.status == "done"
+    assert "cards" not in (task.params or {})
+
+
+@pytest.mark.asyncio
 async def test_collect_results_png_fallback_when_no_zip(tmp_path):
     Session = await _sessionmaker(tmp_path)
     svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")

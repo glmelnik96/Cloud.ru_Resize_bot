@@ -128,9 +128,15 @@ def _render_one_sync(
 ) -> dict | None:
     """Compose + save one banner. Runs in a worker thread.
 
-    Returns {format, path} on success, None on failure (per-banner
+    Returns {format, path, layers} on success, None on failure (per-banner
     isolation: one bad compose never kills the rest). ``label`` is the
     unique per-banner id used for the filename and the ZIP arcname.
+
+    ``layers`` (Block 1, 2026-07-10) maps message/hero/brand to transparent-PNG
+    artifacts of the same banner: the text plates alone, the hero frame alone
+    (photo scenario = the cover-cropped photo as-is, no cutout — так задумано),
+    and the brand strips as a third layer. Best-effort: a failed artifact is
+    skipped, the composite still ships.
     """
     fmt_start = datetime.utcnow()
     try:
@@ -143,6 +149,30 @@ def _render_one_sync(
         )
         path = _RENDER_DIR / f"{session_id}_{label}_{ts}.png"
         canvas.save(path, format="PNG", optimize=True)
+
+        layers: dict[str, str] = {}
+        for group in ("message", "hero", "brand"):
+            try:
+                art = compose(
+                    spec,
+                    hero=hero_bytes if group == "hero" else None,
+                    texts=texts,
+                    assets_root=_REPO_ROOT,
+                    slug=slug,
+                    only={group},
+                )
+                art_path = _RENDER_DIR / f"{session_id}_{label}_{ts}_{group}.png"
+                art.save(art_path, format="PNG", optimize=True)
+                layers[group] = str(art_path)
+            except Exception as exc:  # noqa: BLE001 — artifact is optional
+                log.warning(
+                    "compose_layer_artifact_error",
+                    session_id=session_id,
+                    label=label,
+                    group=group,
+                    error=str(exc),
+                )
+
         log.info(
             "compose_format_ok",
             session_id=session_id,
@@ -152,7 +182,7 @@ def _render_one_sync(
                 (datetime.utcnow() - fmt_start).total_seconds() * 1000
             ),
         )
-        return {"format": label, "path": str(path)}
+        return {"format": label, "path": str(path), "layers": layers}
     except Exception as exc:  # noqa: BLE001 — single-banner isolation
         log.error(
             "compose_format_error",

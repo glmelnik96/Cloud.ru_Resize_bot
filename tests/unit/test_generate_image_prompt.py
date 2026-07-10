@@ -1,10 +1,15 @@
-"""Unit tests for graph.nodes.generate_image_prompt (M3.3).
+"""Unit tests for graph.nodes.generate_image_prompt (metaphor-only, 2026-07-10).
 
 We stub run_agent — the node's behavior we care about is:
-- state shape: brief / personas / ranked / image_style → user_msg,
-- bad / missing image_style falls back to 'photo',
-- soft validators only warn (don't raise) on length / cyrillic / no-text-guard,
-- returns {"image_prompt": prompt}.
+- state shape: brief / personas / ranked / scenarios → one LLM call per
+  proposition, the LLM returns ONLY a visual metaphor,
+- the wire prompt = metaphor + OUR fixed composition clause (per scenario),
+- scenarios shorter than ranked (or missing) fall back to 'photo',
+- soft validators only warn (don't raise) on length / cyrillic,
+- returns {"image_prompts": [...], "image_prompt": prompts[0]}.
+
+App1's brand enhancers own ALL styling + the anti-text guard; we no longer
+soft-check for "no text" in the prompt.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from typing import Any
 import pytest
 
 from graph.nodes import generate_image_prompt as mod
-from graph.state import ImagePromptOutput
+from graph.state import ImageMetaphorOutput
 
 
 def _good_state(**overrides: Any) -> dict:
@@ -25,7 +30,7 @@ def _good_state(**overrides: Any) -> dict:
             "goal": "consideration",
             "audience_raw": "DevOps в финтехе",
             "channel": "tg_post",
-            "formats": ["banner_300x250"],
+            "formats": ["banner_300x600_render"],
             "tone_hints": "уверенный",
             "constraints": [],
             "age_rating": "0+",
@@ -44,14 +49,14 @@ def _good_state(**overrides: Any) -> dict:
             {
                 "id": "c1",
                 "slogan": "Инфра без сюрпризов",
-                "body": "B",
+                "body": "Бьём в боль простоев: кластер сам чинит себя.",
                 "cta": "Подробнее",
                 "hook_angle": "rational",
                 "score": 9.0,
                 "reason": "топ",
             }
         ],
-        "image_style": "render",
+        "scenarios": ["render"],
     }
     state.update(overrides)
     return state
@@ -59,10 +64,10 @@ def _good_state(**overrides: Any) -> dict:
 
 @pytest.fixture
 def _stub_agent(monkeypatch):
-    """Stub run_agent to return whatever ImagePromptOutput the test wants."""
+    """Stub run_agent to return whatever ImageMetaphorOutput the test wants."""
     calls: list[dict] = []
 
-    def _make_stub(result: ImagePromptOutput):
+    def _make_stub(result: ImageMetaphorOutput):
         async def _stub(agent_id, *, messages, schema, session_id=None):
             calls.append(
                 {
@@ -80,57 +85,56 @@ def _stub_agent(monkeypatch):
     return _make_stub
 
 
+_METAPHOR = ImageMetaphorOutput(
+    metaphor="a self-repairing engine block that reassembles itself",
+    rationale="tangible uptime metaphor",
+)
+
+
 @pytest.mark.asyncio
-async def test_happy_path_returns_prompt(_stub_agent):
-    good = ImagePromptOutput(
-        prompt=(
-            "Studio render of a sleek server rack on a matte concrete floor, "
-            "soft side lighting, subtle lemon green accent cable, right-biased "
-            "composition, ample clean negative space on the left third, calm "
-            "engineering atmosphere, no text, no letters, no logos."
-        ),
-        rationale="Calm rational render fits DevOps mid-market.",
-    )
-    _stub_agent(good)
+async def test_happy_path_wire_prompt_is_metaphor_plus_composition(_stub_agent):
+    _stub_agent(_METAPHOR)
     out = await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
-    assert "image_prompt" in out
-    assert out["image_prompt"].startswith("Studio render")
+    assert out["image_prompts"] == [out["image_prompt"]]
+    p = out["image_prompt"]
+    assert p.startswith("a self-repairing engine block")
+    # render scenario → OUR render composition clause appended
+    assert "isometric" in p.lower()
 
 
 @pytest.mark.asyncio
-async def test_unknown_image_style_falls_back_to_photo(_stub_agent, caplog):
-    good = ImagePromptOutput(
-        prompt="A documentary photo of a small team in a sunlit office, " * 4
-        + "no text, no letters, no logos.",
-        rationale="ok",
-    )
-    calls = _stub_agent(good)
-    await mod.generate_image_prompt(  # type: ignore[arg-type]
-        _good_state(image_style="cubism")
-    )
+async def test_llm_receives_message_fields_and_schema(_stub_agent):
+    calls = _stub_agent(_METAPHOR)
+    await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
     user_msg = calls[0]["messages"][1]["content"]
-    assert "CHOSEN VISUAL STYLE: photo" in user_msg
+    assert "Инфра без сюрпризов" in user_msg
+    assert "кластер сам чинит себя" in user_msg  # body reaches the LLM
+    assert calls[0]["schema"] is ImageMetaphorOutput
 
 
 @pytest.mark.asyncio
-async def test_missing_image_style_falls_back_to_photo(_stub_agent):
-    good = ImagePromptOutput(
-        prompt="A documentary photo of a small team in a sunlit office, " * 4
-        + "no text, no letters, no logos.",
-        rationale="ok",
+async def test_unknown_scenario_falls_back_to_photo(_stub_agent):
+    _stub_agent(_METAPHOR)
+    out = await mod.generate_image_prompt(  # type: ignore[arg-type]
+        _good_state(scenarios=["cubism"])
     )
-    calls = _stub_agent(good)
+    low = out["image_prompt"].lower()
+    assert "isometric" not in low
+    assert "vertical" in low  # photo composition clause
+
+
+@pytest.mark.asyncio
+async def test_missing_scenarios_fall_back_to_photo(_stub_agent):
+    _stub_agent(_METAPHOR)
     state = _good_state()
-    state.pop("image_style")
-    await mod.generate_image_prompt(state)  # type: ignore[arg-type]
-    assert "CHOSEN VISUAL STYLE: photo" in calls[0]["messages"][1]["content"]
+    state.pop("scenarios")
+    out = await mod.generate_image_prompt(state)  # type: ignore[arg-type]
+    assert "isometric" not in out["image_prompt"].lower()
 
 
 @pytest.mark.asyncio
 async def test_empty_personas_raises(_stub_agent):
-    _stub_agent(
-        ImagePromptOutput(prompt="x" * 25, rationale="r")
-    )
+    _stub_agent(_METAPHOR)
     state = _good_state(personas=[])
     with pytest.raises(ValueError, match="personas is empty"):
         await mod.generate_image_prompt(state)  # type: ignore[arg-type]
@@ -138,7 +142,7 @@ async def test_empty_personas_raises(_stub_agent):
 
 @pytest.mark.asyncio
 async def test_empty_ranked_raises(_stub_agent):
-    _stub_agent(ImagePromptOutput(prompt="x" * 25, rationale="r"))
+    _stub_agent(_METAPHOR)
     state = _good_state()
     state["ranked"] = []
     with pytest.raises(ValueError, match="ranked is empty"):
@@ -147,27 +151,21 @@ async def test_empty_ranked_raises(_stub_agent):
 
 @pytest.mark.asyncio
 async def test_uses_single_persona(_stub_agent):
-    good = ImagePromptOutput(
-        prompt="A documentary photo of a small team in a sunlit office, " * 4
-        + "no text, no letters, no logos.",
-        rationale="ok",
-    )
-    calls = _stub_agent(good)
+    calls = _stub_agent(_METAPHOR)
     await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
     user_msg = calls[0]["messages"][1]["content"]
     assert "DevOps mid-market" in user_msg
 
 
 @pytest.mark.asyncio
-async def test_soft_validator_does_not_raise_on_bad_prompt(_stub_agent):
-    """Short, cyrillic, no-text-guard-missing prompt must still return."""
-    bad = ImagePromptOutput(
-        prompt="Короткий русский промпт без защиты от текста абсолютно.",
+async def test_soft_validator_does_not_raise_on_bad_metaphor(_stub_agent):
+    """Cyrillic / out-of-band metaphor must still return (warn-only)."""
+    bad = ImageMetaphorOutput(
+        metaphor="Короткая русская метафора",
         rationale="r",
     )
     _stub_agent(bad)
     out = await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
-    # Did not raise. The node returns the prompt as-is.
     assert "image_prompt" in out
 
 

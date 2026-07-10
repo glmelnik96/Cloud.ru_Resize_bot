@@ -300,6 +300,7 @@
   // at once would hammer the DOM and the network).
   const imagesByUid = {};
   const briefByUid = {};
+  const cardsByUid = {};
   const BRIEF_LABELS = {
     product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
   };
@@ -317,7 +318,11 @@
     const title = escapeHtml(t.prompt || "(без названия)");
     const imgs = Array.isArray(t.images) ? t.images : [];
     const expandable = imgs.length > 0;
-    if (expandable) { imagesByUid[t.task_uid] = imgs; briefByUid[t.task_uid] = t.brief || {}; }
+    if (expandable) {
+      imagesByUid[t.task_uid] = imgs;
+      briefByUid[t.task_uid] = t.brief || {};
+      cardsByUid[t.task_uid] = Array.isArray(t.cards) ? t.cards : [];
+    }
     let action = "";
     if (t.status === "done" && t.result_url) {
       action = `<a class="task-dl" href="${P}${t.result_url}" download>⬇ ZIP</a>`;
@@ -337,17 +342,33 @@
       `</div>` + grid
     );
   }
+  // Каждому баннеру — его карточка (Block 3): slogan/cta/hook/reason/body,
+  // aligned by index with the sorted banner files (01_…, 02_…).
+  function capHtml(card, i) {
+    if (!card) return "";
+    const kv = (label, v) =>
+      v ? `<span class="cap-kv"><b>${label}:</b> ${escapeHtml(v)}</span>` : "";
+    return (
+      `<figcaption class="thumb-cap">` +
+      `<span class="cap-slogan">${escapeHtml(card.slogan || `Баннер ${i + 1}`)}</span>` +
+      kv("cta", card.cta) + kv("hook", card.hook_angle) +
+      kv("почему зайдёт ЦА", card.reason) + kv("идея", card.body) +
+      `</figcaption>`
+    );
+  }
   // Build the brief + thumbnail grid the first time its row is opened. Each
-  // thumb carries an index (→ lightbox) and its own download link.
+  // thumb carries an index (→ lightbox), its own download link and its card.
   function fillGrid(grid, uid) {
     const imgs = imagesByUid[uid] || [];
+    const cards = cardsByUid[uid] || [];
     const thumbs = imgs.map((u, i) =>
       `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
       `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy">` +
       `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
-      `title="Скачать баннер ${i + 1}">⬇</a></figure>`
+      `title="Скачать баннер ${i + 1}">⬇</a>${capHtml(cards[i], i)}</figure>`
     ).join("");
-    grid.innerHTML = briefHtml(briefByUid[uid]) + `<div class="task-thumbs">${thumbs}</div>`;
+    const capsCls = cards.length ? " has-caps" : "";
+    grid.innerHTML = briefHtml(briefByUid[uid]) + `<div class="task-thumbs${capsCls}">${thumbs}</div>`;
   }
   function toggleGrid(row) {
     const uid = row.getAttribute("data-uid");
@@ -392,7 +413,7 @@
       `<button class="lb-nav lb-prev" data-lb="prev" aria-label="Назад">‹</button>` +
       `<img id="lbImg" class="lb-img" alt="">` +
       `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
-      `<div class="lb-bar"><span id="lbCount"></span>` +
+      `<div class="lb-bar"><span id="lbCount"></span><span id="lbCap" class="lb-cap"></span>` +
       `<a id="lbDl" class="lb-dl" download>⬇ Скачать</a></div>`;
     document.body.appendChild(lb);
     lb.addEventListener("click", (ev) => {
@@ -410,6 +431,8 @@
     $("lbImg").src = `${P}${u}`;
     $("lbImg").alt = `Баннер ${lbIdx + 1}`;
     $("lbCount").textContent = `${lbIdx + 1} / ${imgs.length}`;
+    const card = (cardsByUid[lbUid] || [])[lbIdx];
+    $("lbCap").textContent = card && card.slogan ? card.slogan : "";
     const dl = $("lbDl"); dl.href = `${P}${u}`; dl.download = fileNameOf(u);
   }
   function openLightbox(uid, idx) {

@@ -1,7 +1,7 @@
 """Pydantic response/request schemas for the App3 API."""
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,9 @@ class TaskOut(BaseModel):
     created_at: Optional[str] = None
     images: List[str] = Field(default_factory=list)
     brief: Dict[str, str] = Field(default_factory=dict)
+    # Per-banner ranked cards (slogan/body/cta/hook_angle/score/reason +
+    # scenario), aligned by index with `images` — the final-grid captions.
+    cards: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TextDecisionIn(BaseModel):

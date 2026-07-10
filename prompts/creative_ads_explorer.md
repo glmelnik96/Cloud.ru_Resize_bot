@@ -1,6 +1,6 @@
 ---
 name: creative-ads-explorer
-version: 0.5.0
+version: 0.6.0
 source_upstream: https://github.com/DKeken/codex-skills-alternative/tree/main/skills/creative-ads-explorer
 target_models:
   primary: zai-org/GLM-5.1
@@ -36,7 +36,7 @@ status: m2
 
 ПРАВИЛА ПОЛЕЙ:
 1. Ровно 12 кандидатов в массиве candidates.
-2. slogan — короткий рекламный заголовок. Мягкий target: 3–6 слов. До 8 слов допустимо, если иначе теряется смысл. Это то, что реально появится на макете.
+2. slogan — короткий рекламный заголовок. ЖЁСТКИЙ ЛИМИТ: не длиннее 42 символов (включая пробелы) — иначе ответ будет отклонён. Мягкий target: 3–6 слов. Это то, что реально появится на макете; длиннее 42 символов текст не помещается.
 3. body — черновое описание идеи в 1–2 предложения (до ~180 символов). РАБОЧИЙ референс для следующих стадий (image prompt), в финальный макет не идёт. Укажи, на какой якорь персоны бьёт кандидат.
 4. cta — одно слово (мягкий target). Глагол в инфинитиве/повелительном. До 2 слов — исключение.
 5. hook_angle ∈ {emotional, rational, social_proof, direct_benefit, fear_of_missing_out, curiosity, authority}.
@@ -94,6 +94,7 @@ CTA PREFERENCE: {{cta_preference_or_none}}
 ## Validation
 
 - `schema_ok` >= 95% (ровно 12 кандидатов).
+- `slogan_hard_cap` (<= 42 символов) — HARD, схема DraftCandidate (max_length=42) + retry_with_feedback.
 - `slogan_word_band` (3–6 слов) — soft target, warn-only.
 - `cta_word_band` (1 слово) — soft target, warn-only.
 - `body_len` (<= 180 chars) — soft guard для черновика, warn-only.
@@ -102,6 +103,11 @@ CTA PREFERENCE: {{cta_preference_or_none}}
 
 ## Changelog
 
+- v0.6.0 (2026-07-10) — жёсткий лимит slogan <= 42 символов (вместо мягкого «до 8
+  слов»): длинные слоганы заставляли композер ужимать кегль до 20-22px и ломали
+  переносы. Лимит enforce'ится схемой (DraftCandidate.max_length=42) через
+  retry_with_feedback; в паре поднят font_size_min слогана 20/22→24 в
+  config/templates.json.
 - v0.5.0 (2026-06-21) — App3 redesign 1→12: РОВНО 12 кандидатов как 12 углов захода в ОДНУ персону (якорь = боль/мотивация/возражение) под общую ЭМОЦИЮ из брифа. Добавлен placeholder {{brief.emotion}}. Удалены A/B anti-bias и revise addenda (винер/ревайз/A-B выпилены). hook_diversity больше не enforce'ится (7 углов на 12 кандидатов). max_tokens 4000→8000.
 - v0.4.0 (2026-06-10) — few-shot: 2 эталонных примера в System message (GPU-кластер, онлайн-бухгалтерия) с разнесёнными hook_angle.
 - v0.3.0 (2026-06-05) — M3.3: slogan смягчён до 3–6 слов soft target, cta до 1 слова soft target, body переопределён как «черновое описание / референс».
