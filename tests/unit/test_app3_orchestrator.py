@@ -473,6 +473,52 @@ async def test_app1_hero_generator_sends_scenario(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_app1_hero_generator_sends_ratio_for_photo_only(tmp_path, monkeypatch):
+    """App1 contract 195b892 (2026-07-10): /internal/hero accepts optional
+    `ratio` forwarded into brand_t2i. Photo heroes land in a 300x550 cover
+    slot, so we request r_9_16 (the r_1_1 default center-crops the scene).
+    Render stays square (cutout contain) — the field is OMITTED, not sent
+    empty, to keep the legacy path byte-identical."""
+    from app.services.hero_gen import App1HeroGenerator
+
+    captured = {}
+
+    class _FakeResp:
+        headers = {"content-type": "image/png"}
+        content = b"\x89PNG-bytes"
+
+        def raise_for_status(self):
+            return None
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers=None):
+            captured["json"] = json
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    gen = App1HeroGenerator("http://127.0.0.1:8011/internal/hero")
+
+    await gen.generate(prompt="p", style="photo", dest=tmp_path / "a.png")
+    assert captured["json"]["scenario"] == "photo"
+    assert captured["json"]["ratio"] == "r_9_16"
+
+    await gen.generate(prompt="p", style="render", dest=tmp_path / "b.png")
+    assert captured["json"]["scenario"] == "render"
+    assert "ratio" not in captured["json"]
+
+
+@pytest.mark.asyncio
 async def test_app1_hero_generator_forwards_user_headers(tmp_path, monkeypatch):
     """App1 lanes hero gen per end-user via X-User-Id (App1 commit 2010463).
     The generator must forward the gateway user id (+ email) as headers so a

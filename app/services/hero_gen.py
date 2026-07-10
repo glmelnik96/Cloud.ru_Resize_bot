@@ -72,6 +72,12 @@ class App1HeroGenerator:
     12-banner flow ``style`` already carries the per-proposition scenario, so
     we forward it as ``scenario`` too. App3 trusts the loopback (127.0.0.1).
 
+    ``ratio`` (App1 contract 195b892, 2026-07-10): optional, forwarded into
+    brand_t2i. Photo heroes fill a 300x550 cover slot, so photo requests
+    ``r_9_16`` — the ``r_1_1`` default center-crops the scene sideways.
+    Render keeps the square (cutout is contain-fitted), so the field is
+    omitted entirely (missing → App1 default, fully back-compatible).
+
     End-user identity is forwarded as ``X-User-Id`` / ``X-User-Email`` headers
     so App1 lanes hero generation per end user (App1 commit 2010463) — without
     them a multi-user burst serialises into one shared lane and hits App1's
@@ -97,6 +103,9 @@ class App1HeroGenerator:
         import httpx
 
         scenario = style if style in {"render", "photo"} else "photo"
+        body: dict[str, str] = {"prompt": prompt, "style": style, "scenario": scenario}
+        if scenario == "photo":
+            body["ratio"] = "r_9_16"
         headers: dict[str, str] = {}
         if user_id:
             headers["X-User-Id"] = str(user_id)
@@ -106,7 +115,7 @@ class App1HeroGenerator:
             async with httpx.AsyncClient(timeout=self.timeout_s) as c:
                 resp = await c.post(
                     self.url,
-                    json={"prompt": prompt, "style": style, "scenario": scenario},
+                    json=body,
                     headers=headers or None,
                 )
                 resp.raise_for_status()
