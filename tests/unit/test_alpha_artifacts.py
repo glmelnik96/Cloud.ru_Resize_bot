@@ -154,19 +154,26 @@ async def test_node_entries_carry_three_alpha_layer_files(monkeypatch, tmp_path)
         "scenarios": scenarios,
         "generated_heroes": _heroes(tmp_path, scenarios),
     }
+    heroes = state["generated_heroes"]
     out = await fill_mod.fill_templates_per_format(state)  # type: ignore[arg-type]
-    for entry in out["rendered_files"]:
+    for pos, entry in enumerate(out["rendered_files"]):
         layers = entry["layers"]
         assert set(layers) == {"message", "hero", "brand"}
-        # per-group probe of a pixel that must be transparent on the alpha
-        # canvas: message → top-left corner, hero → header band (above the
-        # frame/photo), brand → mid-banner (between header and footer strips)
-        probes = {"message": (0, 0), "hero": (150, 10), "brand": (150, 300)}
-        for name, path in layers.items():
-            img = Image.open(path)
+        # message + brand stay template-scale transparent alpha artifacts:
+        # probe a pixel that must be transparent (message → top-left corner,
+        # brand → mid-banner between the header and footer strips).
+        probes = {"message": (0, 0), "brand": (150, 300)}
+        for name, xy in probes.items():
+            img = Image.open(layers[name])
             assert img.mode == "RGBA", name
-            assert img.getpixel(probes[name])[3] == 0, name
-        # message artifact ≠ hero artifact ≠ composite
+            assert img.size == (300, 600), name
+            assert img.getpixel(xy)[3] == 0, name
+        # hero artifact = the native App1 asset, byte-identical & full-res
+        # (400x400 here), NOT downscaled into the 300x550 banner slot.
+        src_bytes = Path(heroes[pos]["local_path"]).read_bytes()
+        assert Path(layers["hero"]).read_bytes() == src_bytes
+        assert Image.open(layers["hero"]).size == (400, 400)
+        # three distinct files, all separate from the composite
         assert len({entry["path"], *layers.values()}) == 4
 
 

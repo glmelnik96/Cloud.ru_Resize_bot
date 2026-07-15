@@ -21,11 +21,13 @@ Per-banner try/except: one bad compose never kills the rest.
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 from datetime import datetime
 from pathlib import Path
 
 import structlog
+from PIL import Image
 
 from graph.nodes import ranked_candidates
 from graph.state import GeneratedImage, GraphState, MessageCandidate
@@ -45,6 +47,18 @@ _DEFAULT_SCENARIO = "photo"
 def _scenario_for(raw: str | None) -> str:
     s = (raw or "").strip().lower()
     return s if s in _VALID_SCENARIOS else _DEFAULT_SCENARIO
+
+
+def _hero_ext(data: bytes) -> str:
+    """File extension for the native hero artifact, sniffed from the bytes so
+    the on-disk name matches the actual format App1 sent (PNG in practice; a
+    manually uploaded JPEG stays .jpg). Falls back to png on any decode error."""
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            fmt = (im.format or "PNG").lower()
+    except Exception:  # noqa: BLE001
+        return "png"
+    return "jpg" if fmt == "jpeg" else fmt
 
 
 def _slug(scenario: str) -> str:
@@ -132,11 +146,15 @@ def _render_one_sync(
     isolation: one bad compose never kills the rest). ``label`` is the
     unique per-banner id used for the filename and the ZIP arcname.
 
-    ``layers`` (Block 1, 2026-07-10) maps message/hero/brand to transparent-PNG
-    artifacts of the same banner: the text plates alone, the hero frame alone
-    (photo scenario = the cover-cropped photo as-is, no cutout — так задумано),
-    and the brand strips as a third layer. Best-effort: a failed artifact is
-    skipped, the composite still ships.
+    ``layers`` (Block 1, 2026-07-10) maps message/hero/brand to un-composited
+    artifacts of the same banner:
+      - message / brand — transparent-PNG alpha layers at TEMPLATE scale (the
+        text plates alone; the brand strips as a third layer),
+      - hero — the NATIVE hero exactly as App1 delivered it (full resolution
+        and original format), written verbatim, NOT the downscaled composited
+        frame. Designers recomposite from the source asset, so a 300px slot
+        thumbnail is useless (2026-07-15, Глеб).
+    Best-effort: a failed artifact is skipped, the composite still ships.
     """
     fmt_start = datetime.utcnow()
     try:
@@ -151,11 +169,12 @@ def _render_one_sync(
         canvas.save(path, format="PNG", optimize=True)
 
         layers: dict[str, str] = {}
-        for group in ("message", "hero", "brand"):
+        # Template-scale alpha artifacts, drawn on a transparent canvas.
+        for group in ("message", "brand"):
             try:
                 art = compose(
                     spec,
-                    hero=hero_bytes if group == "hero" else None,
+                    hero=None,
                     texts=texts,
                     assets_root=_REPO_ROOT,
                     slug=slug,
@@ -172,6 +191,19 @@ def _render_one_sync(
                     group=group,
                     error=str(exc),
                 )
+        # Native hero asset, byte-for-byte as received — full resolution kept.
+        try:
+            ext = _hero_ext(hero_bytes)
+            hero_art_path = _RENDER_DIR / f"{session_id}_{label}_{ts}_hero.{ext}"
+            hero_art_path.write_bytes(hero_bytes)
+            layers["hero"] = str(hero_art_path)
+        except Exception as exc:  # noqa: BLE001 — artifact is optional
+            log.warning(
+                "hero_layer_artifact_error",
+                session_id=session_id,
+                label=label,
+                error=str(exc),
+            )
 
         log.info(
             "compose_format_ok",
