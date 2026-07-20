@@ -91,6 +91,30 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
             app.state.creatives = None
             log.error("graph init failed (tasks disabled): %s", exc)
 
+        # Webinar resizes (M4-web): LangGraph-free compose loop. Independent of
+        # the graph stack on purpose — a checkpointer failure must not take the
+        # webinar flow down with it.
+        try:
+            from infra.template_manifest import load_manifest
+
+            from app.services.webinar import WebinarService
+
+            repo_root = Path(__file__).resolve().parents[1]
+            manifest_path = Path(
+                cfg.get("webinar_manifest")
+                or repo_root / "config" / "webinar_templates.json"
+            )
+            app.state.webinar = WebinarService(
+                manager=manager, bus=bus, sessionmaker=Session,
+                manifest=load_manifest(manifest_path), assets_root=repo_root,
+                results_dir=cfg["results_dir"],
+                max_open_per_user=cfg["user_queue_limit"],
+            )
+            log.info("webinar service ready (%s)", manifest_path.name)
+        except Exception as exc:  # noqa: BLE001
+            app.state.webinar = None
+            log.error("webinar init failed (webinar tasks disabled): %s", exc)
+
         # Background results retention (TTL cleanup of results/<uid>/ + rows).
         import asyncio
 
@@ -120,9 +144,11 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     from app.api.routes_pages import router as pages_router
     from app.api.routes_stream import router as stream_router
     from app.api.routes_tasks import router as tasks_router
+    from app.api.routes_webinar import router as webinar_router
 
     app.include_router(auth_router)
     app.include_router(tasks_router)
+    app.include_router(webinar_router)
     app.include_router(stream_router)
     app.include_router(pages_router)
 

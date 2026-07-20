@@ -34,3 +34,17 @@ async def index(request: Request):
         name="creatives.html",
         context={"email": user.email, "prefix": prefix, "retention_hours": retention_hours},
     )
+
+
+@router.get("/webinar", response_class=HTMLResponse)
+async def webinar_page(request: Request):
+    """Webinar resizes: form + manual canvas fit engine (no LLM/HITL)."""
+    user = await get_current_user(request)
+    cfg = getattr(request.app.state, "settings", {}) or {}
+    prefix = cfg.get("prefix", "/creatives")
+    retention_hours = int(cfg.get("retention_ttl_sec", 24 * 3600)) // 3600
+    return _TEMPLATES.TemplateResponse(
+        request=request,
+        name="webinar.html",
+        context={"email": user.email, "prefix": prefix, "retention_hours": retention_hours},
+    )

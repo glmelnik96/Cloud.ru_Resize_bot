@@ -469,6 +469,72 @@ def test_hero_cutout_fully_transparent_is_noop():
     assert img.getpixel((30, 30))[:3] == (0x12, 0x34, 0x56)
 
 
+def test_hero_prefit_skips_alpha_bbox_crop():
+    """M4-web fit engine: the user manually frames the hero in the web UI and
+    the server bakes it into a reference-size canvas (infra.hero_fit). That
+    canvas encodes the CHOSEN placement — the transparent margins are part of
+    the composition. compose(hero_prefit=True) must consume it verbatim:
+    scale the WHOLE canvas into the rect, never re-crop to the alpha bbox
+    (which would undo the user's manual fitting)."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="cover",
+                anchor_h="center",
+                anchor_v="top",
+                allow_upscale=True,
+                z=0,
+            )
+        ],
+    )
+    # Baked frame 200x200: object only in the top-left quadrant; the user
+    # deliberately left the rest empty.
+    hero = _padded_cutout((200, 200), (0, 0, 100, 100), "#00FF00")
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT, hero_prefit=True)
+    # Whole canvas scales 0.5: object occupies exactly the top-left 50x50.
+    assert img.getpixel((25, 25))[:3] == (0, 255, 0)
+    # Without prefit these would ALL be object-green (bbox crop + cover fill).
+    assert img.getpixel((75, 25))[:3] == (0xFF, 0x00, 0xFF)
+    assert img.getpixel((25, 75))[:3] == (0xFF, 0x00, 0xFF)
+    assert img.getpixel((75, 75))[:3] == (0xFF, 0x00, 0xFF)
+
+
+def test_hero_prefit_default_off_keeps_bbox_crop():
+    """Without the flag the legacy normalization still applies (guards the 26
+    speaker + 25 visual formats already pixel-closed against the bbox math)."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="cover",
+                anchor_h="center",
+                anchor_v="top",
+                allow_upscale=True,
+                z=0,
+            )
+        ],
+    )
+    hero = _padded_cutout((200, 200), (0, 0, 100, 100), "#00FF00")
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    for x, y in [(25, 25), (75, 25), (25, 75), (75, 75)]:
+        assert img.getpixel((x, y))[:3] == (0, 255, 0)
+
+
 # ----- Real-manifest end-to-end smoke ----------------------------------------
 
 
@@ -1031,3 +1097,134 @@ def test_per_line_plates_never_merge_at_tight_line_height():
     assert bands == 3, (
         f"expected 3 separated plates, got {bands} -> plates merged (no gap)"
     )
+
+
+def test_hero_cutout_flip_h_mirrors_object():
+    """Figma mockups may mirror the portrait fill (-scale-x-100, e.g. the
+    460x260 TimePad and 240x240 email podborki artboards). ``flip_h`` mirrors
+    the cutout horizontally before fit/anchor so an asymmetric subject lands
+    on the same side as the mockup."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=0,
+                y=0,
+                width=100,
+                height=100,
+                fit="contain",
+                anchor_h="center",
+                anchor_v="middle",
+                allow_upscale=True,
+                flip_h=True,
+                z=0,
+            )
+        ],
+    )
+    # object: left half red, right half blue (inside transparent padding)
+    hero = Image.new("RGBA", (200, 100), (0, 0, 0, 0))
+    hero.paste(Image.new("RGBA", (50, 100), (255, 0, 0, 255)), (50, 0))
+    hero.paste(Image.new("RGBA", (50, 100), (0, 0, 255, 255)), (100, 0))
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # mirrored: blue now on the left, red on the right
+    assert img.getpixel((10, 50))[:3] == (0, 0, 255)
+    assert img.getpixel((90, 50))[:3] == (255, 0, 0)
+
+
+def test_hero_cutout_stretch_fills_rect_exactly():
+    """M4 visual variant: Figma metaphor fills are placed whole with a mild
+    non-uniform squish (up to ~11%). ``fit="stretch"`` scales the bbox-cropped
+    cutout to the rect exactly (no crop, no margins, aspect NOT preserved)."""
+    spec = TemplateSpec(
+        width=100,
+        height=100,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=10,
+                y=20,
+                width=80,
+                height=40,
+                fit="stretch",
+                z=0,
+            )
+        ],
+    )
+    # tall 40x120 object inside transparent padding: top half red, bottom blue
+    hero = Image.new("RGBA", (100, 200), (0, 0, 0, 0))
+    hero.paste(Image.new("RGBA", (40, 60), (255, 0, 0, 255)), (30, 40))
+    hero.paste(Image.new("RGBA", (40, 60), (0, 0, 255, 255)), (30, 100))
+    img = compose(spec, hero=hero, texts={}, assets_root=REPO_ROOT)
+    # rect corners covered by the object (no margins despite AR mismatch)
+    assert img.getpixel((11, 21))[:3] == (255, 0, 0)
+    assert img.getpixel((88, 21))[:3] == (255, 0, 0)
+    assert img.getpixel((11, 58))[:3] == (0, 0, 255)
+    assert img.getpixel((88, 58))[:3] == (0, 0, 255)
+    # outside the rect stays background
+    assert img.getpixel((5, 50))[:3] == (255, 0, 255)
+    assert img.getpixel((50, 15))[:3] == (255, 0, 255)
+
+
+def _quadrant_hero() -> Image.Image:
+    """100x100 opaque: TL red, TR blue, BL green, BR yellow (split at 50)."""
+    hero = Image.new("RGBA", (100, 100), (255, 0, 0, 255))
+    hero.paste(Image.new("RGBA", (50, 50), (0, 0, 255, 255)), (50, 0))
+    hero.paste(Image.new("RGBA", (50, 50), (0, 255, 0, 255)), (0, 50))
+    hero.paste(Image.new("RGBA", (50, 50), (255, 255, 0, 255)), (50, 50))
+    return hero
+
+
+def _crop_spec(**extra) -> TemplateSpec:
+    return TemplateSpec(
+        width=100,
+        height=50,
+        background_color="#FF00FF",
+        layers=[
+            HeroCutoutLayer(
+                type="hero_cutout",
+                x=10,
+                y=10,
+                width=50,
+                height=25,
+                fit="crop",
+                crop_scale=2.0,
+                crop_left=-0.5,
+                crop_top=-1.0,
+                z=0,
+                **extra,
+            )
+        ],
+    )
+
+
+def test_hero_cutout_crop_replicates_figma_fill_transform():
+    """M4 visual (2026-07-20): Figma metaphor fills are CROP transforms —
+    uniform scale (``crop_scale`` = rendered image width / rect width) plus an
+    offset (``crop_left``/``crop_top`` as fractions of rect size), clipped to
+    the rect. The full file frame is used (NO alpha-bbox pre-crop: the Figma
+    percentages are file-space)."""
+    img = compose(_crop_spec(), hero=_quadrant_hero(), texts={}, assets_root=REPO_ROOT)
+    # rendered image: 100px wide (2.0 * 50), scale 1 -> 100x100 at offset
+    # (-25, -25) from the rect corner: window shows file px x 25..75, y 25..50
+    # -> top-half quadrants only: red left of window mid, blue right of it.
+    assert img.getpixel((12, 20))[:3] == (255, 0, 0)
+    assert img.getpixel((57, 20))[:3] == (0, 0, 255)
+    # clipped to the rect: outside stays background
+    assert img.getpixel((5, 20))[:3] == (255, 0, 255)
+    assert img.getpixel((30, 5))[:3] == (255, 0, 255)
+    assert img.getpixel((30, 40))[:3] == (255, 0, 255)
+
+
+def test_hero_cutout_crop_flips_after_crop():
+    """Figma mirrors the whole placed rect (flipped-x transform), so the crop
+    window is computed in un-flipped file space and the *result* is mirrored."""
+    img = compose(
+        _crop_spec(flip_h=True), hero=_quadrant_hero(), texts={}, assets_root=REPO_ROOT
+    )
+    # same window as above, mirrored: blue lands left, red right
+    assert img.getpixel((12, 20))[:3] == (0, 0, 255)
+    assert img.getpixel((57, 20))[:3] == (255, 0, 0)

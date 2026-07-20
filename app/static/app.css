@@ -241,3 +241,24 @@ textarea:focus,select:focus,input[type="text"]:focus{outline:none;border-color:v
 .lb-dl:hover{background:var(--accent-2);}
 /* HITL busy state: controls frozen while a decision request is in flight */
 .is-busy{opacity:.5;pointer-events:none;}
+
+/* ── webinar: segmented variant switch ───────────────────── */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;}
+.seg__btn{cursor:pointer;background:transparent;color:var(--muted);border:none;padding:9px 16px;
+  font:inherit;font-size:14px;transition:background .12s,color .12s;}
+.seg__btn+.seg__btn{border-left:1px solid var(--line);}
+.seg__btn:hover{color:var(--text);}
+.seg__btn.is-active{background:var(--accent);color:var(--accent-ink);font-weight:600;}
+.btn--sm{padding:6px 12px;font-size:13px;}
+
+/* ── webinar: canvas fit stage ───────────────────────────── */
+.fitstage{margin-top:14px;}
+#fitCanvas{width:360px;max-width:100%;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--panel-2);touch-action:none;cursor:grab;}
+#fitCanvas:active{cursor:grabbing;}
+.fit-tools{display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap;}
+.fit-tools label{display:inline-flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:13px;}
+.fit-tools input[type="range"]{accent-color:var(--accent);}
+.dl{display:inline-block;text-decoration:none;background:var(--accent);color:var(--accent-ink);
+  padding:9px 18px;border-radius:var(--r-sm);font-weight:600;font-size:14px;transition:background .15s;}
+.dl:hover{background:var(--accent-2);}

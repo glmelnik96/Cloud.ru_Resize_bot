@@ -1,0 +1,23 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 460 211" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="body">
+<g clip-path="url(#clip0_0_12)">
+<rect width="460" height="211" fill="var(--fill-0, #26D07C)"/>
+<rect id="2" y="121" width="30" height="90" fill="var(--fill-0, #222222)"/>
+<rect id="1" x="430" width="30" height="90" fill="var(--fill-0, #222222)"/>
+<path id="pattern" d="M460 0H109.7H0V211H97.9225H460V99.6091V0Z" fill="url(#pattern0_0_12)"/>
+</g>
+<rect x="8" y="8" width="444" height="195" stroke="var(--stroke-0, #222222)" stroke-width="16"/>
+</g>
+<defs>
+<clipPath id="clip0_0_12">
+<rect width="460" height="211" fill="white"/>
+</clipPath>
+<pattern id="pattern0_0_12" patternUnits="userSpaceOnUse" patternTransform="matrix(35.6347 0 0 35.6347 216.033 91.2693)" preserveAspectRatio="none" viewBox="-0.373047 -0.75 50.9068 50.9068" width="1" height="1">
+<g id="pattern0_0_12_inner">
+<g id="Group 881235281">
+<path id="Vector 4403" d="M0.162109 39.1583L33.121 5.70996" stroke="var(--stroke-0, #222222)" stroke-width="1.5"/>
+<path id="Vector 4404" d="M39.159 39.159V0H0" stroke="var(--stroke-0, #222222)" stroke-width="1.5"/>
+</g>
+</g>
+</pattern></defs>
+</svg>

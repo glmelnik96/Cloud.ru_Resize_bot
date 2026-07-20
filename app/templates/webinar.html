@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вебинары — Cloud.ru Design</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260721v1">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Cloud.ru <span>Design</span></a>
+    <nav class="topnav">
+      <a href="/images" class="topnav__link">Картинки</a>
+      <a href="/slides" class="topnav__link">Слайды</a>
+      <a href="/creatives" class="topnav__link">Креативы</a>
+      <a href="{{ prefix }}/webinar" class="topnav__link is-active">Вебинары</a>
+    </nav>
+    <div class="topbar__auth">
+      <span class="topbar__user">{{ email }}</span>
+      <form action="/logout" method="post" class="logout-form"><button type="submit">Выйти</button></form>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1 class="page-title">Ресайзы под вебинар</h1>
+    <p class="page-sub">Один макет → все форматы одного семейства. Заполни тексты, загрузи изображение и подгони его в рамке — сервер соберёт PNG по каждому формату и упакует в ZIP.</p>
+
+    <div class="workspace">
+    <div class="workspace__controls">
+
+    <!-- 01 · вариант -->
+    <section class="panel" id="variantPanel">
+      <h2>01 · Тип</h2>
+      <div class="seg" id="variantSeg" role="tablist">
+        <button class="seg__btn is-active" data-variant="speaker" role="tab">Спикер (фото)</button>
+        <button class="seg__btn" data-variant="visual" role="tab">Метафора (рендер)</button>
+      </div>
+      <p class="page-sub" id="variantHint"></p>
+    </section>
+
+    <!-- 02 · тексты -->
+    <section class="panel" id="textsPanel">
+      <h2>02 · Тексты</h2>
+      <div id="slotFields"></div>
+    </section>
+
+    <!-- 03 · изображение + подгонка -->
+    <section class="panel" id="fitPanel">
+      <h2>03 · Изображение и кадрирование</h2>
+      <div class="btn-row">
+        <label class="btn" for="heroFile" style="display:inline-block">Загрузить изображение</label>
+        <input type="file" id="heroFile" accept="image/*" class="hidden">
+      </div>
+      <p class="page-sub" id="fitHint">Загрузи фото спикера или рендер метафоры. Перетаскивай — двигать, колесо — масштаб.</p>
+      <div class="fitstage hidden" id="fitStage">
+        <canvas id="fitCanvas" width="360" height="360"></canvas>
+        <div class="fit-tools">
+          <label>Масштаб <input type="range" id="zoom" min="0.05" max="5" step="0.001" value="1"></label>
+          <button class="btn btn--sm" id="fitReset">Сброс</button>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn--accent" id="startBtn" disabled>Собрать ресайзы</button>
+      </div>
+      <div class="status" id="fitStatus"></div>
+    </section>
+
+    </div><!-- /.workspace__controls -->
+    <div class="workspace__output">
+
+    <div class="empty" id="emptyState">
+      <h2>Как это работает</h2>
+      <p>Раздел собирает все ресайзы одного вебинар-семейства из одного изображения и текстов. Кадрирование в рамке гарантирует, что объект попадёт точно в композицию каждого формата.</p>
+      <ul>
+        <li><b>01 · Тип</b> — спикер (загруженное фото) или метафора (рендер из «Картинок»).</li>
+        <li><b>02 · Тексты</b> — заголовок, дата, время (для спикера ещё подзаголовок).</li>
+        <li><b>03 · Кадрирование</b> — двигай и масштабируй изображение в рамке; сетка и линия головы помогают выровнять.</li>
+        <li><b>04 · Готово</b> — ZIP со всеми форматами семейства.</li>
+      </ul>
+    </div>
+
+    <section class="panel hidden" id="progressPanel">
+      <h2>Прогресс</h2>
+      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
+      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
+    </section>
+
+    <section class="panel hidden" id="resultsPanel">
+      <h2>04 · Готово</h2>
+      <div id="resultMsg"></div>
+    </section>
+
+    <section class="panel hidden" id="tasksPanel">
+      <h2>Последние ресайзы</h2>
+      <p class="retention-note">История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
+      <div class="task-list" id="tasksList"></div>
+    </section>
+
+    </div><!-- /.workspace__output -->
+    </div><!-- /.workspace -->
+  </main>
+
+  <script>window.APP_PREFIX = "{{ prefix }}";</script>
+  <script src="{{ prefix }}/static/webinar.js?v=20260721v1"></script>
+</body>
+</html>

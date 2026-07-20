@@ -24,9 +24,14 @@ from infra.template_manifest import (
     HeroCutoutLayer,
     HeroLayer,
     ImageLayer,
+    InlineImageRun,
+    InlineRowLayer,
     PatternDotsLayer,
+    RectLayer,
     TemplateSpec,
     TextLayer,
+    TextureLayer,
+    VLinesLayer,
 )
 
 log = structlog.get_logger(__name__)
@@ -218,10 +223,19 @@ def _fit_text(
         last_font = font
         last_lines = lines
         last_size = size
-        if len(lines) <= layer.max_lines:
+        # With para_spacing, blank paragraph-break lines are not drawn as
+        # lines (they become fixed px gaps), so they do not count here.
+        if layer.para_spacing is not None:
+            n_lines = len([ln for ln in lines if ln.strip()])
+            n_gaps = len(lines) - n_lines
+        else:
+            n_lines = len(lines)
+            n_gaps = 0
+        if n_lines <= layer.max_lines:
             # Also need vertical fit
             line_h = size * layer.line_height
-            if line_h * len(lines) <= inner_h + 1:
+            gaps_h = n_gaps * (layer.para_spacing or 0.0)
+            if line_h * n_lines + gaps_h <= inner_h + 1:
                 return font, lines, size, False
     # Did not fit fully; return smallest we tried, clipped lines with an
     # ellipsis on the last visible line instead of silently dropping text.
@@ -300,6 +314,7 @@ def _draw_hero_cutout_layer(
     layer: HeroCutoutLayer,
     *,
     hero: Image.Image,
+    prefit: bool = False,
 ) -> None:
     """Scale the alpha cutout into the rect and alpha-composite it.
 
@@ -316,23 +331,63 @@ def _draw_hero_cutout_layer(
     different sizes and float at different heights depending on how much empty
     space the cutter happened to leave. A fully transparent hero (no bbox) is a
     no-op.
+
+    ``prefit=True`` (M4-web fit engine): the hero is a baked reference frame
+    from ``infra.hero_fit`` — the user already chose the placement, and the
+    transparent margins are part of the composition. Skip the alpha-bbox
+    normalization and scale the WHOLE canvas into the rect verbatim.
     """
-    bbox = _content_bbox(hero)
-    if bbox is None:
+    if layer.fit == "crop":
+        # Figma image-fill CROP transform: uniform scale in file space,
+        # offset, clip to the rect, THEN mirror (Figma flips the placed
+        # rect). No alpha-bbox pre-crop — the percentages are file-space.
+        render_w = layer.crop_scale * layer.width
+        if layer.crop_scale_h is not None:
+            render_h = layer.crop_scale_h * layer.height
+        else:
+            render_h = hero.height * (render_w / hero.width)
+        off_x = layer.crop_left * layer.width
+        off_y = layer.crop_top * layer.height
+        resized = hero.resize(
+            (max(1, round(render_w)), max(1, round(render_h))), Image.LANCZOS
+        )
+        window = resized.crop(
+            (
+                round(-off_x),
+                round(-off_y),
+                round(-off_x) + layer.width,
+                round(-off_y) + layer.height,
+            )
+        )
+        if layer.flip_h:
+            window = window.transpose(Image.FLIP_LEFT_RIGHT)
+        canvas.alpha_composite(window, (layer.x, layer.y))
         return
-    if bbox != (0, 0, hero.width, hero.height):
-        hero = hero.crop(bbox)
+
+    if not prefit:
+        bbox = _content_bbox(hero)
+        if bbox is None:
+            return
+        if bbox != (0, 0, hero.width, hero.height):
+            hero = hero.crop(bbox)
+    if layer.flip_h:
+        hero = hero.transpose(Image.FLIP_LEFT_RIGHT)
 
     target_w, target_h = layer.width, layer.height
     src_w, src_h = hero.size
-    if layer.fit == "cover":
-        scale = max(target_w / src_w, target_h / src_h)
+    if layer.fit == "stretch":
+        # Non-uniform: the whole object fills the rect exactly (M4 visual
+        # metaphors — mockups squish the fill by up to ~11%).
+        new_w, new_h = target_w, target_h
     else:
-        scale = min(target_w / src_w, target_h / src_h)
-    if scale > 1.0 and not layer.allow_upscale:
-        scale = 1.0
-    new_w = max(1, round(src_w * scale))
-    new_h = max(1, round(src_h * scale))
+        if layer.fit == "cover":
+            scale = max(target_w / src_w, target_h / src_h)
+        else:
+            scale = min(target_w / src_w, target_h / src_h)
+        if scale > 1.0 and not layer.allow_upscale:
+            scale = 1.0
+        new_w = max(1, round(src_w * scale))
+        new_h = max(1, round(src_h * scale))
     resized = (
         hero
         if (new_w, new_h) == (src_w, src_h)
@@ -376,6 +431,141 @@ def _hex_rgb(color: str) -> tuple[int, int, int]:
     return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
 
 
+def _draw_rect_layer(canvas: Image.Image, layer: RectLayer) -> None:
+    """Draw a solid (optionally rounded / semi-transparent) rectangle.
+
+    Composited via a transparent overlay so a sub-255 alpha lets the layers
+    below show through, and so the rounded-corner cutouts stay transparent
+    instead of painting the background color into them."""
+    overlay = Image.new("RGBA", (layer.width, layer.height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    fill = (*_hex_rgb(layer.color), layer.alpha)
+    stroke = None
+    if layer.stroke_color is not None and layer.stroke_width > 0:
+        stroke = (*_hex_rgb(layer.stroke_color), 255)
+    box = (0, 0, layer.width - 1, layer.height - 1)
+    if layer.radius > 0:
+        draw.rounded_rectangle(
+            box, radius=layer.radius, fill=fill, outline=stroke, width=layer.stroke_width
+        )
+    else:
+        draw.rectangle(box, fill=fill, outline=stroke, width=layer.stroke_width)
+    canvas.alpha_composite(overlay, (layer.x, layer.y))
+
+
+# Reference viewBox width of the Figma arrow-grid pattern cell (node 3520:12943).
+# Motif coordinates below are in these units; px = unit * (cell / _TEX_VIEWBOX).
+_TEX_VIEWBOX = 50.9068
+
+
+def _draw_texture_layer(canvas: Image.Image, layer: TextureLayer) -> None:
+    """Tile the Cloud.ru arrow-grid motif across the rect at native cell size.
+
+    Each cell draws two strokes lifted verbatim from the Figma pattern: a
+    diagonal and an upper-right L-bracket. The cell is repeated (not scaled) so
+    non-square regions keep square cells; the overlay is region-sized, so any
+    motif spilling past the rect edge is clipped by PIL for free."""
+    # Supersample: draw at 4x and BOX-average down so fractional cell sizes
+    # (35.6347...) land at subpixel positions with anti-aliased strokes, like
+    # the Figma exports. Whole-pixel hairlines read visibly thinner than refs.
+    ss = 4
+    s = layer.cell / _TEX_VIEWBOX * ss  # px per drawing-unit, supersampled
+    stroke = layer.stroke if layer.stroke is not None else max(1.0, 1.5 * s / ss)
+    width = max(1, int(round(stroke * ss)))
+    fill = (*_hex_rgb(layer.color), layer.alpha)
+    overlay = Image.new("RGBA", (layer.width * ss, layer.height * ss), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    def _pt(ux: float, uy: float, ox: float, oy: float) -> tuple[float, float]:
+        return (ox + ux * s, oy + uy * s)
+
+    step = layer.cell * ss
+    # start one cell early so an offset never leaves a bald top/left edge
+    cy = layer.offset_y * ss - step
+    while cy < layer.height * ss:
+        cx = layer.offset_x * ss - step
+        while cx < layer.width * ss:
+            # Vector 4403: diagonal
+            draw.line(
+                [_pt(0.162, 39.158, cx, cy), _pt(33.121, 5.710, cx, cy)],
+                fill=fill,
+                width=width,
+            )
+            # Vector 4404: L-bracket (right edge + top edge)
+            draw.line(
+                [
+                    _pt(39.159, 39.159, cx, cy),
+                    _pt(39.159, 0.0, cx, cy),
+                    _pt(0.0, 0.0, cx, cy),
+                ],
+                fill=fill,
+                width=width,
+                joint="curve",
+            )
+            cx += step
+        cy += step
+    overlay = overlay.resize((layer.width, layer.height), Image.BOX)
+    canvas.alpha_composite(overlay, (layer.x, layer.y))
+
+
+def _draw_inline_row_layer(
+    canvas: Image.Image,
+    layer: InlineRowLayer,
+    *,
+    texts: dict[str, str],
+    assets_root: Path,
+) -> None:
+    """Lay text + image runs out on one baseline and align the block in the rect.
+
+    Text runs pull from ``texts`` (via slot) or a baked ``fixed_content``; an
+    empty slot drops the run but the row keeps flowing. Widths are measured, the
+    block is aligned within the rect, then each run is drawn left-to-right."""
+    fp = _font_path(layer.font_family, layer.font_weight)
+    font = ImageFont.truetype(str(fp), size=layer.font_size)
+
+    # Resolve runs to concrete (kind, payload, width, gap_before) drop empties.
+    resolved: list[tuple[str, object, float, int]] = []
+    for run in layer.runs:
+        gap = run.gap_before if run.gap_before is not None else layer.gap
+        if isinstance(run, InlineImageRun):
+            resolved.append(("image", run, float(run.width), gap))
+        else:
+            text = (
+                run.fixed_content
+                if run.fixed_content is not None
+                else texts.get(run.slot or "", "")
+            )
+            if not text:
+                continue
+            color = run.color or layer.color
+            resolved.append(("text", (text, color), font.getlength(text), gap))
+    if not resolved:
+        return
+
+    total = sum(w for _, _, w, _ in resolved) + sum(g for _, _, _, g in resolved[1:])
+    if layer.align_h == "left":
+        cx = float(layer.x)
+    elif layer.align_h == "center":
+        cx = layer.x + (layer.width - total) / 2
+    else:  # right
+        cx = layer.x + layer.width - total
+
+    y_mid = layer.y + layer.height / 2
+    draw = ImageDraw.Draw(canvas)
+    for i, (kind, payload, w, gap) in enumerate(resolved):
+        if i > 0:
+            cx += gap
+        if kind == "image":
+            src = Image.open(assets_root / payload.path).convert("RGBA")
+            if src.size != (payload.width, payload.height):
+                src = src.resize((payload.width, payload.height), Image.LANCZOS)
+            canvas.alpha_composite(src, (int(round(cx)), int(round(y_mid - payload.height / 2))))
+        else:
+            text, color = payload
+            draw.text((cx, y_mid), text, font=font, fill=color, anchor="lm")
+        cx += w
+
+
 def _draw_pattern_dots(canvas: Image.Image, layer: PatternDotsLayer) -> None:
     """Tile a dot grid over the rect, alpha-composited so it stays subtle."""
     overlay = Image.new("RGBA", (layer.width, layer.height), (0, 0, 0, 0))
@@ -389,6 +579,20 @@ def _draw_pattern_dots(canvas: Image.Image, layer: PatternDotsLayer) -> None:
             draw.rectangle((x, y, x + d - 1, y + d - 1), fill=fill)
             x += layer.spacing_x
         y += layer.spacing_y
+    canvas.alpha_composite(overlay, (layer.x, layer.y))
+
+
+def _draw_vlines_layer(canvas: Image.Image, layer: VLinesLayer) -> None:
+    """Tile evenly-spaced vertical lines across the band, clipped to its rect."""
+    overlay = Image.new("RGBA", (layer.width, layer.height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    fill = (*_hex_rgb(layer.color), layer.alpha)
+    lw = max(1, int(round(layer.line_width)))
+    lx = 0.0
+    while lx < layer.width:
+        x0 = int(round(lx))
+        draw.rectangle((x0, 0, x0 + lw - 1, layer.height - 1), fill=fill)
+        lx += layer.period
     canvas.alpha_composite(overlay, (layer.x, layer.y))
 
 
@@ -441,7 +645,21 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
     ascent, descent = font.getmetrics()
     text_h = ascent + descent
     line_h = used_size * layer.line_height
-    block_h = line_h * len(lines)
+    # Paragraph gaps: with para_spacing set, blank wrapped lines collapse into
+    # a fixed px gap before the next paragraph instead of a full line pitch.
+    gap_before: list[float] = [0.0] * len(lines)
+    if layer.para_spacing is not None:
+        visible: list[str] = []
+        gap_before = []
+        acc = 0.0
+        for ln in lines:
+            if ln.strip() == "":
+                acc += layer.para_spacing
+            else:
+                visible.append(ln)
+                gap_before.append(acc)  # acc is already cumulative
+        lines = visible
+    block_h = line_h * len(lines) + (gap_before[-1] if gap_before else 0.0)
 
     # Inner content box, inset by padding.
     inner_x0 = layer.x + layer.padding_x
@@ -477,7 +695,11 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
             last_bottom = max(font.getbbox(ln)[3] for ln in inked)
         else:
             first_top, last_bottom = 0, text_h
-        ink_h = (len(lines) - 1) * line_h + (last_bottom - first_top)
+        ink_h = (
+            (len(lines) - 1) * line_h
+            + (gap_before[-1] if gap_before else 0.0)
+            + (last_bottom - first_top)
+        )
         y0 = inner_y0 + (inner_h - ink_h) / 2 - first_top
     else:  # bottom
         y0 = inner_y0 + inner_h - block_h
@@ -495,7 +717,7 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
             x = inner_x0 + (inner_w - line_w) // 2
         else:  # right
             x = inner_x0 + inner_w - line_w
-        y = y0 + i * line_h
+        y = y0 + i * line_h + gap_before[i]
         line_geom.append((x, y, line))
 
     # Pass 1: all per-line highlight plates (+ optional underline). Drawn on a
@@ -552,17 +774,61 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
                 )
         canvas.alpha_composite(overlay)
 
+    # Two-tone split (dark webinar titles): primary colour up to and including
+    # the first ':', accent colour after. Measured in NON-SPACE characters so
+    # it is invariant to the orphan-glue (space→NBSP) and word-wrap (drops
+    # regular spaces) transforms that produced ``lines``. No accent / no colon
+    # → single colour, and ``_line_runs`` returns the whole line as one run.
+    if layer.accent_color is not None and ":" in text:
+        colon = text.index(":")
+        primary_target = sum(1 for c in text[: colon + 1] if not c.isspace())
+    else:
+        primary_target = None
+
+    consumed = 0  # non-space chars drawn so far (across all lines)
+
+    def _line_runs(line: str) -> list[tuple[str, str]]:
+        """Split one wrapped line into (substring, colour) runs at the colon
+        boundary. Advances the shared ``consumed`` counter."""
+        nonlocal consumed
+        if primary_target is None:
+            return [(line, layer.color)]
+        runs: list[tuple[str, str]] = []
+        cur = ""
+        cur_color = layer.color
+        for ch in line:
+            if ch.isspace():
+                color = cur_color
+            else:
+                ordinal = consumed + 1
+                color = (
+                    layer.color
+                    if ordinal <= primary_target
+                    else layer.accent_color
+                )
+                consumed += 1
+            if color != cur_color and cur:
+                runs.append((cur, cur_color))
+                cur = ""
+            cur_color = color
+            cur += ch
+        if cur:
+            runs.append((cur, cur_color))
+        return runs
+
     # Pass 2: all text glyphs (on top of any plates). With letter spacing we
-    # advance glyph-by-glyph (PIL has no native tracking); otherwise draw the
-    # whole line at once so kerning is preserved byte-for-byte.
+    # advance glyph-by-glyph (PIL has no native tracking); otherwise draw each
+    # colour run at once so kerning is preserved within the run.
     for x, y, line in line_geom:
-        if tracking:
-            cx = x
-            for ch in line:
-                draw.text((cx, y), ch, font=font, fill=layer.color)
-                cx += font.getlength(ch) + tracking
-        else:
-            draw.text((x, y), line, font=font, fill=layer.color)
+        cx = x
+        for run_text, run_color in _line_runs(line):
+            if tracking:
+                for ch in run_text:
+                    draw.text((cx, y), ch, font=font, fill=run_color)
+                    cx += font.getlength(ch) + tracking
+            else:
+                draw.text((cx, y), run_text, font=font, fill=run_color)
+                cx += font.getlength(run_text)
 
     return truncated
 
@@ -574,9 +840,17 @@ def _draw_text_layer(canvas: Image.Image, layer: TextLayer, text: str) -> bool:
 #   message — every TextLayer (incl. its plate/CTA background),
 #   hero    — the hero itself plus its decor (cutout frame, dots, scrim).
 _LAYER_GROUPS: dict[str, tuple[type, ...]] = {
-    "brand": (ImageLayer,),
-    "message": (TextLayer,),
-    "hero": (HeroLayer, HeroCutoutLayer, FrameLayer, PatternDotsLayer, GradientLayer),
+    "brand": (ImageLayer, VLinesLayer),
+    "message": (TextLayer, InlineRowLayer),
+    "hero": (
+        HeroLayer,
+        HeroCutoutLayer,
+        RectLayer,
+        TextureLayer,
+        FrameLayer,
+        PatternDotsLayer,
+        GradientLayer,
+    ),
 }
 
 
@@ -595,6 +869,7 @@ def compose(
     assets_root: Path,
     slug: str | None = None,
     only: set[str] | frozenset[str] | None = None,
+    hero_prefit: bool = False,
 ) -> Image.Image:
     """Render one PNG from spec + hero + slot texts.
 
@@ -611,6 +886,9 @@ def compose(
             When set, ONLY those groups are drawn on a fully TRANSPARENT
             canvas (no background fill) — used for the per-banner alpha
             artifacts. Filtered-out hero layers never require a hero.
+        hero_prefit: the hero is a baked reference frame from
+            ``infra.hero_fit`` (user-chosen placement); hero_cutout layers
+            consume it verbatim without alpha-bbox re-cropping.
 
     Returns:
         PIL.Image.Image in RGBA mode, caller is responsible for saving.
@@ -637,8 +915,16 @@ def compose(
     for _, layer in layers:
         if isinstance(layer, ImageLayer):
             _draw_image_layer(canvas, layer, assets_root=assets_root)
+        elif isinstance(layer, RectLayer):
+            _draw_rect_layer(canvas, layer)
+        elif isinstance(layer, TextureLayer):
+            _draw_texture_layer(canvas, layer)
+        elif isinstance(layer, InlineRowLayer):
+            _draw_inline_row_layer(canvas, layer, texts=texts, assets_root=assets_root)
         elif isinstance(layer, PatternDotsLayer):
             _draw_pattern_dots(canvas, layer)
+        elif isinstance(layer, VLinesLayer):
+            _draw_vlines_layer(canvas, layer)
         elif isinstance(layer, FrameLayer):
             _draw_frame_layer(canvas, layer)
         elif isinstance(layer, GradientLayer):
@@ -652,7 +938,9 @@ def compose(
             if isinstance(layer, HeroLayer):
                 _draw_hero_layer(canvas, layer, hero=hero_img)
             else:
-                _draw_hero_cutout_layer(canvas, layer, hero=hero_img)
+                _draw_hero_cutout_layer(
+                    canvas, layer, hero=hero_img, prefit=hero_prefit
+                )
         elif isinstance(layer, TextLayer):
             if layer.fixed_content is not None:
                 text = layer.fixed_content

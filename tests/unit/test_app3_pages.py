@@ -152,3 +152,20 @@ def test_empty_prefix_serves_assets_and_api_at_root(tmp_path, monkeypatch):
         assert 'href="/static/app.css?v=' in html
         assert 'src="/static/creatives.js?v=' in html
         assert 'window.APP_PREFIX = "";' in html
+
+
+def test_webinar_page_renders(tmp_path, monkeypatch):
+    """The webinar resizes page serves with canon nav (is-active on Вебинары)
+    and loads its own fit-engine script."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/webinar", headers=_HDR)
+        assert r.status_code == 200
+        html = r.text
+        assert 'class="topnav__link is-active">Вебинары' in html
+        assert "/creatives/static/webinar.js" in html
+        assert 'id="fitCanvas"' in html
+
+
+def test_webinar_page_requires_auth(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        assert c.get("/webinar").status_code == 401
