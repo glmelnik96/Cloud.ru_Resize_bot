@@ -29,7 +29,9 @@ def _speaker(color=(0, 0, 0, 255)) -> Image.Image:
 
 def test_scenario_references_real_format():
     sc = MANIFEST.scenarios["webinar_speaker"]
-    assert sc.slots == ["title", "subtitle", "date", "time"]
+    # Form slots: name + position are collected separately and folded into the
+    # single 2-line `subtitle` text box by the service (speaker_subtitle).
+    assert sc.slots == ["title", "name", "position", "date", "time"]
     for fmt in sc.formats:
         assert fmt in MANIFEST.templates
 

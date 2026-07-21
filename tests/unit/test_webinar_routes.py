@@ -77,10 +77,13 @@ def test_create_webinar_returns_uid_with_stub(tmp_path, monkeypatch):
         seen = {}
 
         class _Stub:
-            async def create(self, user_id, fields, *, hero_bytes, transform):
+            async def create(
+                self, user_id, fields, *, hero_bytes=None, transform=None, prompt=""
+            ):
                 seen["fields"] = fields
                 seen["transform"] = transform
-                seen["hero_len"] = len(hero_bytes)
+                seen["hero_len"] = len(hero_bytes or b"")
+                seen["prompt"] = prompt
                 return "webinar000001"
 
         app.state.webinar = _Stub()
@@ -99,6 +102,35 @@ def test_create_webinar_returns_uid_with_stub(tmp_path, monkeypatch):
         assert seen["transform"].scale == 1.5
         assert seen["transform"].x == 10 and seen["transform"].y == -20
         assert seen["hero_len"] > 0
+
+
+def test_create_webinar_visual_prompt_without_file(tmp_path, monkeypatch):
+    """Visual variant may be created from a prompt alone (no upload) — the
+    file field is optional and the prompt is forwarded to the service."""
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as c:
+        seen = {}
+
+        class _Stub:
+            async def create(
+                self, user_id, fields, *, hero_bytes=None, transform=None, prompt=""
+            ):
+                seen["hero_bytes"] = hero_bytes
+                seen["prompt"] = prompt
+                seen["variant"] = fields["variant"]
+                return "webinar000002"
+
+        app.state.webinar = _Stub()
+        r = c.post(
+            "/api/webinar/tasks",
+            data={"variant": "visual", "title": "Т", "prompt": "облачная метафора"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert r.json()["task_uid"] == "webinar000002"
+        assert seen["hero_bytes"] is None
+        assert seen["prompt"] == "облачная метафора"
+        assert seen["variant"] == "visual"
 
 
 def test_create_webinar_503_when_service_down(tmp_path, monkeypatch):

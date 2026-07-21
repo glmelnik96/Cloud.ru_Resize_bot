@@ -79,6 +79,23 @@ _TEXT_KEYS = ("title", "subtitle", "date", "time")
 _OPEN_STATUSES = ("queued", "running")
 
 
+def speaker_subtitle(name: str, position: str) -> str:
+    """Fold a speaker's name + position into the single 2-line ``subtitle`` box.
+
+    The Figma speaker family renders the name and position as two lines inside
+    one ``subtitle`` text box (e.g. ``"Михаил Безобразов,\nархитектор решений"``).
+    The web form collects them as two separate fields for clarity, but the
+    pixel-closed templates only carry a single ``subtitle`` slot, so we
+    reproduce that exact two-line string here rather than adding per-format
+    layers (which would risk vertical drift against the closed geometry).
+    """
+    name = (name or "").strip()
+    position = (position or "").strip()
+    if name and position:
+        return f"{name},\n{position}"
+    return name or position
+
+
 class CapacityError(Exception):
     """Raised when a user already has too many open webinar tasks."""
 
@@ -184,6 +201,7 @@ class WebinarService:
         assets_root: Path,
         results_dir: Path | str = "./data/results",
         max_open_per_user: int = 5,
+        hero_generator=None,
     ) -> None:
         self.manager = manager
         self.bus = bus
@@ -193,23 +211,57 @@ class WebinarService:
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.max_open_per_user = max_open_per_user
+        # Optional App1 hero generator (hero_gen.HeroGenerator). The visual
+        # (metaphor) variant uses it to render a hero from a prompt instead of
+        # a manual upload; when absent/unavailable the UI offers upload only.
+        self.hero_generator = hero_generator
+
+    def _can_generate(self, variant: str, prompt: str) -> bool:
+        """Whether the metaphor can be generated from a prompt (no upload)."""
+        return bool(
+            prompt
+            and variant == "visual"
+            and self.hero_generator is not None
+            and getattr(self.hero_generator, "available", False)
+        )
 
     async def create(
         self,
         user_id: str,
         fields: dict[str, str],
         *,
-        hero_bytes: bytes,
+        hero_bytes: Optional[bytes] = None,
         transform: Optional[Transform] = None,
+        prompt: str = "",
     ) -> str:
-        """Persist a queued task, enqueue the render, return task_uid."""
+        """Persist a queued task, enqueue the render, return task_uid.
+
+        ``hero_bytes`` is the manual upload (speaker photo or a metaphor image);
+        for the visual variant it may be omitted in favour of ``prompt``, in
+        which case the runner generates the metaphor via the App1 hero
+        generator before composing.
+        """
         variant = fields.get("variant", "")
         if variant not in _VARIANTS:
             raise ValueError(f"unknown webinar variant: {variant!r}")
+        prompt = (prompt or "").strip()
+        generate = not hero_bytes and self._can_generate(variant, prompt)
+        if not hero_bytes and not generate:
+            raise ValueError(
+                "hero image required: upload a file, or provide a prompt for "
+                "the metaphor (visual) variant"
+            )
         if await self._open_count(int(user_id)) >= self.max_open_per_user:
             raise CapacityError("too many open tasks")
 
         task_uid = uuid.uuid4().hex[:12]
+        fields = dict(fields)
+        # The speaker form sends name + position separately; fold them into the
+        # single 2-line subtitle box unless a subtitle was passed directly.
+        if not fields.get("subtitle"):
+            sub = speaker_subtitle(fields.get("name", ""), fields.get("position", ""))
+            if sub:
+                fields["subtitle"] = sub
         texts = {k: fields[k] for k in _TEXT_KEYS if fields.get(k)}
         async with self.Session() as s:
             s.add(
@@ -225,10 +277,13 @@ class WebinarService:
             await s.commit()
 
         # Persist the hero into the task tmp dir before queuing, so the
-        # runner never depends on the request lifetime.
+        # runner never depends on the request lifetime. When generating, the
+        # runner writes hero.png from the App1 render instead.
         tmp_dir = self.manager.task_tmp(user_id, task_uid)
         hero_path = tmp_dir / "hero.png"
-        hero_path.write_bytes(hero_bytes)
+        if hero_bytes:
+            hero_path.write_bytes(hero_bytes)
+        gen_prompt = "" if hero_bytes else prompt
 
         reporter = WebStatusReporter(
             self.bus, task_uid=task_uid, label="webinar", eta_sec=None
@@ -238,7 +293,10 @@ class WebinarService:
 
         async def runner() -> None:
             try:
-                await self._run(task_uid, variant, hero_path, texts, transform, reporter)
+                await self._run(
+                    task_uid, variant, hero_path, texts, transform, reporter,
+                    user_id=user_id, prompt=gen_prompt,
+                )
             finally:
                 # Webinar is one-shot (no HITL park/resume) — drop the uploaded
                 # hero as soon as the render finishes so data/tmp/ can't grow
@@ -259,13 +317,27 @@ class WebinarService:
         texts: dict[str, str],
         transform: Optional[Transform],
         reporter: WebStatusReporter,
+        *,
+        user_id: str = "",
+        prompt: str = "",
     ) -> None:
         scenario = self.manifest.scenarios[_VARIANTS[variant]["scenario"]]
         slugs = list(scenario.formats)
         dest_dir = self.results_dir / task_uid
         await self._set_status(task_uid, "running")
-        await reporter.start(f"Рендерю форматы (0/{len(slugs)})")
         try:
+            # Metaphor (visual) variant: render the hero from the prompt via
+            # App1 when no image was uploaded. remove_bg → transparent cutout
+            # (style="render"), contained into each visual format's box.
+            if not hero_path.exists() and prompt:
+                await reporter.start("Генерирую метафору")
+                await self.hero_generator.generate(
+                    prompt=prompt,
+                    style="render",
+                    dest=hero_path,
+                    user_id=user_id or None,
+                )
+            await reporter.start(f"Рендерю форматы (0/{len(slugs)})")
             hero = Image.open(hero_path).convert("RGBA")
             async with self.manager.global_sem:
                 hero_img, prefit = prepare_hero(hero, variant, transform)

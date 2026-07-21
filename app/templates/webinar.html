@@ -48,6 +48,11 @@
     <!-- 03 · изображение + подгонка -->
     <section class="panel" id="fitPanel">
       <h2>03 · Изображение и кадрирование</h2>
+      <div id="promptRow" class="hidden">
+        <label for="metaphorPrompt">Идея метафоры</label>
+        <textarea id="metaphorPrompt" placeholder="облачная инфраструктура как парящий над облаками сервер"></textarea>
+        <p class="page-sub">Опиши образ — сервер сгенерирует рендер-метафору без фона и впишет её в каждый формат. Либо загрузи своё изображение ниже.</p>
+      </div>
       <div class="btn-row">
         <label class="btn" for="heroFile" style="display:inline-block">Загрузить изображение</label>
         <input type="file" id="heroFile" accept="image/*" class="hidden">
@@ -89,6 +94,7 @@
     <section class="panel hidden" id="resultsPanel">
       <h2>04 · Готово</h2>
       <div id="resultMsg"></div>
+      <div id="resultGrid" class="task-grid"></div>
     </section>
 
     <section class="panel hidden" id="tasksPanel">
@@ -102,6 +108,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/webinar.js?v=20260721v2"></script>
+  <script src="{{ prefix }}/static/webinar.js?v=20260721v5"></script>
 </body>
 </html>

@@ -22,6 +22,8 @@ async def webinar_meta(request: Request):
     await get_current_user(request)
     service = getattr(request.app.state, "webinar", None)
     out: dict[str, dict] = {}
+    gen = getattr(service, "hero_generator", None)
+    gen_available = bool(gen is not None and getattr(gen, "available", False))
     for name, v in _VARIANTS.items():
         slots: list[str] = []
         count = 0
@@ -38,6 +40,9 @@ async def webinar_meta(request: Request):
             "fit": v["fit"],
             "slots": slots,
             "formats": count,
+            # The metaphor (visual) variant can render its hero from a prompt
+            # when the App1 generator is wired; speaker is always upload-only.
+            "can_generate": gen_available and name == "visual",
         }
     return out
 
@@ -48,12 +53,15 @@ async def create_webinar_task(
     variant: str = Form(...),
     title: str = Form(""),
     subtitle: str = Form(""),
+    name: str = Form(""),
+    position: str = Form(""),
     date: str = Form(""),
     time: str = Form(""),
+    prompt: str = Form(""),
     fit_scale: float | None = Form(None),
     fit_x: float | None = Form(None),
     fit_y: float | None = Form(None),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
 ):
     user = await get_current_user(request)
     service = getattr(request.app.state, "webinar", None)
@@ -67,15 +75,16 @@ async def create_webinar_task(
     if transform is not None and transform.scale <= 0:
         raise HTTPException(422, "fit_scale must be positive")
 
-    hero_bytes = await file.read()
-    if not hero_bytes:
+    hero_bytes = await file.read() if file is not None else b""
+    if file is not None and not hero_bytes:
         raise HTTPException(422, "empty hero file")
 
     fields = {"variant": variant, "title": title, "subtitle": subtitle,
-              "date": date, "time": time}
+              "name": name, "position": position, "date": date, "time": time}
     try:
         task_uid = await service.create(
-            str(user.id), fields, hero_bytes=hero_bytes, transform=transform
+            str(user.id), fields,
+            hero_bytes=hero_bytes or None, transform=transform, prompt=prompt,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

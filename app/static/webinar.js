@@ -24,10 +24,12 @@
   const HEAD_LINE_FRAC = 0.06; // where the top of a speaker's head should sit
   const SLOT_LABELS = {
     title: "Заголовок", subtitle: "Подзаголовок",
+    name: "Имя спикера", position: "Должность",
     date: "Дата", time: "Время",
   };
   const SLOT_PH = {
     title: "Тема вебинара", subtitle: "Короткий подзаголовок",
+    name: "Михаил Безобразов", position: "архитектор решений",
     date: "08 сентября", time: "11:00",
   };
 
@@ -43,6 +45,11 @@
   const ACTIVE = ["queued", "running"];
   const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
   const clearActive = () => { try { localStorage.removeItem(LS_KEY); } catch (_) {} };
+
+  // Per-task result PNGs (out of the DOM until a row is expanded), shared by the
+  // just-finished grid and the recent-tasks grids so the lightbox can page them.
+  const imagesByUid = {};
+  const fileNameOf = (u) => String(u).split("/").pop();
 
   const canvas = $("fitCanvas");
   const ctx = canvas.getContext("2d");
@@ -91,6 +98,20 @@
       : "03 · Изображение";
     // Toggle the fit canvas to match the variant even if a hero is loaded.
     if (hero && fitOn()) show($("fitStage")); else hide($("fitStage"));
+    // Metaphor variant: offer prompt-based generation when App1 is wired.
+    if (canGenerate()) show($("promptRow")); else hide($("promptRow"));
+    updateStartBtn();
+  }
+
+  // Whether this variant can generate its hero from a prompt (App1 wired).
+  function canGenerate() { const m = meta(); return !!(m && m.can_generate); }
+  const promptText = () => (($("metaphorPrompt") || {}).value || "").trim();
+
+  // Build is allowed when there's something to compose from: an uploaded hero,
+  // or (metaphor) a prompt to generate one.
+  function updateStartBtn() {
+    const ok = !!heroBlob || (canGenerate() && promptText().length > 0);
+    $("startBtn").disabled = !ok;
   }
 
   // ── hero upload ────────────────────────────────────────
@@ -102,7 +123,7 @@
     const img = new Image();
     img.onload = () => {
       hero = img;
-      $("startBtn").disabled = false;
+      updateStartBtn();
       if (!fitOn()) { hide($("fitStage")); return; }
       alphaBox = computeAlphaBox(img);
       show($("fitStage"));
@@ -112,6 +133,10 @@
     img.onerror = () => { $("fitStatus").innerHTML = `<span class="err">Не удалось открыть изображение.</span>`; };
     img.src = URL.createObjectURL(f);
   });
+
+  // Metaphor prompt: typing a prompt is enough to build (no upload required).
+  const _promptEl = $("metaphorPrompt");
+  if (_promptEl) _promptEl.addEventListener("input", updateStartBtn);
 
   // Alpha bbox at threshold 32 (mirrors infra.hero_fit._alpha_bbox). Opaque
   // images (JPEG speaker photos) → full-frame box.
@@ -298,7 +323,14 @@
 
   // ── submit ─────────────────────────────────────────────
   $("startBtn").addEventListener("click", async () => {
-    if (!heroBlob) { $("fitStatus").textContent = "Загрузи изображение."; return; }
+    const prompt = promptText();
+    const willGenerate = !heroBlob && canGenerate() && prompt.length > 0;
+    if (!heroBlob && !willGenerate) {
+      $("fitStatus").textContent = canGenerate()
+        ? "Опиши метафору или загрузи изображение."
+        : "Загрузи изображение.";
+      return;
+    }
     const slots = {};
     document.querySelectorAll("#slotFields [data-slot]").forEach((el) => {
       slots[el.dataset.slot] = el.value.trim();
@@ -313,7 +345,11 @@
       fd.append("fit_x", String(T.x));
       fd.append("fit_y", String(T.y));
     }
-    fd.append("file", heroBlob, heroBlob.name || "hero.png");
+    if (heroBlob) {
+      fd.append("file", heroBlob, heroBlob.name || "hero.png");
+    } else if (willGenerate) {
+      fd.append("prompt", prompt);
+    }
 
     $("startBtn").disabled = true;
     $("fitStatus").textContent = "Создаю задачу…";
@@ -381,8 +417,24 @@
     $("resultMsg").innerHTML = url
       ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
+    $("resultGrid").innerHTML = "";
+    if (taskUid) showResultGrid(taskUid);
     $("startBtn").disabled = false;
     loadRecentTasks();
+  }
+
+  // Fetch the finished task's PNGs and render them inline under the ZIP link,
+  // exactly like the Креативы grid. Falls back silently if the detail call fails.
+  async function showResultGrid(uid) {
+    try {
+      const r = await fetch(`${P}/api/tasks/${uid}`);
+      if (!r.ok) return;
+      const t = await r.json();
+      const imgs = Array.isArray(t.images) ? t.images : [];
+      if (!imgs.length) return;
+      imagesByUid[uid] = imgs;
+      $("resultGrid").innerHTML = thumbsHtml(uid, imgs);
+    } catch (_) { /* leave just the ZIP link */ }
   }
   function onError(e) {
     if (es) es.close();
@@ -415,17 +467,46 @@
     const d = new Date(iso);
     return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
   }
+  // A thumbnail grid for one task's PNGs — each thumb opens the lightbox and
+  // carries its own download link (mirrors the Креативы grid).
+  function thumbsHtml(uid, imgs) {
+    const thumbs = imgs.map((u, i) =>
+      `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
+      `<img src="${P}${u}" alt="Формат ${i + 1}" loading="lazy">` +
+      `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
+      `title="Скачать формат ${i + 1}">⬇</a></figure>`
+    ).join("");
+    return `<div class="task-thumbs">${thumbs}</div>`;
+  }
   function taskRow(t) {
     const label = STATUS_LABEL[t.status] || t.status;
     const title = escapeHtml(t.prompt || "(без названия)");
+    const imgs = Array.isArray(t.images) ? t.images : [];
+    const expandable = imgs.length > 0;
+    if (expandable) imagesByUid[t.task_uid] = imgs;
     let action = "";
     if (t.status === "done" && t.result_url)
       action = `<a class="task-dl" href="${P}${t.result_url}" download>ZIP</a>`;
     else if (t.status === "failed" && t.error)
       action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
-    return `<div class="task-row"><span class="task-title">${title}</span>` +
+    const cls = expandable ? "task-row is-expandable" : "task-row";
+    const uidAttr = expandable ? ` data-uid="${escapeHtml(t.task_uid)}"` : "";
+    const grid = expandable
+      ? `<div class="task-grid hidden" data-grid="${escapeHtml(t.task_uid)}"></div>`
+      : "";
+    return `<div class="${cls}"${uidAttr}><span class="task-title">${title}</span>` +
       `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>` +
-      `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span></div>`;
+      `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span></div>` + grid;
+  }
+  function toggleGrid(row) {
+    const uid = row.getAttribute("data-uid");
+    if (!uid) return;
+    const grid = row.parentElement.querySelector(`[data-grid="${uid}"]`);
+    if (!grid) return;
+    if (grid.classList.contains("hidden") && !grid.childElementCount)
+      grid.innerHTML = thumbsHtml(uid, imagesByUid[uid] || []);
+    grid.classList.toggle("hidden");
+    row.classList.toggle("is-open");
   }
   async function loadRecentTasks() {
     try {
@@ -437,6 +518,70 @@
       show($("tasksPanel"));
     } catch (_) { /* leave hidden */ }
   }
+
+  // Delegated clicks: a thumbnail opens the lightbox; an expandable row toggles
+  // its grid; download links keep their default behaviour.
+  function onGalleryClick(ev) {
+    if (ev.target.closest("a")) return;
+    const thumb = ev.target.closest(".task-thumb");
+    if (thumb) { openLightbox(thumb.dataset.uid, +thumb.dataset.idx); return; }
+    const row = ev.target.closest(".task-row.is-expandable");
+    if (row) toggleGrid(row);
+  }
+  $("tasksList").addEventListener("click", onGalleryClick);
+  $("resultGrid").addEventListener("click", onGalleryClick);
+
+  // ── lightbox gallery ───────────────────────────────────
+  let lbUid = null, lbIdx = 0;
+  function ensureLightbox() {
+    let lb = $("lightbox");
+    if (lb) return lb;
+    lb = document.createElement("div");
+    lb.id = "lightbox";
+    lb.className = "lightbox hidden";
+    lb.innerHTML =
+      `<button class="lb-close" data-lb="close" aria-label="Закрыть">×</button>` +
+      `<button class="lb-nav lb-prev" data-lb="prev" aria-label="Назад">‹</button>` +
+      `<img id="lbImg" class="lb-img" alt="">` +
+      `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
+      `<div class="lb-bar"><span id="lbCount"></span>` +
+      `<a id="lbDl" class="lb-dl" download>Скачать</a></div>`;
+    document.body.appendChild(lb);
+    lb.addEventListener("click", (ev) => {
+      const act = ev.target.getAttribute("data-lb");
+      if (act === "next") lbNav(1);
+      else if (act === "prev") lbNav(-1);
+      else if (act === "close" || ev.target === lb) closeLightbox();
+    });
+    return lb;
+  }
+  function renderLightbox() {
+    const imgs = imagesByUid[lbUid] || [];
+    const u = imgs[lbIdx];
+    if (!u) return;
+    $("lbImg").src = `${P}${u}`;
+    $("lbImg").alt = `Формат ${lbIdx + 1}`;
+    $("lbCount").textContent = `${lbIdx + 1} / ${imgs.length}`;
+    const dl = $("lbDl"); dl.href = `${P}${u}`; dl.download = fileNameOf(u);
+  }
+  function openLightbox(uid, idx) {
+    lbUid = uid; lbIdx = idx || 0;
+    ensureLightbox(); renderLightbox(); show($("lightbox"));
+  }
+  function closeLightbox() { const lb = $("lightbox"); if (lb) hide(lb); }
+  function lbNav(delta) {
+    const imgs = imagesByUid[lbUid] || [];
+    if (!imgs.length) return;
+    lbIdx = (lbIdx + delta + imgs.length) % imgs.length;
+    renderLightbox();
+  }
+  document.addEventListener("keydown", (ev) => {
+    const lb = $("lightbox");
+    if (!lb || lb.classList.contains("hidden")) return;
+    if (ev.key === "Escape") closeLightbox();
+    else if (ev.key === "ArrowRight") lbNav(1);
+    else if (ev.key === "ArrowLeft") lbNav(-1);
+  });
 
   // ── rehydrate active webinar task ──────────────────────
   async function rehydrate() {

@@ -109,6 +109,9 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
                 manifest=load_manifest(manifest_path), assets_root=repo_root,
                 results_dir=cfg["results_dir"],
                 max_open_per_user=cfg["user_queue_limit"],
+                # Share the App1 hero generator: the visual (metaphor) variant
+                # renders its hero from a prompt when no image is uploaded.
+                hero_generator=locals().get("hero_gen"),
             )
             log.info("webinar service ready (%s)", manifest_path.name)
         except Exception as exc:  # noqa: BLE001

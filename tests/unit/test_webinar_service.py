@@ -31,9 +31,32 @@ from PIL import Image
 from infra.hero_fit import SPEAKER_FRAME, VISUAL_BOX, VISUAL_FRAME, Transform
 from infra.template_manifest import load_manifest
 
-from app.services.webinar import bake_hero, prepare_hero, render_webinar
+from app.services.webinar import (
+    bake_hero,
+    prepare_hero,
+    render_webinar,
+    speaker_subtitle,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ── speaker_subtitle: name + position → the 2-line subtitle box ────
+
+
+def test_speaker_subtitle_joins_name_and_position_two_lines():
+    # Figma renders name + position as two lines in one subtitle box
+    # (e.g. "Михаил Безобразов,\nархитектор решений").
+    assert (
+        speaker_subtitle("Михаил Безобразов", "архитектор решений")
+        == "Михаил Безобразов,\nархитектор решений"
+    )
+
+
+def test_speaker_subtitle_single_field_no_dangling_comma():
+    assert speaker_subtitle("Михаил Безобразов", "") == "Михаил Безобразов"
+    assert speaker_subtitle("", "архитектор решений") == "архитектор решений"
+    assert speaker_subtitle("  ", "  ") == ""
 
 
 def _opaque_hero(w: int = 100, h: int = 100) -> Image.Image:
@@ -260,6 +283,209 @@ def test_webinar_service_create_renders_to_done(tmp_path, mini_manifest):
         assert (tmp_path / "results" / task_uid / "wtest_100x100_speaker.png").exists()
         # one-shot: the uploaded hero tmp dir is cleared once the render finishes
         assert not (tmp_path / "tmp" / str(uid) / task_uid).exists()
+        await manager.shutdown()
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_webinar_service_create_joins_name_position_into_subtitle(
+    tmp_path, mini_manifest
+):
+    """The form sends name + position separately; the service folds them into
+    the single 2-line ``subtitle`` text the pixel-closed templates expect."""
+    pytest.importorskip("sqlalchemy")
+    from sqlalchemy import select
+
+    from app.db import models
+    from app.db.database import init_db, make_engine, make_sessionmaker
+    from app.services.webinar import WebinarService
+    from app.tasks.events import EventBus
+    from app.tasks.manager import TaskManager
+
+    async def _run():
+        engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'w.db'}")
+        await init_db(engine)
+        Session = make_sessionmaker(engine)
+        async with Session() as s:
+            s.add(models.User(gateway_user_id="9", yandex_id="y9", email="u@cloud.ru"))
+            await s.commit()
+            uid = (await s.execute(select(models.User))).scalar_one().id
+
+        manager = TaskManager(tmp_root=tmp_path / "tmp")
+        service = WebinarService(
+            manager=manager,
+            bus=EventBus(),
+            sessionmaker=Session,
+            manifest=mini_manifest,
+            assets_root=REPO_ROOT,
+            results_dir=tmp_path / "results",
+        )
+        import io
+
+        buf = io.BytesIO()
+        _opaque_hero().save(buf, format="PNG")
+        task_uid = await service.create(
+            str(uid),
+            {
+                "variant": "speaker",
+                "title": "Т",
+                "name": "Михаил Безобразов",
+                "position": "архитектор решений",
+            },
+            hero_bytes=buf.getvalue(),
+        )
+
+        async with Session() as s:
+            res = await s.execute(
+                select(models.Task).where(models.Task.task_uid == task_uid)
+            )
+            task = res.scalar_one()
+        assert task.params["subtitle"] == "Михаил Безобразов,\nархитектор решений"
+        # raw name/position are not leaked as separate text slots
+        assert "name" not in task.params and "position" not in task.params
+        await manager.shutdown()
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+class _FakeHeroGen:
+    """Records the prompt and writes a valid opaque PNG to dest."""
+
+    available = True
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def generate(self, *, prompt, style, dest, user_id=None, email=None):
+        self.calls.append(
+            {"prompt": prompt, "style": style, "user_id": user_id}
+        )
+        import io
+
+        buf = io.BytesIO()
+        _opaque_hero(64, 64).save(buf, format="PNG")
+        Path(dest).write_bytes(buf.getvalue())
+        return Path(dest)
+
+
+@pytest.fixture()
+def mini_visual_manifest(tmp_path):
+    mini = {
+        "version": "1",
+        "templates": {
+            "wtest_100x100_visual": {
+                "width": 100,
+                "height": 100,
+                "background_color": "#26D07C",
+                "layers": [
+                    {
+                        "type": "hero_cutout",
+                        "x": 0, "y": 0, "width": 100, "height": 100,
+                        "fit": "cover", "anchor_h": "center", "anchor_v": "top",
+                        "allow_upscale": True, "z": 0,
+                    }
+                ],
+            }
+        },
+        "scenarios": {
+            "webinar_visual": {"title": "t", "formats": ["wtest_100x100_visual"]}
+        },
+    }
+    mpath = tmp_path / "mini_visual.json"
+    mpath.write_text(json.dumps(mini), encoding="utf-8")
+    return load_manifest(mpath)
+
+
+def test_webinar_service_visual_generates_metaphor_from_prompt(
+    tmp_path, mini_visual_manifest
+):
+    """Visual variant with no upload generates the metaphor via the App1
+    hero generator from a prompt, then renders + zips like any other run."""
+    pytest.importorskip("sqlalchemy")
+    from sqlalchemy import select
+
+    from app.db import models
+    from app.db.database import init_db, make_engine, make_sessionmaker
+    from app.services.webinar import WebinarService
+    from app.tasks.events import EventBus
+    from app.tasks.manager import TaskManager
+
+    async def _run():
+        engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'w.db'}")
+        await init_db(engine)
+        Session = make_sessionmaker(engine)
+        async with Session() as s:
+            s.add(models.User(gateway_user_id="8", yandex_id="y8", email="u@cloud.ru"))
+            await s.commit()
+            uid = (await s.execute(select(models.User))).scalar_one().id
+
+        manager = TaskManager(tmp_root=tmp_path / "tmp")
+        gen = _FakeHeroGen()
+        service = WebinarService(
+            manager=manager,
+            bus=EventBus(),
+            sessionmaker=Session,
+            manifest=mini_visual_manifest,
+            assets_root=REPO_ROOT,
+            results_dir=tmp_path / "results",
+            hero_generator=gen,
+        )
+        task_uid = await service.create(
+            str(uid),
+            {"variant": "visual", "title": "Т"},
+            hero_bytes=None,
+            prompt="облачная метафора: парящий сервер над облаками",
+        )
+
+        for _ in range(100):
+            async with Session() as s:
+                res = await s.execute(
+                    select(models.Task).where(models.Task.task_uid == task_uid)
+                )
+                task = res.scalar_one()
+                if task.status in ("done", "failed"):
+                    break
+            await asyncio.sleep(0.05)
+        assert task.status == "done", task.error
+        assert (tmp_path / "results" / task_uid / "webinar_visual.zip").exists()
+        assert gen.calls and gen.calls[0]["prompt"].startswith("облачная метафора")
+        assert gen.calls[0]["user_id"] == str(uid)
+        await manager.shutdown()
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_webinar_service_visual_requires_hero_or_prompt(
+    tmp_path, mini_visual_manifest
+):
+    pytest.importorskip("sqlalchemy")
+    from app.db.database import init_db, make_engine, make_sessionmaker
+    from app.services.webinar import WebinarService
+    from app.tasks.events import EventBus
+    from app.tasks.manager import TaskManager
+
+    async def _run():
+        engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'w.db'}")
+        await init_db(engine)
+        Session = make_sessionmaker(engine)
+        manager = TaskManager(tmp_root=tmp_path / "tmp")
+        service = WebinarService(
+            manager=manager,
+            bus=EventBus(),
+            sessionmaker=Session,
+            manifest=mini_visual_manifest,
+            assets_root=REPO_ROOT,
+            results_dir=tmp_path / "results",
+            hero_generator=_FakeHeroGen(),
+        )
+        # neither an upload nor a prompt → rejected before queueing
+        with pytest.raises(ValueError):
+            await service.create(
+                "1", {"variant": "visual", "title": "t"}, hero_bytes=None, prompt=""
+            )
         await manager.shutdown()
         await engine.dispose()
 
