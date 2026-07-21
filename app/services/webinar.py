@@ -45,6 +45,16 @@ from infra.template_manifest import TemplateManifest
 log = structlog.get_logger(__name__)
 
 # variant → (scenario key, reference frame, default placement box/mode/anchor)
+#
+# ``fit`` = whether the web fit engine (bake + hero_prefit) applies:
+#   speaker → True: the user uploads an arbitrary photo and hand-places the
+#     head in the SPEAKER_FRAME window; the baked window IS the visible object,
+#     so the per-format fit=cover boxes reproduce the composition.
+#   visual → False: the metaphor is a generated full-bleed square (App1) — there
+#     is nothing to hand-fit, and each visual format already positions it via
+#     its own file-space fit:crop / fit:stretch percentages calibrated against
+#     that full-bleed square. Baking into a sub-box would corrupt those, so the
+#     metaphor is passed through verbatim (hero_prefit=False).
 _VARIANTS: dict[str, dict] = {
     "speaker": {
         "scenario": "webinar_speaker",
@@ -52,6 +62,7 @@ _VARIANTS: dict[str, dict] = {
         "box": (0, 0, *SPEAKER_FRAME),
         "mode": "cover",
         "anchor_v": "top",
+        "fit": True,
     },
     "visual": {
         "scenario": "webinar_visual",
@@ -59,6 +70,7 @@ _VARIANTS: dict[str, dict] = {
         "box": VISUAL_BOX,
         "mode": "contain",
         "anchor_v": "center",
+        "fit": False,
     },
 }
 
@@ -95,6 +107,29 @@ def bake_hero(
     return bake_frame(hero, ref_w, ref_h, transform)
 
 
+def prepare_hero(
+    hero: Image.Image, variant: str, transform: Optional[Transform] = None
+) -> tuple[Image.Image, bool]:
+    """Return ``(hero_for_compose, hero_prefit)`` for the variant.
+
+    Fit variants (speaker) bake the user/auto placement into the reference
+    frame and consume it verbatim (``hero_prefit=True``). Non-fit variants
+    (visual) pass the generated full-bleed metaphor through unchanged so each
+    format's file-space fit:crop / fit:stretch positions it — exactly the input
+    the visual formats were pixel-closed against (``hero_prefit=False``); any
+    stray fit transform is ignored.
+    """
+    try:
+        v = _VARIANTS[variant]
+    except KeyError:
+        raise ValueError(f"unknown webinar variant: {variant!r}") from None
+    if v["fit"]:
+        return bake_hero(hero, variant, transform), True
+    if hero.mode != "RGBA":
+        hero = hero.convert("RGBA")
+    return hero, False
+
+
 def render_webinar(
     manifest: TemplateManifest,
     variant: str,
@@ -113,7 +148,7 @@ def render_webinar(
     """
     scenario = manifest.scenarios[_VARIANTS[variant]["scenario"]]
     slugs = formats if formats is not None else list(scenario.formats)
-    baked = bake_hero(hero, variant, transform)
+    hero_img, prefit = prepare_hero(hero, variant, transform)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files: list[Path] = []
@@ -121,11 +156,11 @@ def render_webinar(
         spec = manifest.templates[slug]
         img = compose(
             spec,
-            hero=baked,
+            hero=hero_img,
             texts=texts,
             assets_root=assets_root,
             slug=slug,
-            hero_prefit=True,
+            hero_prefit=prefit,
         )
         dest = out_dir / f"{slug}.png"
         img.save(dest)
@@ -202,7 +237,13 @@ class WebinarService:
         await reporter.queued(queue_pos=queued + 1)
 
         async def runner() -> None:
-            await self._run(task_uid, variant, hero_path, texts, transform, reporter)
+            try:
+                await self._run(task_uid, variant, hero_path, texts, transform, reporter)
+            finally:
+                # Webinar is one-shot (no HITL park/resume) — drop the uploaded
+                # hero as soon as the render finishes so data/tmp/ can't grow
+                # unbounded. Retention only sweeps results/, not tmp/.
+                self.manager.clear_task_tmp(user_id, task_uid)
 
         if not await self.manager.submit(user_id, runner):
             await reporter.error("queue full")
@@ -227,7 +268,7 @@ class WebinarService:
         try:
             hero = Image.open(hero_path).convert("RGBA")
             async with self.manager.global_sem:
-                baked = bake_hero(hero, variant, transform)
+                hero_img, prefit = prepare_hero(hero, variant, transform)
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 files: list[Path] = []
                 for i, slug in enumerate(slugs, start=1):
@@ -235,11 +276,11 @@ class WebinarService:
                     img = await asyncio.to_thread(
                         compose,
                         spec,
-                        hero=baked,
+                        hero=hero_img,
                         texts=texts,
                         assets_root=self.assets_root,
                         slug=slug,
-                        hero_prefit=True,
+                        hero_prefit=prefit,
                     )
                     dest = dest_dir / f"{slug}.png"
                     await asyncio.to_thread(img.save, dest)

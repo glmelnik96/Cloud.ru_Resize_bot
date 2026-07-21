@@ -39,6 +39,9 @@ def test_webinar_meta_exposes_frame_geometry(tmp_path, monkeypatch):
         assert meta["speaker"]["frame"] == [1494, 2669]
         assert meta["visual"]["frame"] == [1024, 1024]
         assert meta["visual"]["box"] == [211, 157, 813, 887]
+        # fit flag drives the canvas: speaker hand-fits, visual auto-fits
+        assert meta["speaker"]["fit"] is True
+        assert meta["visual"]["fit"] is False
 
 
 def test_webinar_meta_requires_auth(tmp_path, monkeypatch):

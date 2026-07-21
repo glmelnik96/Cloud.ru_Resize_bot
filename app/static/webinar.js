@@ -64,10 +64,13 @@
     document.querySelectorAll("#variantSeg .seg__btn").forEach((b) =>
       b.classList.toggle("is-active", b === btn));
     renderVariant();
-    if (hero) { resetTransform(); drawStage(); }
+    if (hero && fitOn()) { alphaBox = computeAlphaBox(hero); resetTransform(); drawStage(); }
   });
 
   function meta() { return (META && META[variant]) || null; }
+  // Whether the hand-fit canvas applies. Speaker: yes. Visual (metaphor): no —
+  // the generated full-bleed metaphor is positioned by each format itself.
+  function fitOn() { const m = meta(); return m ? !!m.fit : variant === "speaker"; }
 
   function renderVariant() {
     const m = meta();
@@ -80,9 +83,14 @@
     $("variantHint").textContent = variant === "speaker"
       ? `Фото спикера. Соберём ${n} форматов семейства «спикер».`
       : `Рендер-метафора (без фона). Соберём ${n} форматов семейства «метафора».`;
-    $("fitHint").textContent = variant === "speaker"
+    $("fitHint").textContent = fitOn()
       ? "Выровняй лицо: линия сверху — где должна быть макушка. Перетаскивай — двигать, колесо — масштаб."
-      : "Впиши объект в рамку. Перетаскивай — двигать, колесо — масштаб.";
+      : "Метафора генерируется под квадрат и впишется в каждый формат автоматически — кадрировать не нужно.";
+    $("fitPanel").querySelector("h2").textContent = fitOn()
+      ? "03 · Изображение и кадрирование"
+      : "03 · Изображение";
+    // Toggle the fit canvas to match the variant even if a hero is loaded.
+    if (hero && fitOn()) show($("fitStage")); else hide($("fitStage"));
   }
 
   // ── hero upload ────────────────────────────────────────
@@ -94,11 +102,12 @@
     const img = new Image();
     img.onload = () => {
       hero = img;
+      $("startBtn").disabled = false;
+      if (!fitOn()) { hide($("fitStage")); return; }
       alphaBox = computeAlphaBox(img);
       show($("fitStage"));
       resetTransform();
       drawStage();
-      $("startBtn").disabled = false;
     };
     img.onerror = () => { $("fitStatus").innerHTML = `<span class="err">Не удалось открыть изображение.</span>`; };
     img.src = URL.createObjectURL(f);
@@ -299,9 +308,11 @@
     const fd = new FormData();
     fd.append("variant", variant);
     Object.keys(slots).forEach((k) => fd.append(k, slots[k]));
-    fd.append("fit_scale", String(T.scale));
-    fd.append("fit_x", String(T.x));
-    fd.append("fit_y", String(T.y));
+    if (fitOn()) {
+      fd.append("fit_scale", String(T.scale));
+      fd.append("fit_x", String(T.x));
+      fd.append("fit_y", String(T.y));
+    }
     fd.append("file", heroBlob, heroBlob.name || "hero.png");
 
     $("startBtn").disabled = true;

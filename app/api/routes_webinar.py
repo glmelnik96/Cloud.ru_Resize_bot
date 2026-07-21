@@ -35,6 +35,7 @@ async def webinar_meta(request: Request):
             "box": list(v["box"]),
             "mode": v["mode"],
             "anchor_v": v["anchor_v"],
+            "fit": v["fit"],
             "slots": slots,
             "formats": count,
         }

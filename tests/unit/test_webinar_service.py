@@ -31,7 +31,7 @@ from PIL import Image
 from infra.hero_fit import SPEAKER_FRAME, VISUAL_BOX, VISUAL_FRAME, Transform
 from infra.template_manifest import load_manifest
 
-from app.services.webinar import bake_hero, render_webinar
+from app.services.webinar import bake_hero, prepare_hero, render_webinar
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,6 +67,26 @@ def test_bake_hero_visual_default_contains_in_box():
     # outside the placement box the frame stays transparent
     assert out.getpixel((bx0 - 60, cy))[3] == 0
     assert out.getpixel((cx, by0 - 60))[3] == 0
+
+
+def test_prepare_hero_speaker_bakes_and_prefits():
+    img, prefit = prepare_hero(_opaque_hero(400, 600), "speaker")
+    assert prefit is True
+    assert img.size == SPEAKER_FRAME  # baked into the reference frame
+
+
+def test_prepare_hero_visual_passes_through_without_prefit():
+    # Variant A: the generated full-bleed metaphor is NOT baked into a sub-box;
+    # it flows to the per-format fit:crop/stretch verbatim (hero_prefit=False).
+    src = _opaque_hero(400, 400)
+    img, prefit = prepare_hero(src, "visual")
+    assert prefit is False
+    assert img.size == src.size  # untouched, not the 1024 VISUAL_FRAME square
+
+
+def test_prepare_hero_unknown_variant_raises():
+    with pytest.raises(ValueError):
+        prepare_hero(_opaque_hero(), "banner")
 
 
 def test_bake_hero_unknown_variant_raises():
@@ -238,6 +258,8 @@ def test_webinar_service_create_renders_to_done(tmp_path, mini_manifest):
         assert task.result_url == f"/results/{task_uid}/webinar_speaker.zip"
         assert (tmp_path / "results" / task_uid / "webinar_speaker.zip").exists()
         assert (tmp_path / "results" / task_uid / "wtest_100x100_speaker.png").exists()
+        # one-shot: the uploaded hero tmp dir is cleared once the render finishes
+        assert not (tmp_path / "tmp" / str(uid) / task_uid).exists()
         await manager.shutdown()
         await engine.dispose()
 
