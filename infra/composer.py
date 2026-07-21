@@ -539,28 +539,53 @@ def _draw_inline_row_layer(
     empty slot drops the run but the row keeps flowing. Widths are measured, the
     block is aligned within the rect, then each run is drawn left-to-right."""
     fp = _font_path(layer.font_family, layer.font_weight)
-    font = ImageFont.truetype(str(fp), size=layer.font_size)
 
-    # Resolve runs to concrete (kind, payload, width, gap_before) drop empties.
-    resolved: list[tuple[str, object, float, int]] = []
-    for run in layer.runs:
-        gap = run.gap_before if run.gap_before is not None else layer.gap
-        if isinstance(run, InlineImageRun):
-            resolved.append(("image", run, float(run.width), gap))
-        else:
-            text = (
-                run.fixed_content
-                if run.fixed_content is not None
-                else texts.get(run.slot or "", "")
-            )
-            if not text:
-                continue
-            color = run.color or layer.color
-            resolved.append(("text", (text, color), font.getlength(text), gap))
+    def _resolve(size: int, factor: float):
+        """Resolve runs to (kind, payload, width, img_size, gap) at a font size
+        and a scale factor applied to gaps and image dimensions. factor=1.0
+        reproduces the un-scaled layout byte-for-byte."""
+        f = ImageFont.truetype(str(fp), size=size)
+        out: list[tuple[str, object, float, tuple[int, int] | None, int]] = []
+        for run in layer.runs:
+            base_gap = run.gap_before if run.gap_before is not None else layer.gap
+            gap = int(round(base_gap * factor)) if factor != 1.0 else base_gap
+            if isinstance(run, InlineImageRun):
+                if factor != 1.0:
+                    iw = max(1, int(round(run.width * factor)))
+                    ih = max(1, int(round(run.height * factor)))
+                else:
+                    iw, ih = run.width, run.height
+                out.append(("image", run, float(iw), (iw, ih), gap))
+            else:
+                text = (
+                    run.fixed_content
+                    if run.fixed_content is not None
+                    else texts.get(run.slot or "", "")
+                )
+                if not text:
+                    continue
+                color = run.color or layer.color
+                out.append(("text", (text, color), f.getlength(text), None, gap))
+        return f, out
+
+    font, resolved = _resolve(layer.font_size, 1.0)
     if not resolved:
         return
 
-    total = sum(w for _, _, w, _ in resolved) + sum(g for _, _, _, g in resolved[1:])
+    def _total(items):
+        return sum(w for _, _, w, _, _ in items) + sum(g for _, _, _, _, g in items[1:])
+
+    total = _total(resolved)
+    # Shrink the whole row (font + gaps + images) to fit the rect when a longer
+    # slot value (e.g. «08 сентября» vs the reference «30 июля») would overflow
+    # past the frame. No-op when it already fits, so reference dates stay
+    # pixel-exact.
+    if total > layer.width and total > 0:
+        factor = layer.width / total
+        size = max(1, int(layer.font_size * factor))
+        font, resolved = _resolve(size, factor)
+        total = _total(resolved)
+
     if layer.align_h == "left":
         cx = float(layer.x)
     elif layer.align_h == "center":
@@ -570,14 +595,14 @@ def _draw_inline_row_layer(
 
     y_mid = layer.y + layer.height / 2
     draw = ImageDraw.Draw(canvas)
-    for i, (kind, payload, w, gap) in enumerate(resolved):
+    for i, (kind, payload, w, img_size, gap) in enumerate(resolved):
         if i > 0:
             cx += gap
         if kind == "image":
             src = Image.open(assets_root / payload.path).convert("RGBA")
-            if src.size != (payload.width, payload.height):
-                src = src.resize((payload.width, payload.height), Image.LANCZOS)
-            canvas.alpha_composite(src, (int(round(cx)), int(round(y_mid - payload.height / 2))))
+            if src.size != img_size:
+                src = src.resize(img_size, Image.LANCZOS)
+            canvas.alpha_composite(src, (int(round(cx)), int(round(y_mid - img_size[1] / 2))))
         else:
             text, color = payload
             draw.text((cx, y_mid), text, font=font, fill=color, anchor="lm")
