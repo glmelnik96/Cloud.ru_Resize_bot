@@ -213,9 +213,13 @@ def _fit_text(
     h_pad = layer.per_line_highlight.padding_x if layer.per_line_highlight else 0
     wrap_width = max(1, layer.width - 2 * layer.padding_x - 2 * h_pad)
     inner_h = max(1, layer.height - 2 * layer.padding_y)
+    # Space-split tokens (NBSP-glued words stay whole): a size is "clean" only
+    # if every token fits the wrap width, i.e. no word gets hard-broken mid-way.
+    tokens = [w for para in text.split("\n") for w in para.split(" ") if w]
     last_font = None
     last_lines: list[str] = []
     last_size = sizes[-1]
+    layout_fit: tuple[ImageFont.FreeTypeFont, list[str], int] | None = None
     for size in sizes:
         font = ImageFont.truetype(str(fp), size=size)
         tracking = layer.letter_spacing * size
@@ -236,7 +240,21 @@ def _fit_text(
             line_h = size * layer.line_height
             gaps_h = n_gaps * (layer.para_spacing or 0.0)
             if line_h * n_lines + gaps_h <= inner_h + 1:
-                return font, lines, size, False
+                # Prefer the largest size that also keeps every word whole; a
+                # size that fits the layout only by hard-breaking a long word
+                # (e.g. «инфраструктура» in a narrow box) is remembered as a
+                # fallback but we keep shrinking to try to avoid the mid-word
+                # break first. Short titles are clean at font_size_max, so this
+                # is a no-op for them (pixel-exact preserved).
+                clean = all(
+                    _text_width(font, w, tracking) <= wrap_width for w in tokens
+                )
+                if clean:
+                    return font, lines, size, False
+                if layout_fit is None:
+                    layout_fit = (font, lines, size)
+    if layout_fit is not None:
+        return layout_fit[0], layout_fit[1], layout_fit[2], False
     # Did not fit fully; return smallest we tried, clipped lines with an
     # ellipsis on the last visible line instead of silently dropping text.
     assert last_font is not None
