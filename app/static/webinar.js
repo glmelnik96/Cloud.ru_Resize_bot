@@ -66,13 +66,27 @@
 
   $("variantSeg").addEventListener("click", (ev) => {
     const btn = ev.target.closest(".seg__btn");
-    if (!btn) return;
+    if (!btn || btn.dataset.variant === variant) return;
     variant = btn.dataset.variant;
     document.querySelectorAll("#variantSeg .seg__btn").forEach((b) =>
       b.classList.toggle("is-active", b === btn));
+    // A speaker photo and a metaphor render are different assets — drop any hero
+    // on variant change. Without this, a speaker upload lingered in heroBlob and
+    // the metaphor build reused that cached file instead of generating from the
+    // prompt via App1.
+    clearHero();
     renderVariant();
-    if (hero && fitOn()) { alphaBox = computeAlphaBox(hero); resetTransform(); drawStage(); }
   });
+
+  // Reset all hero state so the next variant starts from a clean slate.
+  function clearHero() {
+    hero = null; heroBlob = null; alphaBox = null;
+    T.scale = 1; T.x = 0; T.y = 0;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hide($("fitStage"));
+    $("fitStatus").textContent = "";
+    updateStartBtn();
+  }
 
   function meta() { return (META && META[variant]) || null; }
   // Whether the hand-fit canvas applies. Speaker: yes. Visual (metaphor): no —
