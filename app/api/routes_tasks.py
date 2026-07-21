@@ -10,7 +10,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select
 
 from app.api.schemas import CreateTaskIn, TaskOut, TextDecisionIn
+from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
+from app.config import settings
 from app.db import models
 from app.services.creatives import CapacityError
 
@@ -211,12 +213,12 @@ async def decide_image(
         return {"ok": True, "action": "generate"}
 
     # upload
-    if file is None:
-        raise HTTPException(422, "no file provided for upload")
+    data = await read_image_upload(
+        file, max_bytes=settings.max_upload_bytes, required=True
+    )
     manager = request.app.state.manager
     dest_dir = manager.task_tmp(str(user.id), uid)
     dest = Path(dest_dir) / f"hero{_safe_suffix(file.filename)}"
-    data = await file.read()
     dest.write_bytes(data)
     decision = {"action": "upload", "local_path": str(dest)}
     try:

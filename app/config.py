@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # --- results retention TTL ---
     retention_ttl_sec: int = Field(24 * 3600, alias="RETENTION_TTL_SEC")
 
+    # --- upload guard: hard cap on a single hero upload (bytes) ---
+    # Bounds per-request memory and blocks oversized/non-image payloads at the
+    # multipart boundary before they reach disk or PIL. 20MB covers real photos.
+    max_upload_bytes: int = Field(20 * 1024 * 1024, alias="MAX_UPLOAD_BYTES")
+
     # --- langgraph checkpointer (App3-only: durable HITL park/resume) ---
     # SQLite-backed (no Redis on the VM — platform decision 2026-06-21).
     # Separate DB file from db_url so checkpoint + app schemas stay independent.

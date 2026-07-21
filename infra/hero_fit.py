@@ -33,6 +33,17 @@ VISUAL_BOX = (211, 157, 813, 887)
 
 _ALPHA_THRESHOLD = 32
 
+# Hard cap on a baked hero's pixel dimensions. A resized hero legitimately runs
+# a few× the canvas (zoom-in crops), so the cap sits well above real use: the
+# largest reference side is ~2669px and a heavy manual zoom stays under ~15k. A
+# degenerate alpha bbox (e.g. a near-empty cutout leaving a 1px speck) instead
+# drives auto cover-scale into the hundreds and would allocate a multi-terabyte
+# resize (OOM). 16384 leaves real compositions untouched while bounding the
+# worst case to ~1GB. When exceeded, scale AND the placement offset shrink by
+# the same factor (composition stays consistent, just smaller) — a degraded but
+# crash-free result on pathological input.
+_MAX_BAKE_DIM = 16384
+
 
 @dataclass(frozen=True)
 class Transform:
@@ -52,17 +63,23 @@ def bake_frame(hero: Image.Image, ref_w: int, ref_h: int, t: Transform) -> Image
     if hero.mode != "RGBA":
         hero = hero.convert("RGBA")
     canvas = Image.new("RGBA", (ref_w, ref_h), (0, 0, 0, 0))
-    new_w = max(1, round(hero.width * t.scale))
-    new_h = max(1, round(hero.height * t.scale))
+    scale, tx, ty = t.scale, t.x, t.y
+    largest = max(hero.width, hero.height) * scale
+    if largest > _MAX_BAKE_DIM:
+        f = _MAX_BAKE_DIM / largest
+        scale, tx, ty = scale * f, tx * f, ty * f
+    new_w = max(1, round(hero.width * scale))
+    new_h = max(1, round(hero.height * scale))
     resized = hero.resize((new_w, new_h), Image.LANCZOS)
-    px, py = round(t.x), round(t.y)
+    px, py = round(tx), round(ty)
     # PIL requires non-negative paste dest for alpha_composite: pre-crop.
     left, top = max(0, -px), max(0, -py)
-    if left or top:
-        resized = resized.crop((left, top, new_w, new_h))
-        px, py = max(0, px), max(0, py)
-    if px < ref_w and py < ref_h and resized.width > 0 and resized.height > 0:
-        canvas.alpha_composite(resized, (px, py))
+    if left < new_w and top < new_h:  # else hero is fully off-canvas
+        if left or top:
+            resized = resized.crop((left, top, new_w, new_h))
+            px, py = max(0, px), max(0, py)
+        if px < ref_w and py < ref_h and resized.width > 0 and resized.height > 0:
+            canvas.alpha_composite(resized, (px, py))
     return canvas
 
 

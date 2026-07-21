@@ -439,6 +439,16 @@ class TextLayer(BaseModel):
     def _slot_or_fixed(self) -> "TextLayer":
         if self.slot is None and self.fixed_content is None:
             raise ValueError("text layer needs either slot or fixed_content")
+        # font_size_min > max yields an empty shrink range -> IndexError at
+        # render time; reject it at load so a bad manifest fails loudly.
+        if (
+            self.font_size_min is not None
+            and self.font_size_min > self.font_size_max
+        ):
+            raise ValueError(
+                f"font_size_min ({self.font_size_min}) must be <= "
+                f"font_size_max ({self.font_size_max})"
+            )
         return self
 
 

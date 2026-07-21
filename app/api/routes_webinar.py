@@ -9,11 +9,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
+from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
+from app.config import settings
 from app.services.webinar import CapacityError, _VARIANTS
 from infra.hero_fit import Transform
 
 router = APIRouter(prefix="/api/webinar", tags=["webinar"])
+
+# Upper bound on the canvas zoom multiplier. The fit engine's real range is
+# roughly 0.1x–10x; anything past this is not a legitimate placement and would
+# only serve to stress the bake (bake_frame also caps output dims defensively).
+_MAX_FIT_SCALE = 50.0
 
 
 @router.get("/meta")
@@ -72,12 +79,12 @@ async def create_webinar_task(
     if any(v is not None for v in fit) and not all(v is not None for v in fit):
         raise HTTPException(422, "fit_scale/fit_x/fit_y must be provided together")
     transform = Transform(scale=fit_scale, x=fit_x, y=fit_y) if fit_scale is not None else None
-    if transform is not None and transform.scale <= 0:
-        raise HTTPException(422, "fit_scale must be positive")
+    if transform is not None and not (0 < transform.scale <= _MAX_FIT_SCALE):
+        raise HTTPException(422, f"fit_scale must be in (0, {_MAX_FIT_SCALE}]")
 
-    hero_bytes = await file.read() if file is not None else b""
-    if file is not None and not hero_bytes:
-        raise HTTPException(422, "empty hero file")
+    hero_bytes = await read_image_upload(
+        file, max_bytes=settings.max_upload_bytes, required=False
+    )
 
     fields = {"variant": variant, "title": title, "subtitle": subtitle,
               "name": name, "position": position, "date": date, "time": time}

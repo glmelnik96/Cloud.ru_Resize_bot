@@ -14,6 +14,17 @@ from app.main import create_app  # noqa: E402
 _HDR = {"X-User-Id": "5", "X-User-Email": "u@cloud.ru"}
 
 
+def _png_bytes() -> bytes:
+    """A minimal but genuinely-decodable PNG (upload routes now validate images)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (2, 2), (0, 0, 0)).save(buf, "PNG")
+    return buf.getvalue()
+
+
 def _app(tmp_path, monkeypatch, *, graph_ok: bool):
     async def fake_init_graph(checkpoint_db):
         if not graph_ok:
@@ -313,7 +324,7 @@ def test_decision_image_upload_saves_and_resumes(tmp_path, monkeypatch):
         r = c.post(
             "/api/tasks/im/decision/image",
             data={"action": "upload"},
-            files={"file": ("hero.png", b"\x89PNG", "image/png")},
+            files={"file": ("hero.png", _png_bytes(), "image/png")},
             headers=_HDR,
         )
         assert r.status_code == 200
@@ -341,7 +352,7 @@ def test_decision_image_upload_sanitizes_hostile_filename(tmp_path, monkeypatch)
         r = c.post(
             "/api/tasks/ih/decision/image",
             data={"action": "upload"},
-            files={"file": ("..\\..\\evil.exe", b"\x89PNG", "image/png")},
+            files={"file": ("..\\..\\evil.exe", _png_bytes(), "image/png")},
             headers=_HDR,
         )
         assert r.status_code == 200
