@@ -17,6 +17,7 @@ Why prefit works for both variants:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 import zipfile
 from pathlib import Path
@@ -215,6 +216,18 @@ class WebinarService:
         # (metaphor) variant uses it to render a hero from a prompt instead of
         # a manual upload; when absent/unavailable the UI offers upload only.
         self.hero_generator = hero_generator
+        # Per-user lock serializing create()'s open-count check → insert so two
+        # concurrent submissions can't both slip past the cap (TOCTOU).
+        self._create_locks: dict[str, asyncio.Lock] = {}
+
+    def _user_lock(self, user_id: str) -> asyncio.Lock:
+        """One asyncio.Lock per user id, created lazily. Race-free: no await
+        between the lookup and the insert."""
+        lock = self._create_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._create_locks[user_id] = lock
+        return lock
 
     def _can_generate(self, variant: str, prompt: str) -> bool:
         """Whether the metaphor can be generated from a prompt (no upload)."""
@@ -251,9 +264,6 @@ class WebinarService:
                 "hero image required: upload a file, or provide a prompt for "
                 "the metaphor (visual) variant"
             )
-        if await self._open_count(int(user_id)) >= self.max_open_per_user:
-            raise CapacityError("too many open tasks")
-
         task_uid = uuid.uuid4().hex[:12]
         fields = dict(fields)
         # The speaker form sends name + position separately; fold them into the
@@ -263,18 +273,23 @@ class WebinarService:
             if sub:
                 fields["subtitle"] = sub
         texts = {k: fields[k] for k in _TEXT_KEYS if fields.get(k)}
-        async with self.Session() as s:
-            s.add(
-                models.Task(
-                    task_uid=task_uid,
-                    user_id=int(user_id),
-                    workflow="webinar",
-                    prompt=texts.get("title", ""),
-                    params={"variant": variant, **texts},
-                    status="queued",
+        # Serialize this user's cap check → insert so two concurrent submissions
+        # can't both slip past max_open_per_user (TOCTOU).
+        async with self._user_lock(str(user_id)):
+            if await self._open_count(int(user_id)) >= self.max_open_per_user:
+                raise CapacityError("too many open tasks")
+            async with self.Session() as s:
+                s.add(
+                    models.Task(
+                        task_uid=task_uid,
+                        user_id=int(user_id),
+                        workflow="webinar",
+                        prompt=texts.get("title", ""),
+                        params={"variant": variant, **texts},
+                        status="queued",
+                    )
                 )
-            )
-            await s.commit()
+                await s.commit()
 
         # Persist the hero into the task tmp dir before queuing, so the
         # runner never depends on the request lifetime. When generating, the
@@ -367,6 +382,16 @@ class WebinarService:
                             zf.write(f, f.name)
 
                 await asyncio.to_thread(_zip)
+        except asyncio.CancelledError:
+            # Lane/loop cancelled mid-render — flip the row out of "running" so
+            # it stops counting against the user's open budget forever. Best-
+            # effort/shielded (may be teardown), then re-raise.
+            log.warning("webinar_render_cancelled", task_uid=task_uid)
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(
+                    self._finish(task_uid, "failed", error="cancelled")
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("webinar_render_failed", task_uid=task_uid)
             await reporter.error(f"{type(exc).__name__}: {exc}")

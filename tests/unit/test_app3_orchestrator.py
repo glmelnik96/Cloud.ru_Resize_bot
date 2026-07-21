@@ -6,17 +6,20 @@ create() persists a queued task + enforces the per-user open-session gate.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 from app.db import models  # noqa: E402
 from app.db.database import init_db, make_engine, make_sessionmaker  # noqa: E402
 from app.services.creatives import (  # noqa: E402
     CapacityError,
     CreativesService,
+    DecisionConflict,
     build_raw_brief,
 )
 from app.tasks.events import EventBus  # noqa: E402
@@ -856,6 +859,121 @@ async def test_generate_decision_queue_full_restores_awaiting_image(tmp_path, mo
         res = await s.execute(select(models.Task).where(models.Task.task_uid == "qf2"))
         task = res.scalar_one()
     assert task.status == "awaiting_image"
+
+
+@pytest.mark.asyncio
+async def test_create_concurrent_never_exceeds_cap(tmp_path):
+    """TOCTOU guard: N concurrent create()s for one user must not overshoot
+    max_open_per_user. Without the per-user lock, several would read the same
+    open-count and all insert. The lock serializes check→insert so the row
+    count lands exactly at the cap."""
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _FakeGraph({"kind": "text_approve"}), tmp=tmp_path / "tmp", max_open=3)
+
+    async def noop_submit(user_id, runner):
+        return True
+
+    svc.manager.submit = noop_submit  # type: ignore[assignment]
+
+    async def _try_create():
+        try:
+            await svc.create("1", {"product": "p", "audience": "a", "emotion": "e"})
+            return True
+        except CapacityError:
+            return False
+
+    results = await asyncio.gather(*(_try_create() for _ in range(8)))
+    assert sum(results) == 3  # exactly the cap succeeded
+
+    async with Session() as s:
+        res = await s.execute(
+            select(func.count()).select_from(models.Task).where(models.Task.user_id == 1)
+        )
+        assert int(res.scalar_one()) == 3
+
+
+@pytest.mark.asyncio
+async def test_double_resume_second_loses_claim(tmp_path):
+    """Double-submit guard: two submit_decision calls racing the same parked
+    task — exactly one wins the atomic claim (flips to running + enqueues); the
+    other raises DecisionConflict and does NOT enqueue a second resume."""
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="dr1", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    submits = {"count": 0}
+
+    async def counting_submit(user_id, runner):
+        submits["count"] += 1
+        return True
+
+    svc.manager.submit = counting_submit  # type: ignore[assignment]
+
+    async def _try():
+        try:
+            await svc.submit_decision("dr1", "1", {"action": "approve"})
+            return "ok"
+        except DecisionConflict:
+            return "conflict"
+
+    outcomes = await asyncio.gather(_try(), _try())
+    assert sorted(outcomes) == ["conflict", "ok"]
+    assert submits["count"] == 1  # graph resumed exactly once
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "dr1"))
+        assert res.scalar_one().status == "running"
+
+
+@pytest.mark.asyncio
+async def test_resume_on_non_awaiting_raises_conflict(tmp_path):
+    """A resume against a task that is not awaiting_* (already running/done)
+    loses the claim → DecisionConflict, so a late duplicate can't re-resume."""
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, _ResumableGraph(), tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="nr1", user_id=1, workflow="creatives", status="running"))
+        await s.commit()
+    with pytest.raises(DecisionConflict):
+        await svc.submit_decision("nr1", "1", {"action": "approve"})
+
+
+@pytest.mark.asyncio
+async def test_cancelled_segment_frees_running_row(tmp_path):
+    """Stuck-running guard: if a segment is cancelled mid-compute, the row must
+    not stay 'running' forever (it would count against the open budget). The
+    CancelledError handler flips it to failed and re-raises."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+
+    class _HangGraph:
+        async def astream(self, payload, config=None, stream_mode=None):
+            await asyncio.sleep(3600)  # park in compute until cancelled
+            yield {}
+
+    svc = _service(Session, _HangGraph(), bus=bus, tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="cx1", user_id=1, workflow="creatives", status="queued"))
+        await s.commit()
+
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="cx1", label="creatives", eta_sec=None)
+    task = asyncio.ensure_future(
+        svc._run_segment("cx1", "1", {"raw_brief": "x"}, reporter)
+    )
+    await asyncio.sleep(0.05)  # let it enter the compute stretch
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "cx1"))
+        row = res.scalar_one()
+    assert row.status == "failed"
+    assert row.error == "cancelled"
 
 
 @pytest.mark.asyncio

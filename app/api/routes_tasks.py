@@ -15,7 +15,7 @@ from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db import models
-from app.services.creatives import CapacityError
+from app.services.creatives import CapacityError, DecisionConflict
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -181,6 +181,8 @@ async def decide_text(uid: str, body: TextDecisionIn, request: Request):
     decision = {"action": body.action}
     try:
         await service.submit_decision(uid, str(user.id), decision)
+    except DecisionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
     except CapacityError as exc:
         raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "action": body.action}
@@ -219,6 +221,8 @@ async def decide_image(
     if action == "cancel":
         try:
             await service.submit_decision(uid, str(user.id), {"action": "cancel"})
+        except DecisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
         except CapacityError as exc:
             raise HTTPException(429, str(exc)) from exc
         return {"ok": True, "action": "cancel"}
@@ -234,6 +238,8 @@ async def decide_image(
             )
         except HeroGenUnavailable as exc:
             raise HTTPException(501, str(exc)) from exc
+        except DecisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
         except CapacityError as exc:
             raise HTTPException(429, str(exc)) from exc
         return {"ok": True, "action": "generate"}
@@ -249,6 +255,8 @@ async def decide_image(
     decision = {"action": "upload", "local_path": str(dest)}
     try:
         await service.submit_decision(uid, str(user.id), decision)
+    except DecisionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
     except CapacityError as exc:
         raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "action": "upload"}

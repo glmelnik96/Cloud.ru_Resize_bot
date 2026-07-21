@@ -13,6 +13,7 @@ in later phases.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import uuid
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app import usage
 from app.db import models
@@ -56,6 +57,15 @@ _HERO_GEN_CONCURRENCY = int(os.environ.get("HERO_GEN_CONCURRENCY", "4"))
 
 class CapacityError(Exception):
     """Raised when a user already has too many open creatives tasks."""
+
+
+class DecisionConflict(Exception):
+    """Raised when a resume/generate loses the atomic claim on a parked task.
+
+    Two POSTs racing the same awaiting_* task both pass the route's status
+    check (a TOCTOU read); only the one that wins the compare-and-set flip to
+    'running' proceeds. The loser raises this so the route answers 409 instead
+    of resuming the graph a second time (which would corrupt the checkpoint)."""
 
 
 async def init_graph(checkpoint_db: str):
@@ -115,26 +125,39 @@ class CreativesService:
         self.max_open_per_user = max_open_per_user
         self.image_timeout_sec = image_timeout_sec
         self._timeouts: dict[str, asyncio.Task] = {}
+        # Per-user lock serializing create()'s open-count check → insert so two
+        # concurrent submissions can't both slip past the cap (TOCTOU).
+        self._create_locks: dict[str, asyncio.Lock] = {}
+
+    def _user_lock(self, user_id: str) -> asyncio.Lock:
+        """One asyncio.Lock per user id, created lazily. Safe without guarding
+        because there is no await between the lookup and the insert (the event
+        loop can't switch tasks mid-statement)."""
+        lock = self._create_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._create_locks[user_id] = lock
+        return lock
 
     # ── create ────────────────────────────────────────────────
     async def create(self, user_id: str, fields: dict[str, str]) -> str:
         """Persist a queued task, enqueue segment 1, return task_uid."""
-        if await self._open_count(int(user_id)) >= self.max_open_per_user:
-            raise CapacityError("too many open tasks")
-
         task_uid = uuid.uuid4().hex[:12]
-        async with self.Session() as s:
-            s.add(
-                models.Task(
-                    task_uid=task_uid,
-                    user_id=int(user_id),
-                    workflow="creatives",
-                    prompt=fields.get("product", ""),
-                    params=dict(fields),
-                    status="queued",
+        async with self._user_lock(str(user_id)):
+            if await self._open_count(int(user_id)) >= self.max_open_per_user:
+                raise CapacityError("too many open tasks")
+            async with self.Session() as s:
+                s.add(
+                    models.Task(
+                        task_uid=task_uid,
+                        user_id=int(user_id),
+                        workflow="creatives",
+                        prompt=fields.get("product", ""),
+                        params=dict(fields),
+                        status="queued",
+                    )
                 )
-            )
-            await s.commit()
+                await s.commit()
 
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
         _, queued = self.manager.user_load(user_id)
@@ -162,8 +185,10 @@ class CreativesService:
     async def submit_decision(self, task_uid: str, user_id: str, decision: dict) -> None:
         """Resume a parked graph with the user's decision as the next segment.
 
-        Flips status → running synchronously to close the double-submit window
-        (a second POST then sees running, not awaiting_*, → 409 upstream).
+        Atomically claims the task (awaiting_* → running via a single
+        compare-and-set UPDATE) so two POSTs racing the same parked task can't
+        both resume the graph — the loser raises DecisionConflict (→ 409). The
+        route's own status check is a TOCTOU read; this claim is the real guard.
 
         If the lane queue is full the decision must NOT be silently dropped:
         the parked status is restored (the graph checkpoint never moved) and
@@ -172,9 +197,10 @@ class CreativesService:
         """
         from langgraph.types import Command
 
-        prior = await self._get_status(task_uid)
+        prior = await self._claim_running(task_uid)
+        if prior is None:
+            raise DecisionConflict("task is not awaiting a decision")
         self._cancel_timeout(task_uid)
-        await self._set_status(task_uid, "running")
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
         payload = Command(resume=decision)
 
@@ -219,8 +245,10 @@ class CreativesService:
         if not self.hero_generator.available:
             raise HeroGenUnavailable("hero generation backend not configured")
 
+        prior = await self._claim_running(task_uid)
+        if prior is None:
+            raise DecisionConflict("task is not awaiting a decision")
         self._cancel_timeout(task_uid)
-        await self._set_status(task_uid, "running")
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
 
         async def runner() -> None:
@@ -339,6 +367,18 @@ class CreativesService:
         try:
             async with self.manager.global_sem:
                 final = await self._stream(task_uid, payload, reporter)
+        except asyncio.CancelledError:
+            # Lane/loop cancelled mid-compute — flip the row out of "running"
+            # so it stops counting against the user's open-session budget
+            # forever (a stuck "running" row is never terminal). Best-effort
+            # and shielded because we may be in teardown; then re-raise so the
+            # cancellation still propagates to the lane.
+            log.warning("segment_cancelled", task_uid=task_uid)
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(
+                    self._finish(task_uid, "failed", error="cancelled")
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("segment_failed", task_uid=task_uid)
             await reporter.error(f"{type(exc).__name__}: {exc}")
@@ -485,6 +525,10 @@ class CreativesService:
                 # Lane full at the exact timeout moment — submit_decision already
                 # restored awaiting_image and re-armed the timeout; just log.
                 log.warning("image_timeout_resume_deferred", task_uid=task_uid)
+            except DecisionConflict:
+                # A real upload/generate won the claim between our status read
+                # and here — the task already moved on; nothing to time out.
+                log.info("image_timeout_superseded", task_uid=task_uid)
 
         try:
             self._timeouts[task_uid] = asyncio.create_task(_sleeper(), name=f"img-timeout-{task_uid}")
@@ -510,11 +554,36 @@ class CreativesService:
             )
             return int(res.scalar_one())
 
-    async def _get_status(self, task_uid: str) -> Optional[str]:
+    async def _claim_running(self, task_uid: str) -> Optional[str]:
+        """Atomically flip an awaiting_* task to 'running' (compare-and-set).
+
+        Returns the prior awaiting status on success, or None if the row was
+        not in an awaiting_* state — i.e. a concurrent resume already claimed
+        it (or it's gone). The claim is a single ``UPDATE ... WHERE status =
+        <prior>``: SQLite serializes writers, so of two racing resumes exactly
+        one matches a row (rowcount 1) and the other matches none (rowcount 0)
+        → the loser gets None and the caller rejects the duplicate."""
         async with self.Session() as s:
-            res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
+            res = await s.execute(
+                select(models.Task).where(models.Task.task_uid == task_uid)
+            )
             task = res.scalar_one_or_none()
-            return task.status if task is not None else None
+            if task is None or task.status not in ("awaiting_text", "awaiting_image"):
+                return None
+            prior = task.status
+            upd = await s.execute(
+                update(models.Task)
+                .where(models.Task.task_uid == task_uid)
+                .where(models.Task.status == prior)
+                .values(
+                    status="running",
+                    started_at=func.coalesce(
+                        models.Task.started_at, datetime.now(timezone.utc)
+                    ),
+                )
+            )
+            await s.commit()
+            return prior if upd.rowcount else None
 
     async def _set_status(self, task_uid: str, status: str, *, started: bool = False) -> None:
         async with self.Session() as s:
