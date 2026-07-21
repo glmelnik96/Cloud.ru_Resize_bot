@@ -43,13 +43,12 @@ def test_same_gateway_id_reuses_row_and_updates_email(tmp_path):
         assert r2.json()["email"] == "y@cloud.ru"  # email refreshed on revisit
 
 
-def test_results_mount_exists(tmp_path):
-    # Robust across starlette versions: newer starlette keeps included routers
-    # as a lazy wrapper (no flattened APIRoute in app.routes), so probe the
-    # /api/me route by behaviour (401, not 404 = wired) and check the /results
-    # Mount, which still surfaces in app.routes.
+def test_results_route_wired_and_auth_gated(tmp_path):
+    # Result artifacts are served by an ownership-gated route, NOT a bare
+    # StaticFiles mount (which would be a cross-tenant IDOR). Probe by
+    # behaviour: an unauthenticated /results request is 401 (wired + gated),
+    # never 200 (open mount) or 404 (missing).
     app = create_app({"db_url": f"sqlite+aiosqlite:///{tmp_path / 'app3.db'}"})
     with TestClient(app) as c:
         assert c.get("/api/me").status_code == 401  # wired (404 would mean missing)
-    mount_paths = [r.path for r in app.routes if hasattr(r, "path")]
-    assert "/results" in mount_paths
+        assert c.get("/results/anyuid/anyfile.zip").status_code == 401

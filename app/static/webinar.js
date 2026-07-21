@@ -41,6 +41,7 @@
   const T = { scale: 1, x: 0, y: 0 }; // Transform in ref-frame units
 
   let taskUid = null, es = null;
+  let submitting = false;  // in-flight POST guard (blocks double-submit)
   const LS_KEY = "app3_webinar_task";
   const ACTIVE = ["queued", "running"];
   const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
@@ -125,7 +126,9 @@
   // or (metaphor) a prompt to generate one.
   function updateStartBtn() {
     const ok = !!heroBlob || (canGenerate() && promptText().length > 0);
-    $("startBtn").disabled = !ok;
+    // Never re-enable while a submit is in flight (a variant switch / prompt
+    // edit mid-POST must not let a second task be created).
+    $("startBtn").disabled = !ok || submitting;
   }
 
   // ── hero upload ────────────────────────────────────────
@@ -185,7 +188,10 @@
     const [bx0, by0, bx1, by1] = m.box;
     const boxW = bx1 - bx0, boxH = by1 - by0;
     const b = alphaBox || { x0: 0, y0: 0, x1: hero.naturalWidth, y1: hero.naturalHeight };
-    const objW = b.x1 - b.x0, objH = b.y1 - b.y0;
+    // Guard a degenerate alpha box (zero width/height): without this objW/objH
+    // become 0 → scale Infinity → T.x/T.y NaN, which the server rejects as a
+    // 422 with no hint. Clamp to at least 1px so the transform stays finite.
+    const objW = Math.max(1, b.x1 - b.x0), objH = Math.max(1, b.y1 - b.y0);
     const sx = boxW / objW, sy = boxH / objH;
     const scale = m.mode === "contain" ? Math.min(sx, sy) : Math.max(sx, sy);
     T.scale = scale;
@@ -337,6 +343,7 @@
 
   // ── submit ─────────────────────────────────────────────
   $("startBtn").addEventListener("click", async () => {
+    if (submitting) return;  // ignore repeat clicks while a POST is in flight
     const prompt = promptText();
     const willGenerate = !heroBlob && canGenerate() && prompt.length > 0;
     if (!heroBlob && !willGenerate) {
@@ -354,7 +361,7 @@
     const fd = new FormData();
     fd.append("variant", variant);
     Object.keys(slots).forEach((k) => fd.append(k, slots[k]));
-    if (fitOn()) {
+    if (fitOn() && [T.scale, T.x, T.y].every(Number.isFinite)) {
       fd.append("fit_scale", String(T.scale));
       fd.append("fit_x", String(T.x));
       fd.append("fit_y", String(T.y));
@@ -365,6 +372,7 @@
       fd.append("prompt", prompt);
     }
 
+    submitting = true;
     $("startBtn").disabled = true;
     $("fitStatus").textContent = "Создаю задачу…";
     try {
@@ -381,7 +389,9 @@
       subscribe();
     } catch (e) {
       $("fitStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-      $("startBtn").disabled = false;
+    } finally {
+      submitting = false;
+      updateStartBtn();
     }
   });
 

@@ -3820,7 +3820,7 @@
           "align_h": "left",
           "align_v": "middle",
           "max_lines": 1,
-          "z": 1
+          "z": 3
         },
         {
           "type": "hero_cutout",

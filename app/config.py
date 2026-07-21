@@ -46,19 +46,25 @@ class Settings(BaseSettings):
     tmp_root: Path = Field(ROOT / "data" / "tmp", alias="TMP_ROOT")
 
     # --- queue limits (App1) ---
-    max_concurrency: int = Field(5, alias="MAX_CONCURRENCY")
-    max_per_user_inflight: int = Field(2, alias="MAX_PER_USER_INFLIGHT")
-    user_queue_limit: int = Field(5, alias="USER_QUEUE_LIMIT")
+    # All gt=0: a zero/negative cap is never meaningful and breaks the runtime
+    # (Semaphore(0) deadlocks compute, a 0 queue rejects everything) — reject at
+    # settings load instead of failing obscurely later.
+    max_concurrency: int = Field(5, alias="MAX_CONCURRENCY", gt=0)
+    max_per_user_inflight: int = Field(2, alias="MAX_PER_USER_INFLIGHT", gt=0)
+    user_queue_limit: int = Field(5, alias="USER_QUEUE_LIMIT", gt=0)
 
     # --- HITL image-upload window (graph cancels the task after this) ---
-    image_timeout_sec: int = Field(24 * 3600, alias="IMAGE_TIMEOUT_SEC")
+    image_timeout_sec: int = Field(24 * 3600, alias="IMAGE_TIMEOUT_SEC", gt=0)
     # --- results retention TTL ---
-    retention_ttl_sec: int = Field(24 * 3600, alias="RETENTION_TTL_SEC")
+    # gt=0: a negative TTL makes the purge cutoff land in the future and wipes
+    # every result immediately.
+    retention_ttl_sec: int = Field(24 * 3600, alias="RETENTION_TTL_SEC", gt=0)
 
     # --- upload guard: hard cap on a single hero upload (bytes) ---
     # Bounds per-request memory and blocks oversized/non-image payloads at the
     # multipart boundary before they reach disk or PIL. 20MB covers real photos.
-    max_upload_bytes: int = Field(20 * 1024 * 1024, alias="MAX_UPLOAD_BYTES")
+    # gt=0: a 0 cap rejects every upload as "too large".
+    max_upload_bytes: int = Field(20 * 1024 * 1024, alias="MAX_UPLOAD_BYTES", gt=0)
 
     # --- langgraph checkpointer (App3-only: durable HITL park/resume) ---
     # SQLite-backed (no Redis on the VM — platform decision 2026-06-21).

@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.api.schemas import CreateTaskIn, TaskOut, TextDecisionIn
@@ -17,6 +18,12 @@ from app.db import models
 from app.services.creatives import CapacityError
 
 router = APIRouter(prefix="/api", tags=["tasks"])
+
+# Result artifacts live at the root path "/results/<uid>/<file>" (the URL shape
+# baked into result_url and the banner image links). Served through an
+# ownership-gated route — NOT a bare StaticFiles mount, which would let any
+# authenticated user read another user's ZIP/banners by uid (IDOR).
+results_router = APIRouter(tags=["results"])
 
 
 def _task_images(t: models.Task, results_dir: Path | None) -> list[str]:
@@ -126,6 +133,25 @@ async def _load_owned(request: Request, uid: str, user) -> models.Task:
     if task is None or task.user_id != user.id:
         raise HTTPException(404, "task not found")
     return task
+
+
+@results_router.get("/results/{uid}/{filename}")
+async def get_result_file(uid: str, filename: str, request: Request):
+    """Serve a finished task's artifact (ZIP/banner PNG), gated by ownership.
+
+    Replaces an open StaticFiles mount that leaked any task's output to any
+    authenticated user by uid. ``filename`` is confined to the task's own
+    results dir (``resolve()`` + parent check blocks ``../`` traversal)."""
+    user = await get_current_user(request)
+    await _load_owned(request, uid, user)  # 404 unless the caller owns the task
+    results_dir = getattr(request.app.state, "results_dir", None)
+    if results_dir is None:
+        raise HTTPException(404, "not found")
+    task_dir = (Path(results_dir) / uid).resolve()
+    target = (task_dir / filename).resolve()
+    if target.parent != task_dir or not target.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(target)
 
 
 @router.get("/tasks/{uid}/pending")

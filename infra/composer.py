@@ -323,7 +323,15 @@ def _content_bbox(hero: Image.Image) -> tuple[int, int, int, int] | None:
     if "A" in hero.getbands():
         alpha = hero.getchannel("A")
         mask = alpha.point(lambda v: 255 if v >= _ALPHA_CROP_THRESHOLD else 0)
-        return mask.getbbox()
+        bbox = mask.getbbox()
+        if bbox is None:
+            # The whole cutout sits below the halo threshold — a very faint or
+            # heavily semi-transparent hero (e.g. aggressive bg-removal). Fall
+            # back to any-alpha extent so it still renders instead of being
+            # silently dropped into a blank panel (mirrors
+            # infra.hero_fit._alpha_bbox). Only a truly empty hero stays None.
+            bbox = alpha.getbbox()
+        return bbox
     return hero.getbbox()
 
 

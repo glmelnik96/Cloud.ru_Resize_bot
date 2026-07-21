@@ -146,6 +146,7 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     from app.api.routes_auth import router as auth_router
     from app.api.routes_pages import router as pages_router
     from app.api.routes_stream import router as stream_router
+    from app.api.routes_tasks import results_router
     from app.api.routes_tasks import router as tasks_router
     from app.api.routes_webinar import router as webinar_router
 
@@ -154,13 +155,16 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     app.include_router(webinar_router)
     app.include_router(stream_router)
     app.include_router(pages_router)
+    app.include_router(results_router)
 
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # Result artifacts are served by the ownership-gated results_router (see
+    # routes_tasks), NOT a StaticFiles mount — a bare mount is an IDOR leak.
     results_dir = Path(cfg["results_dir"])
     results_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/results", StaticFiles(directory=str(results_dir)), name="results")
+    app.state.results_dir = results_dir
     return app
 
 

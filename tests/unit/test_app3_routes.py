@@ -155,6 +155,30 @@ def test_list_tasks_includes_banner_images(tmp_path, monkeypatch):
         ]
 
 
+def test_results_file_gated_by_ownership(tmp_path, monkeypatch):
+    """Result artifacts are served only to the owning user (was an open
+    StaticFiles mount → any user could read another's ZIP by uid). Non-owners
+    get 404; a traversal filename cannot escape the task's results dir."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    other = {"X-User-Id": "9", "X-User-Email": "b@cloud.ru"}
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        c.get("/api/me", headers=other)  # materialize the second user
+        d = results / "own1"
+        d.mkdir(parents=True)
+        (d / "own1.zip").write_bytes(b"PK\x03\x04")
+        _seed_task(db, "own1", "done", me["id"], result_url="/results/own1/own1.zip")
+        # owner gets the bytes
+        r = c.get("/results/own1/own1.zip", headers=_HDR)
+        assert r.status_code == 200 and r.content == b"PK\x03\x04"
+        # a different authenticated user cannot read it
+        assert c.get("/results/own1/own1.zip", headers=other).status_code == 404
+        # traversal is refused (stays within the task's results dir)
+        assert c.get("/results/own1/..%2f..%2fr.db", headers=_HDR).status_code == 404
+
+
 def test_list_tasks_exposes_brief_fields(tmp_path, monkeypatch):
     """Expanding a history row shows what the user originally briefed, so the
     brief (product/audience/emotion) travels with the task list."""

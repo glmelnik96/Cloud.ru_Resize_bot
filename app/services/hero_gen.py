@@ -91,6 +91,22 @@ class App1HeroGenerator:
         self.url = url
         self.timeout_s = timeout_s
 
+    def _download_allowed(self, url: str) -> bool:
+        """Confine the JSON ``{"url": ...}`` download branch to the configured
+        App1 origin. Without this, a compromised/confused App1 response could
+        point App3 at ``http://169.254.169.254/…`` or an internal service and
+        turn it into an SSRF proxy (the bytes are fetched and written verbatim)."""
+        from urllib.parse import urlparse
+
+        try:
+            u, base = urlparse(url), urlparse(self.url)
+        except ValueError:
+            return False
+        return u.scheme in ("http", "https") and (u.hostname, u.port) == (
+            base.hostname,
+            base.port,
+        )
+
     async def generate(
         self,
         *,
@@ -128,6 +144,8 @@ class App1HeroGenerator:
                     img_url = payload.get("url") or payload.get("result_url")
                     if not img_url:
                         raise HeroGenUnavailable("App1 hero response had no image/url")
+                    if not self._download_allowed(img_url):
+                        raise HeroGenUnavailable("App1 hero url host not allowed")
                     dl = await c.get(img_url)
                     dl.raise_for_status()
                     data = dl.content
