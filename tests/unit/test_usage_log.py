@@ -106,6 +106,43 @@ async def test_log_creative_usage_no_user_is_anonymous(Session):
     assert ev.meta == {}
 
 
+async def test_excluded_email_writes_no_row(Session, monkeypatch):
+    """Smoke/tech accounts are dropped entirely — no local row (and no push)."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "usage_excluded_emails", "a@b.ru, e2e@cloud.ru")
+    uid, tid = await _seed_user_task(Session)
+    async with Session() as s:
+        user = await s.get(models.User, uid)  # email a@b.ru → excluded
+        task = await s.get(models.Task, tid)
+        await log_creative_usage(
+            s, task=task, user=user, status="done", meta={"count": 1},
+        )
+        await s.commit()
+
+    async with Session() as s:
+        events = (await s.execute(select(models.UsageEvent))).scalars().all()
+    assert events == []
+
+
+async def test_workflow_override_is_logged(Session):
+    """webinar passes its variant as workflow so the split shows in /admin."""
+    uid, tid = await _seed_user_task(Session)
+    async with Session() as s:
+        user = await s.get(models.User, uid)
+        task = await s.get(models.Task, tid)
+        await log_creative_usage(
+            s, task=task, user=user, status="done", meta={},
+            app="webinar", workflow="speaker",
+        )
+        await s.commit()
+
+    async with Session() as s:
+        ev = (await s.execute(select(models.UsageEvent))).scalar_one()
+    assert ev.app == "webinar"
+    assert ev.workflow == "speaker"
+
+
 async def test_usage_event_survives_retention(Session, tmp_path: Path):
     uid, tid = await _seed_user_task(Session)
     async with Session() as s:

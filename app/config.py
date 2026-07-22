@@ -79,6 +79,19 @@ class Settings(BaseSettings):
         "http://127.0.0.1:8011/internal/hero", alias="APP1_HERO_URL"
     )
 
+    # --- unified usage stats push (platform decision 2026-07-22) ---
+    # Each completed operation (done/failed/cancelled) is POSTed to the gateway
+    # so the /admin panel can fold every sub-app into one picture. Metric only —
+    # no images, no prompt. Empty url/token → push disabled (local/dev runs);
+    # the local usage_events row is still written and is the source of truth.
+    usage_ingest_url: str = Field("", alias="USAGE_INGEST_URL")
+    usage_ingest_token: str = Field("", alias="USAGE_INGEST_TOKEN")
+    # Technical/smoke accounts excluded from usage entirely (local + push),
+    # matching App1. Comma-separated emails.
+    usage_excluded_emails: str = Field(
+        "e2e-smoke@cloud.ru", alias="USAGE_EXCLUDED_EMAILS"
+    )
+
     # --- Cloud.ru FM (the graph's llm/cloudru.py reads these from env) ---
     cloudru_api_key: str = Field("", alias="CLOUDRU_API_KEY")
     cloudru_base_url: str = Field(

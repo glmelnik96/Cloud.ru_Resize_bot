@@ -459,8 +459,15 @@ class WebinarService:
             task.finished_at = datetime.now(timezone.utc)
             try:
                 user = await s.get(models.User, task.user_id)
+                variant = (task.params or {}).get("variant")
                 await usage.log_creative_usage(
-                    s, task=task, user=user, status=status, meta=meta or {}
+                    s,
+                    task=task,
+                    user=user,
+                    status=status,
+                    meta=meta or {},
+                    app="webinar",
+                    workflow=variant or task.workflow,
                 )
             except Exception:  # noqa: BLE001
                 log.warning("usage_log_failed", task_uid=task_uid, exc_info=True)
