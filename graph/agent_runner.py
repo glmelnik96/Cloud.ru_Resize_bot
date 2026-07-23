@@ -36,7 +36,7 @@ log = structlog.get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 _MODEL_MAP: dict[str, ModelName] = {
-    "glm-5.1": ModelName.GLM,
+    "glm-4.7": ModelName.GLM,
     "deepseek-v4-pro": ModelName.DEEPSEEK,
     "kimi-k2.6": ModelName.KIMI,
 }

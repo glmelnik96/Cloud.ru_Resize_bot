@@ -1,6 +1,6 @@
 id: generate_message_candidates
 skill: prompts/creative_ads_explorer.md
-model: glm-5.1
+model: glm-4.7
 model_config:
   thinking: false
   max_tokens: 8000  # 12 propositions (was 4000 for 3-5)

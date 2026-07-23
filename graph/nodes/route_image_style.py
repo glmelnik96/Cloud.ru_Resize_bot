@@ -1,4 +1,4 @@
-"""route_image_style node — GLM-5.1 thinking-OFF classifier.
+"""route_image_style node — GLM-4.7 thinking-OFF classifier.
 
 Input:
   - GraphState.brief (AdBrief)

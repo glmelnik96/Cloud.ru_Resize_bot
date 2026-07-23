@@ -1,4 +1,4 @@
-"""rank_candidates node — GLM-5.1 thinking-OFF.
+"""rank_candidates node — GLM-4.7 thinking-OFF.
 
 ONE light LLM call that orders the 12 propositions by predicted resonance with
 the single persona and attaches a one-line «почему зайдёт ЦА» to each. Replaces

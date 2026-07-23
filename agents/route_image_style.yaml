@@ -1,6 +1,6 @@
 id: route_image_style
 skill: prompts/route_image_style.md
-model: glm-5.1
+model: glm-4.7
 model_config:
   thinking: false
   max_tokens: 600

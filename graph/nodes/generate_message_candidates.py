@@ -1,4 +1,4 @@
-"""generate_message_candidates node — GLM-5.1 thinking-OFF.
+"""generate_message_candidates node — GLM-4.7 thinking-OFF.
 
 Generates EXACTLY 12 propositions as 12 distinct angles into the SINGLE persona
 (redesign 2026-06-21): each anchored on a different pain/motivation/objection

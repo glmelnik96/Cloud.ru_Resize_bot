@@ -1,4 +1,4 @@
-"""derive_persona node — GLM-5.1 thinking-OFF.
+"""derive_persona node — GLM-4.7 thinking-OFF.
 
 Derives exactly ONE persona (audience is single; 12 message angles all target
 it). Input:  GraphState.brief (AdBrief, incl. emotion).

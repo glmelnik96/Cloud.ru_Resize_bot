@@ -52,7 +52,7 @@ class _PingSchema(BaseModel):
 
 @pytest.mark.asyncio
 async def test_structured_output_glm(client: CloudRuClient) -> None:
-    """GLM-5.1 + plain prompt + Pydantic — the response_format=json_schema route returns 404."""
+    """GLM (4.7) + plain prompt + Pydantic — the response_format=json_schema route returns 404."""
     result = await client.call_structured(
         ModelCall(
             model=ModelName.GLM,

@@ -1,6 +1,6 @@
 id: rank_candidates
 skill: prompts/rank_candidates.md
-model: glm-5.1
+model: glm-4.7
 model_config:
   thinking: false
   max_tokens: 3000
