@@ -37,12 +37,12 @@ state ──pre-hooks──► LLM(skill, model_cfg) ──post-hooks──► r
 
 | id | skill | model | thinking | retry | post-hooks |
 |---|---|---|---|---|---|
-| `parse_brief` | `prompts/parse_brief.md` v0.1.0 | DeepSeek-V4-Pro | n/a | 1 | pydantic; channel/goal in controlled vocab; **`formats` пиннится whitelist'ом slug'ов из `config/templates.json`**; product не пустой |
-| `derive_persona` | `prompts/derive_persona.md` v0.1.0 | GLM-5.1 | off | 1 | pydantic; `1 ≤ len ≤ 3`; персоны не дубликаты |
-| `generate_message_candidates` | `prompts/creative_ads_explorer.md` v0.3.0 | GLM-5.1 | off | 1 | pydantic; `3 ≤ len ≤ 5`; уникальные `hook_angle`; brand-guards (§4); **soft word-bands** (slogan 3-6, cta 1) — warn-only, не блокирует |
-| `evaluate_as_persona_loop` | `prompts/persona_eval.md` v0.2.0 | GLM-5.1, Semaphore(3) | off | 1 на верификат | pydantic; scores в `[0,1]`; нет critic-фраз |
-| `route_image_style` | `prompts/route_image_style.md` v0.1.0 | GLM-5.1 | off | 1 | pydantic; `style ∈ {photo, render, isometric}`; фоллбек на `photo` при невалидном |
-| `generate_image_prompt` | `prompts/generate_image_prompt.md` v0.1.0 | GLM-5.1 | off (temp=0.5, max_tokens=800) | 1 | warn-only validators: word count 40-90, no Cyrillic, contains "no text"/"no letters"; **outputs EN-paragraph для копипаста юзером в свой image-gen** |
+| `understand_product` | `prompts/understand_product.md` v0.1.0 | DeepSeek-V4-Pro | n/a | 1 | pydantic (`ProductBrief`). Собирает факты из трёх источников, все опциональны: свободное поле маркетолога (высший приоритет) > база знаний `config/knowledge/` > страница по `brief.source_url` (через SSRF-guard `infra/urlfetch.py`) |
+| `derive_persona` | `prompts/derive_persona.md` v0.4.0 | GLM-4.7 | off | 1 | pydantic; ровно 1 персона; `audience_raw` из брифа бьёт сегменты из базы знаний; боли — только те, что продукт реально закрывает |
+| `generate_message_candidates` | `prompts/creative_ads_explorer.md` v0.7.1 | GLM-4.7 | off | 1 | **ДВА параллельных вызова по 12 = 24 черновика** (разные творческие позиции + разные срезы якорей персоны). HARD: slogan ≤ 42 симв., без иероглифов (`DraftCandidate._no_cjk`). Soft word-bands (slogan 3-6, cta 1) — warn-only |
+| `select_by_persona` | `prompts/select_by_persona.md` v0.1.0 | GLM-4.7 | off | 1 | pydantic (`SelectionSet`, ровно 12 из 24). Персона говорит от первого лица и **отбраковывает половину**; кандидат, обещающий то, чего нет в `ProductBrief`, отклоняется |
+| `route_image_style` | `prompts/route_image_style.md` v0.2.0 | GLM-4.7 | off | 1 | pydantic; `style ∈ {photo, render, isometric}`; фоллбек на `photo` при невалидном |
+| `generate_image_prompt` | `prompts/generate_image_prompt.md` v0.1.0 | GLM-4.7 | off (temp=0.5, max_tokens=800) | 1 | warn-only validators: word count 40-90, no Cyrillic, contains "no text"/"no letters"; **outputs EN-paragraph для копипаста юзером в свой image-gen** |
 
 ### Детерминированные / HITL ноды
 
@@ -64,7 +64,7 @@ state ──pre-hooks──► LLM(skill, model_cfg) ──post-hooks──► r
 ### Manifest contract (M3.3)
 
 - `config/templates.json` — single source of truth для layouts. Manifest schema — `infra/template_manifest.py`.
-- Slug whitelist: добавил новый slug → синхронно правишь (a) `config/templates.json`, (b) `bot/wizard.py` format whitelist, (c) `prompts/parse_brief.md` slug whitelist, (d) `tests/unit/test_composer.py::test_compose_real_template_smoke` parametrize.
+- Slug whitelist: добавил новый slug → синхронно правишь (a) `config/templates.json`, (b) `tests/unit/test_composer.py::test_compose_real_template_smoke` parametrize. LLM слаги больше не выбирает — `brief.formats` выпилен вместе с `parse_brief` (2026-07-28), форматы задаёт код.
 - Fonts — `assets/fonts/SBSansDisplay-*.otf` (Light/Regular/Medium/Semibold/Bold).
 - Brand-area strips — `assets/brand/brand_area_line_<W>x<H>_v1.png`.
 - Полная спека композера — `docs/template_spec.md`.

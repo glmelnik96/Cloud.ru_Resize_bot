@@ -20,7 +20,7 @@ from app.services.creatives import (  # noqa: E402
     CapacityError,
     CreativesService,
     DecisionConflict,
-    build_raw_brief,
+    build_brief,
 )
 from app.tasks.events import EventBus  # noqa: E402
 from app.tasks.manager import TaskManager  # noqa: E402
@@ -44,7 +44,7 @@ class _FakeGraph:
         self._iv = interrupt_value
 
     async def astream(self, payload, config=None, stream_mode=None):
-        yield {"parse_brief": {"brief": {"product": "x"}}}
+        yield {"understand_product": {"product": {"canonical_name": "x"}}}
         yield {"generate_message_candidates": {"candidates": []}}
         yield {"__interrupt__": [_FakeInterrupt(self._iv)]}
 
@@ -128,17 +128,29 @@ def _service(Session, graph, **kw):
 
 
 # ── tests ──────────────────────────────────────────────────────
-def test_build_raw_brief():
-    txt = build_raw_brief(
+def test_build_brief_keeps_wording_verbatim():
+    brief = build_brief(
         {
             "product": "Облако",
             "audience": "DevOps",
             "emotion": "уверенность и контроль — будто всё управление под рукой",
+            "notes": "обязательно упомянуть бесплатный период",
+            "source_url": "https://cloud.ru/products/rag",
         }
     )
-    assert "Продукт: Облако" in txt
-    assert "ЦА: DevOps" in txt
-    assert "Эмоция: уверенность и контроль" in txt
+    assert brief["product"] == "Облако"
+    assert brief["audience_raw"] == "DevOps"
+    assert brief["emotion"].startswith("уверенность и контроль")
+    assert brief["notes"] == "обязательно упомянуть бесплатный период"
+    assert brief["source_url"] == "https://cloud.ru/products/rag"
+    # the page is read by understand_product, not by the web layer
+    assert brief["source_text"] == ""
+
+
+def test_build_brief_optional_fields_default_empty():
+    brief = build_brief({"product": "Облако", "audience": "DevOps", "emotion": "драйв"})
+    assert brief["notes"] == ""
+    assert brief["source_url"] == ""
 
 
 @pytest.mark.asyncio
@@ -157,7 +169,7 @@ async def test_segment_parks_at_awaiting_text(tmp_path):
     from app.tasks.status import WebStatusReporter
 
     reporter = WebStatusReporter(bus, task_uid="t1", label="creatives", eta_sec=None)
-    await svc._run_segment("t1", "1", {"raw_brief": "x"}, reporter)
+    await svc._run_segment("t1", "1", {"brief": {"product": "x"}}, reporter)
 
     async with Session() as s:
         res = await s.execute(select(models.Task).where(models.Task.task_uid == "t1"))
@@ -962,7 +974,7 @@ async def test_cancelled_segment_frees_running_row(tmp_path):
 
     reporter = WebStatusReporter(bus, task_uid="cx1", label="creatives", eta_sec=None)
     task = asyncio.ensure_future(
-        svc._run_segment("cx1", "1", {"raw_brief": "x"}, reporter)
+        svc._run_segment("cx1", "1", {"brief": {"product": "x"}}, reporter)
     )
     await asyncio.sleep(0.05)  # let it enter the compute stretch
     task.cancel()

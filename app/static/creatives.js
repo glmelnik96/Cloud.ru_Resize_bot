@@ -35,6 +35,8 @@
     const product = $("product").value.trim();
     const audience = $("audience").value.trim();
     const emotion = $("emotion").value.trim();
+    const notes = $("notes").value.trim();
+    const source_url = $("sourceUrl").value.trim();
     if (!product || !audience || !emotion) {
       $("briefStatus").textContent = "Заполни продукт, аудиторию и эмоцию.";
       return;
@@ -45,7 +47,7 @@
       const r = await fetch(`${P}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, audience, emotion }),
+        body: JSON.stringify({ product, audience, emotion, notes, source_url }),
       });
       if (!r.ok) throw new Error(errText(r.status));
       const data = await r.json();
@@ -303,6 +305,7 @@
   const cardsByUid = {};
   const BRIEF_LABELS = {
     product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
+    notes: "Свободное поле", source_url: "Ссылка на страницу",
   };
   const fileNameOf = (u) => String(u).split("/").pop();
   function briefHtml(brief) {

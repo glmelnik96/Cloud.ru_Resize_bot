@@ -13,17 +13,23 @@ class UserOut(BaseModel):
 
 
 class CreateTaskIn(BaseModel):
-    """The /new brief fields the wizard collects in three steps.
+    """The /new brief the wizard collects.
 
     `emotion` is the feeling/образ the offer must evoke — formula
     "[чувство] + [образ/ассоциация]" (e.g. «уверенность и контроль — будто
-    всё управление под рукой»). It replaces the former marketing `goal` field;
-    the marketing goal is now inferred downstream by parse_brief.
+    всё управление под рукой»).
+
+    `notes` and `source_url` are optional grounding (2026-07-28): the free-form
+    field for anything that fits nowhere else but must not be missed, and a
+    link the pipeline reads so the marketer doesn't have to retype a product
+    page. Both empty → the run behaves exactly as before.
     """
 
     product: str = Field(min_length=1)
     audience: str = Field(min_length=1)
     emotion: str = Field(min_length=1)
+    notes: str = Field(default="", max_length=4000)
+    source_url: str = Field(default="", max_length=2000)
 
 
 class TaskOut(BaseModel):

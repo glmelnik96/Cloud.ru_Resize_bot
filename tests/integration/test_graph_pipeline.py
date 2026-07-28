@@ -1,11 +1,12 @@
 """End-to-end LangGraph text pipeline test.
 
-Feeds a raw brief through parse_brief → derive_persona → generate → rank.
-Verifies that:
-- AdBrief is parsed with controlled-vocab goal/channel
+Feeds a structured brief through understand_product → derive_persona →
+generate_message_candidates → select_by_persona. Verifies that:
+- the product card is assembled from the knowledge base (no LLM round trip of
+  the marketer's own wording, which is what parse_brief used to do)
 - exactly ONE persona derived (audience is single)
-- exactly 12 candidates generated
-- ranked set has 12 items, each carrying score + reason, ordered best-first
+- 24 candidates generated (two batches of 12)
+- the persona selects exactly 12, each carrying score + reason, best-first
 - the graph parks at hitl_text_approve and resumes through `approve`
 
 Skipped if CLOUDRU_API_KEY not set (real network calls — costs tokens).
@@ -21,7 +22,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph.builder import build_text_graph
-from graph.state import AdBrief, MessageCandidate, Persona
+from graph.state import AdBrief, MessageCandidate, Persona, ProductBrief
 
 
 # interrupt() in async nodes needs Python 3.11+. On 3.10 langgraph's get_config()
@@ -41,15 +42,19 @@ pytestmark = [
 ]
 
 
-_RAW_BRIEF = """
-Продукт: Cloud.ru Evolution Object Storage — S3-совместимое объектное хранилище.
-Цель: познакомить целевую аудиторию с продуктом, увести с AWS S3.
-ЦА: технические лиды и архитекторы в средних российских tech-компаниях, 30–45 лет, работали с AWS, сейчас вынуждены искать российский аналог.
-Канал: Telegram-пост в канале для devops.
-Форматы: tg_post_1080x1350.
-Тон: технично, без пафоса, без эмодзи.
-Обязательно упомянуть «S3-совместимый API».
-"""
+# A product that HAS a knowledge-base card, so the run exercises the KB lookup
+# rather than only the marketer's free text.
+_BRIEF = {
+    "product": "Evolution Managed RAG",
+    "audience_raw": (
+        "технические лиды и архитекторы в средних российских tech-компаниях, "
+        "30–45 лет, у них разрослась внутренняя документация и никто в ней "
+        "ничего не находит"
+    ),
+    "emotion": "спокойная уверенность — будто вся база знаний под рукой",
+    "notes": "обязательно упомянуть, что это управляемый сервис; без пафоса, без эмодзи",
+    "source_url": "",
+}
 
 
 @pytest.mark.asyncio
@@ -60,29 +65,32 @@ async def test_text_pipeline_e2e() -> None:
     initial = {
         "session_id": "test-e2e-001",
         "user_id": 0,
-        "raw_brief": _RAW_BRIEF,
+        "brief": _BRIEF,
     }
     final = await graph.ainvoke(initial, config=cfg)
-    # graph should pause at hitl_text_approve once the 12 are ranked
+    # graph should pause at hitl_text_approve once the 12 are selected
     interrupts = final.get("__interrupt__")
     if interrupts:
         # resume with approve so the pipeline reaches terminal state
         final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
         assert final.get("text_approved") is True
 
-    # --- brief
+    # --- brief survives verbatim (no LLM re-parse)
     brief = final["brief"]
     if not isinstance(brief, AdBrief):
         brief = AdBrief.model_validate(brief)
-    assert brief.goal in {
-        "awareness",
-        "consideration",
-        "conversion",
-        "engagement",
-        "retention",
-    }, f"goal off-vocab: {brief.goal}"
-    assert brief.channel.startswith("tg_"), f"channel off-vocab: {brief.channel}"
-    assert "S3" in brief.product or "object" in brief.product.lower()
+    assert brief.product == _BRIEF["product"]
+    assert brief.audience_raw == _BRIEF["audience_raw"]
+    assert brief.notes == _BRIEF["notes"]
+
+    # --- product card (facts, not slogans)
+    product = final["product"]
+    if not isinstance(product, ProductBrief):
+        product = ProductBrief.model_validate(product)
+    assert "RAG" in product.canonical_name
+    assert len(product.key_capabilities) >= 2
+    assert len(product.problems_solved) >= 2
+    assert product.must_honour, "the marketer's free field carried a hard requirement"
 
     # --- persona (exactly one)
     personas = [
@@ -92,21 +100,24 @@ async def test_text_pipeline_e2e() -> None:
     assert len(personas) == 1
     assert len(personas[0].pain_points) >= 2
 
-    # --- candidates (exactly 12)
+    # --- candidates (24 = two batches of 12)
     candidates = [
         c if isinstance(c, MessageCandidate) else MessageCandidate.model_validate(c)
         for c in final["candidates"]
     ]
-    assert len(candidates) == 12
+    assert len(candidates) == 24
+    assert len({c.id for c in candidates}) == 24, "candidate ids collided across batches"
     for c in candidates:
         assert len(c.slogan) <= 100, f"slogan overflow: {c.slogan!r}"
         assert len(c.body) <= 250, f"body overflow: {c.body!r}"
         assert len(c.cta) <= 50, f"cta overflow: {c.cta!r}"
 
-    # --- ranked set (12, best-first, each with score + reason)
+    # --- selection (exactly 12 of the 24, best-first, each with score + reason)
     ranked = final["ranked"]
     assert len(ranked) == 12
-    assert {r["id"] for r in ranked} == {c.id for c in candidates}
+    ids = {r["id"] for r in ranked}
+    assert len(ids) == 12, "duplicate picks"
+    assert ids <= {c.id for c in candidates}, "picked an id outside the pool"
     scores = [r["score"] for r in ranked]
     assert scores == sorted(scores, reverse=True), "ranked not ordered best-first"
     for r in ranked:

@@ -37,8 +37,10 @@ import structlog
 
 from graph.agent_runner import run_agent
 from graph.nodes import ranked_candidates
-from graph.nodes.parse_brief import _extract_section, _render
+from graph.nodes.context import get_product
+from graph.prompts import extract_section as _extract_section
 from graph.prompts import load_skill
+from graph.prompts import render as _render
 from graph.state import (
     AdBrief,
     GraphState,
@@ -112,6 +114,7 @@ async def generate_image_prompt(state: GraphState) -> dict:
     persona = personas[0]
 
     candidates = ranked_candidates(state)
+    product = get_product(state)
     session_id = state.get("session_id")
 
     scenarios = state.get("scenarios") or []
@@ -135,7 +138,9 @@ async def generate_image_prompt(state: GraphState) -> dict:
 
     prompts = await asyncio.gather(
         *(
-            _build_one(system_msg, user_tpl, brief, persona, cand, style, session_id)
+            _build_one(
+                system_msg, user_tpl, brief, persona, product, cand, style, session_id
+            )
             for cand, style in zip(candidates, styles)
         )
     )
@@ -154,6 +159,7 @@ async def _build_one(
     user_tpl: str,
     brief: AdBrief,
     persona: Persona,
+    product,
     cand: MessageCandidate,
     style: str,
     session_id: str | None,
@@ -161,9 +167,8 @@ async def _build_one(
     user_msg = _render(
         user_tpl,
         **{
-            "brief.product": brief.product,
-            "brief.goal": brief.goal,
-            "brief.channel": brief.channel,
+            "brief.product": product.canonical_name if product else brief.product,
+            "product_what_it_is": product.what_it_is if product else "(not collected)",
             "brief.tone_hints": brief.tone_hints or "(none)",
             "persona.segment": persona.segment,
             "persona.age_range": persona.age_range,

@@ -1,0 +1,16 @@
+id: understand_product
+skill: prompts/understand_product.md
+model: deepseek-v4-pro
+model_config:
+  thinking: false
+  # KB card (~6k chars) + fetched page (up to 12k chars) go IN; the card that
+  # comes out is short, so the budget is for a comfortable, uncut answer.
+  max_tokens: 2500
+  temperature: 0.2
+schema: graph.state.ProductBrief
+retry_with_feedback: 1
+pre_hooks: []
+# No brand hooks here: this node produces internal facts for other prompts to
+# read, not customer-facing copy. Brand guards belong on the nodes that write
+# slogans.
+post_hooks: []

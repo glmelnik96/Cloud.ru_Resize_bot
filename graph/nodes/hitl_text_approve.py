@@ -1,6 +1,6 @@
 """HITL: text approve node.
 
-Pauses the graph via ``interrupt()`` after rank_candidates orders the 12
+Pauses the graph via ``interrupt()`` after select_by_persona picks the 12
 propositions. The UI renders all 12 ranked cards; the user approves the SET,
 asks to regenerate the whole set, or cancels. There is no single winner and no
 per-candidate refine (App3 redesign 2026-06-21).

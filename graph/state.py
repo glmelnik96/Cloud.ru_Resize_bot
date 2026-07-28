@@ -6,48 +6,100 @@ Pydantic models — for LLM Structured Output validation and Redis serialization
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ----- Brief & inputs -------------------------------------------------------
 
 
 class AdBrief(BaseModel):
-    """Normalized marketing brief, produced by parse_brief node from wizard text."""
+    """What the marketer actually typed — assembled in code, not by an LLM.
 
-    product: str = Field(description="Канонизированное название продукта/услуги")
-    goal: str = Field(
-        default="awareness",
-        description=(
-            "awareness | consideration | conversion | engagement | retention "
-            "— выводится parse_brief из контекста брифа (явно не спрашивается)"
-        ),
-    )
-    audience_raw: str = Field(description="Сырое описание ЦА от маркетолога")
+    Until 2026-07-28 this was the output of a ``parse_brief`` LLM call that
+    re-read a string the web layer had just concatenated from these very
+    fields. The prompt then told the model to copy audience and emotion back
+    out verbatim and to echo the format whitelist — a full round trip that
+    could only lose information (it also compressed ``product`` to "1–6 слов",
+    destroying detail the generator needs). The wizard fields are structured at
+    the source, so the brief is now built directly and every field is the
+    marketer's own wording.
+
+    ``goal``/``channel``/``formats``/``age_rating`` are gone (2026-07-28,
+    Глеб): goal and channel were LLM guesses nobody acted on, and the other
+    two were never read by any node.
+    """
+
+    product: str = Field(description="Что рекламируем — слова маркетолога, дословно")
+    audience_raw: str = Field(description="Описание ЦА — слова маркетолога, дословно")
     emotion: str = Field(
         default="",
         description=(
             "Чувство/образ, который должно вызвать предложение — формула "
-            "'[чувство] + [образ/ассоциация]'. Драйвит генерацию 12 предложений."
+            "'[чувство] + [образ/ассоциация]'. Драйвит генерацию предложений."
         ),
     )
-    channel: str = Field(description="tg_post | vk_ad | ig_story | yandex_promo | ...")
-    formats: list[str] = Field(
-        default_factory=list,
-        description="Slugs шаблонов из config/templates.json, например banner_300x600_render",
+    notes: str = Field(
+        default="",
+        description=(
+            "Свободное поле: всё, что не влезло в остальные поля и требует "
+            "ПРИСТАЛЬНОГО внимания — акции, ограничения, обязательные слова, "
+            "контекст канала. Прокидывается во ВСЕ текстовые узлы."
+        ),
+    )
+    source_url: str = Field(
+        default="",
+        description="Ссылка на страницу продукта/статью, которую читает пайплайн",
+    )
+    source_text: str = Field(
+        default="",
+        description="Текст, вычитанный из source_url (пусто, если ссылки не было)",
     )
     tone_hints: str | None = None
-    constraints: list[str] = Field(
-        default_factory=list,
-        description="Дисклеймеры, обязательные слова, запреты",
+
+
+class ProductBrief(BaseModel):
+    """What we actually sell — output of the ``understand_product`` node.
+
+    The pipeline used to see only a product NAME, so a model that had never
+    heard of "Evolution Managed RAG" either wrote generic copy or invented
+    capabilities. This node fuses three grounding sources — the vendored
+    knowledge base (``config/knowledge/``), the page behind ``source_url`` and
+    the marketer's free-form ``notes`` — into a compact factual card that every
+    downstream text node reads.
+
+    ``must_honour`` is the teeth of the free-form field: instructions the
+    marketer flagged as non-negotiable, lifted out so they can also be enforced
+    mechanically as generation hooks rather than merely suggested in a prompt.
+    """
+
+    canonical_name: str = Field(description="Официальное название продукта")
+    what_it_is: str = Field(
+        min_length=20, description="1–2 предложения: что это, простыми словами"
     )
-    cta_preference: str | None = None
-    age_rating: str = Field(
-        default="0+",
-        description="Возрастная маркировка: 0+ | 6+ | 12+ | 16+ | 18+",
+    key_capabilities: list[str] = Field(
+        min_length=2, max_length=8, description="Что реально умеет — факты, не обещания"
+    )
+    problems_solved: list[str] = Field(
+        min_length=2, max_length=8, description="Какие боли закрывает"
+    )
+    proof_points: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Конкретика, которую МОЖНО утверждать в рекламе (цифры, факты)",
+    )
+    vocabulary: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Термины продукта с короткой расшифровкой ('RAG — поиск по ...')",
+    )
+    must_honour: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Жёсткие требования из свободного поля: что обязательно/запрещено",
     )
 
 
@@ -80,6 +132,10 @@ class PersonaSet(BaseModel):
 # ----- Message candidate ----------------------------------------------------
 
 
+# CJK unified ideographs + kana. Used to catch Chinese leaking out of GLM.
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
 class MessageCandidate(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
     slogan: str
@@ -105,40 +161,60 @@ class DraftCandidate(MessageCandidate):
 
     slogan: str = Field(max_length=42)
 
+    @field_validator("slogan", "cta")
+    @classmethod
+    def _no_cjk(cls, value: str) -> str:
+        """Reject CJK characters in text that goes onto the banner.
+
+        GLM is a Chinese model and occasionally drops a Chinese word into
+        otherwise fluent Russian (seen live 2026-07-28: «База знаний без运维»).
+        The composer would render it verbatim, so it is caught here where
+        retry_with_feedback can ask for a redo. Only slogan and cta are
+        guarded — those are the fields that reach the layout; body is an
+        internal working note.
+        """
+        if _CJK_RE.search(value):
+            raise ValueError(
+                "текст содержит иероглифы — пиши только по-русски: " f"{value!r}"
+            )
+        return value
+
 
 class CandidateSet(BaseModel):
-    """Wrapper for generate_message_candidates structured output.
+    """Wrapper for one generate_message_candidates call — 12 propositions.
 
-    Exactly 12 propositions (decision 2026-06-21): 12 distinct angles into the
-    single persona, each anchored on a different pain/motivation/objection plus
-    the brief emotion and a varied hook_angle. The whole set is delivered to the
-    user (HITL approves the set), so there is no single-winner selection.
+    The node makes TWO such calls in parallel over disjoint persona anchors
+    (2026-07-28), so the critic downstream picks 12 winners out of 24 drafts
+    instead of rubber-stamping the only 12 that existed. Keeping the per-call
+    size at 12 keeps each call inside a comfortable token budget and keeps the
+    two batches genuinely independent.
     """
 
     candidates: list[DraftCandidate] = Field(min_length=12, max_length=12)
 
 
-# ----- Ranking (single light ranker) ---------------------------------------
+# ----- Selection (the persona judges the drafts) ----------------------------
 
 
-class RankingItem(BaseModel):
-    """One line of the ranker output: a candidate id, its predicted resonance
-    score and a one-line «почему зайдёт ЦА»."""
+class SelectedItem(BaseModel):
+    """One pick of the persona-critic: which draft, how strongly, and why."""
 
     candidate_id: str
-    score: float = Field(ge=0, le=10, description="Предсказанный резонанс с ЦА, 0..10")
-    reason: str = Field(description="Одна строка: почему этот угол зайдёт ЦА")
+    score: float = Field(ge=0, le=10, description="Насколько сильно цепляет, 0..10")
+    reason: str = Field(description="Одна строка ОТ ПЕРВОГО ЛИЦА: почему цепляет меня")
 
 
-class RankingSet(BaseModel):
-    """Wrapper for rank_candidates structured output.
+class SelectionSet(BaseModel):
+    """Wrapper for select_by_persona structured output.
 
-    The ranker orders the 12 propositions by predicted resonance and attaches a
-    one-line rationale to each (decision 2026-06-21). There is no single winner
-    — the whole ordered set goes to HITL.
+    The old ``rank_candidates`` was an outside analyst re-sorting the same 12
+    drafts it was handed — a ranking with nothing to reject. The critic now
+    speaks AS the persona and chooses exactly 12 of the 24 drafts, best-first,
+    which is what "маркетолог предлагает, ЦА выбирает" was meant to be all
+    along. The whole selected set goes to HITL; there is no single winner.
     """
 
-    ranking: list[RankingItem] = Field(min_length=12, max_length=12)
+    selected: list[SelectedItem] = Field(min_length=12, max_length=12)
 
 
 # ----- Image stage (M3) -----------------------------------------------------
@@ -198,12 +274,13 @@ class GraphState(TypedDict, total=False):
 
     session_id: str
     user_id: int
-    raw_brief: str
     brief: AdBrief
+    product: dict  # ProductBrief.model_dump() — grounding for every text node
     personas: list[Persona]
+    # 24 drafts (2 generator batches x 12) — the pool the persona picks from.
     candidates: list[MessageCandidate]
-    # rank_candidates output: ordered best-first, each item = candidate dict
-    # (slogan/body/cta/hook_angle/id) merged with score + reason.
+    # select_by_persona output: the chosen 12, best-first; each item =
+    # candidate dict (slogan/body/cta/hook_angle/id) merged with score + reason.
     ranked: list[dict]
     text_approved: bool
     # ----- Image stage (M3.3 — user-uploaded hero) --------------------------

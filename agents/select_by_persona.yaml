@@ -1,0 +1,14 @@
+id: select_by_persona
+skill: prompts/select_by_persona.md
+model: glm-4.7
+model_config:
+  thinking: false
+  # 24 cards in, 12 short reasons out.
+  max_tokens: 3500
+  temperature: 0.4
+schema: graph.state.SelectionSet
+retry_with_feedback: 1
+pre_hooks: []
+# No brand hooks: this node judges copy, it does not write any. The drafts were
+# already guarded at generation time.
+post_hooks: []

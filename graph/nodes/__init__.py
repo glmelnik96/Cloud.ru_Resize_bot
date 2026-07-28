@@ -7,10 +7,10 @@ from graph.state import GraphState, MessageCandidate
 def chosen_candidate(state: GraphState) -> MessageCandidate:
     """The single proposition composed onto the hero banner.
 
-    Block 1 (2026-06-21) dropped the single ``winner`` in favour of 12 ranked
+    Block 1 (2026-06-21) dropped the single ``winner`` in favour of 12 selected
     propositions. The image stage composes ONE proposition's text per hero, so
     we pick the top-ranked one (``ranked`` is ordered best-first by
-    rank_candidates). Ranker-only keys (score/reason) on the dict are ignored
+    select_by_persona). Selection-only keys (score/reason) on the dict are ignored
     by MessageCandidate.
     """
     ranked = state.get("ranked") or []
@@ -23,11 +23,11 @@ def chosen_candidate(state: GraphState) -> MessageCandidate:
 
 
 def ranked_candidates(state: GraphState) -> list[MessageCandidate]:
-    """All 12 propositions, ordered best-first (per rank_candidates).
+    """The 12 selected propositions, ordered best-first (per select_by_persona).
 
     The 12-banner stage (2026-06-21) composes one banner per proposition, so
-    every node downstream of the ranker iterates this list. Ranker-only keys
-    (score/reason) on each dict are ignored by MessageCandidate.
+    every node downstream of the selection iterates this list. Selection-only
+    keys (score/reason) on each dict are ignored by MessageCandidate.
     """
     ranked = state.get("ranked") or []
     if not ranked:

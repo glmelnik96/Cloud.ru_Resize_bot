@@ -72,6 +72,33 @@ def test_base_message_candidate_stays_permissive_for_old_checkpoints():
     assert len(c.slogan) == 60
 
 
+# ── CJK guard (2026-07-28) ─────────────────────────────────────────────
+# GLM is a Chinese model and occasionally drops a Chinese word into otherwise
+# fluent Russian — observed live: «База знаний без运维». The composer would
+# render it verbatim onto the banner, so generation must reject and retry.
+
+def test_candidate_set_rejects_chinese_in_slogan():
+    with pytest.raises(ValidationError, match="иероглиф"):
+        _set_with_slogan("База знаний без运维")
+
+
+def test_candidate_set_rejects_chinese_in_cta():
+    items = [_candidate(i) for i in range(12)]
+    items[0] = items[0].model_copy(update={"cta": "开始"})
+    with pytest.raises(ValidationError, match="иероглиф"):
+        CandidateSet(candidates=[c.model_dump() for c in items])
+
+
+def test_cjk_guard_leaves_normal_russian_alone():
+    assert _set_with_slogan("Ответ с опорой на документ — 100% ваш").candidates
+
+
+def test_base_message_candidate_has_no_cjk_guard():
+    # parked checkpoints written before the guard must still coerce on resume
+    c = MessageCandidate(slogan="без运维", body="b", cta="Начать", hook_angle="rational")
+    assert c.slogan == "без运维"
+
+
 def test_explorer_prompt_declares_42_char_hard_limit():
     from pathlib import Path
 

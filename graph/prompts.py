@@ -5,9 +5,9 @@ with simple ``{{name}}`` placeholders (no full Jinja — keeps it dependency-fre
 and predictable for LLM prompts).
 
 Usage:
-    skill = load_skill("parse_brief")
+    skill = load_skill("understand_product")
     rendered = skill.render(raw_brief="...", today="2026-06-04")
-    skill.model_config["glm-5.1"]["thinking"]  # access model config
+    skill.model_config["glm-4.7"]["thinking"]  # access model config
 """
 
 from __future__ import annotations
@@ -78,6 +78,33 @@ def load_skill(name: str) -> Skill:
         body=body.strip(),
         frontmatter=parsed_fm,
     )
+
+
+def extract_section(body: str, heading: str) -> str:
+    """Pull the fenced block under a given `## heading` from the SKILL body."""
+    idx = body.find(heading)
+    if idx == -1:
+        raise ValueError(f"section {heading!r} not found in skill body")
+    start = body.find("```", idx)
+    end = body.find("```", start + 3)
+    if start == -1 or end == -1:
+        raise ValueError(f"fenced block missing under {heading!r}")
+    block = body[start + 3 : end]
+    # drop optional language tag on first line
+    if "\n" in block:
+        first, rest = block.split("\n", 1)
+        if not first.strip() or first.strip().isalpha():
+            return rest.strip()
+    return block.strip()
+
+
+def render(template: str, **variables: Any) -> str:
+    """Substitute ``{{var}}`` placeholders in a section. Missing vars → empty."""
+
+    def repl(match: re.Match[str]) -> str:
+        return str(variables.get(match.group(1).strip(), ""))
+
+    return _PLACEHOLDER_RE.sub(repl, template)
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:

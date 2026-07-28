@@ -29,8 +29,10 @@ import structlog
 
 from graph.agent_runner import run_agent
 from graph.nodes import ranked_candidates
-from graph.nodes.parse_brief import _extract_section, _render
+from graph.nodes.context import get_product
+from graph.prompts import extract_section as _extract_section
 from graph.prompts import load_skill
+from graph.prompts import render as _render
 from graph.state import (
     AdBrief,
     GraphState,
@@ -94,6 +96,7 @@ async def route_image_style(state: GraphState) -> dict:
     persona = personas[0]
 
     candidates = ranked_candidates(state)
+    product = get_product(state)
     session_id = state.get("session_id")
 
     skill = load_skill(_SKILL_NAME)
@@ -103,7 +106,7 @@ async def route_image_style(state: GraphState) -> dict:
     scenarios = await asyncio.gather(
         *(
             _classify_one(
-                system_msg, user_tpl, brief, persona, cand, session_id
+                system_msg, user_tpl, brief, persona, product, cand, session_id
             )
             for cand in candidates
         )
@@ -130,15 +133,15 @@ async def _classify_one(
     user_tpl: str,
     brief: AdBrief,
     persona: Persona,
+    product,
     cand: MessageCandidate,
     session_id: str | None,
 ) -> str:
     user_msg = _render(
         user_tpl,
         **{
-            "brief.product": brief.product,
-            "brief.goal": brief.goal,
-            "brief.channel": brief.channel,
+            "brief.product": product.canonical_name if product else brief.product,
+            "product_what_it_is": product.what_it_is if product else "(не собрано)",
             "brief.tone_hints": brief.tone_hints or "(не задано)",
             "persona.segment": persona.segment,
             "persona.age_range": persona.age_range,

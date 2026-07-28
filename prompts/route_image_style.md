@@ -3,9 +3,9 @@ name: route-image-style
 version: 0.2.0
 source_upstream: original (Resize_bot specific, derived from Cloud.ru 2.0 brand book)
 target_models:
-  primary: glm-5.1
+  primary: glm-4.7
 model_config:
-  glm-5.1:
+  glm-4.7:
     thinking: false
     max_tokens: 600
     temperature: 0.2
@@ -55,8 +55,7 @@ status: m3
 ```
 БРИФ:
 product: {{brief.product}}
-goal: {{brief.goal}}
-channel: {{brief.channel}}
+что это такое: {{product_what_it_is}}
 tone_hints: {{brief.tone_hints}}
 
 PERSONA (ведущая):
@@ -80,7 +79,7 @@ hook_angle: {{winner.hook_angle}}
 
 ## Model notes
 
-### GLM-5.1
+### GLM-4.7
 - thinking=false — это быстрая классификация на ~3 вариантах, рассуждения не нужны.
 - max_tokens=600 хватает с запасом на rationale.
 - temperature=0.2 — детерминированность, мы не хотим скачков между запусками для одного и того же брифа.
@@ -92,6 +91,7 @@ hook_angle: {{winner.hook_angle}}
 
 ## Changelog
 
+- v0.2.0 (2026-07-28) — goal/channel заменены на одну строку «что это такое» из карточки продукта: для выбора photo/render важна природа продукта (сервис или устройство), а не выдуманная цель кампании.
 - v0.1.0 (2026-06-04) — M3 initial. Три фиксированных категории под Cloud.ru 2.0 брендбук (см. AGENTS.md §4). Не путать с prompt-инженерингом для Phygital — это только маршрутизация.
 - v0.2.0 (2026-06-21) — 12-banner redesign: схлопнул вокабуляр до двух реальных выходных сценариев (render|photo; isometric входит в render). Перебалансировал критерии в сторону photo (раньше технические ЦА уходили всем потоком в render) + правило "сомневаешься — photo".
 - v0.2.1 (2026-06-21) — строгий лок 6/6: узел route_image_style теперь форсит ровно половину render, половину photo (_force_even_split) вместо мягкой квоты MIN_PHOTO. Классификатор по-прежнему решает, КАКИЕ пропозиции (по рангу) попадают в каждую половину; счётчик фиксирован 6/6.

@@ -1,0 +1,62 @@
+[
+  {
+    "slug": "evolution-ai-agents",
+    "name": "Evolution AI Agents",
+    "aliases": [
+      "Evolution AI Agents",
+      "AI Agents"
+    ],
+    "tagline": "Evolution AI Agents - сервис для создания и использования ИИ-агентов, которые анализируют ограниченную задачу и обращаются к разрешенным данным и инструментам.",
+    "file": "evolution-ai-agents.md"
+  },
+  {
+    "slug": "evolution-foundation-models",
+    "name": "Evolution Foundation Models",
+    "aliases": [
+      "Evolution Foundation Models",
+      "Foundation Models"
+    ],
+    "tagline": "Evolution Foundation Models - сервис единого доступа к готовым ИИ-моделям разных классов и поставщиков через OpenAI-совместимый API.",
+    "file": "evolution-foundation-models.md"
+  },
+  {
+    "slug": "evolution-managed-rag",
+    "name": "Evolution Managed RAG",
+    "aliases": [
+      "Evolution Managed RAG",
+      "Managed RAG"
+    ],
+    "tagline": "Evolution Managed RAG - облачный сервис для создания базы знаний и генеративного поиска по корпоративным документам.",
+    "file": "evolution-managed-rag.md"
+  },
+  {
+    "slug": "evolution-ml-finetuning",
+    "name": "Evolution ML Finetuning",
+    "aliases": [
+      "Evolution ML Finetuning",
+      "ML Finetuning"
+    ],
+    "tagline": "Evolution ML Finetuning - управляемый сервис для тонкой настройки текстовых больших языковых моделей на примерах клиента.",
+    "file": "evolution-ml-finetuning.md"
+  },
+  {
+    "slug": "evolution-ml-inference",
+    "name": "Evolution ML Inference",
+    "aliases": [
+      "Evolution ML Inference",
+      "ML Inference"
+    ],
+    "tagline": "Evolution ML Inference - управляемый сервис для развертывания и масштабирования собственных и готовых ML-моделей на облачных GPU.",
+    "file": "evolution-ml-inference.md"
+  },
+  {
+    "slug": "evolution-notebooks",
+    "name": "Evolution Notebooks",
+    "aliases": [
+      "Evolution Notebooks",
+      "Notebooks"
+    ],
+    "tagline": "Evolution Notebooks - интерактивная среда на базе JupyterLab для анализа данных, разработки и экспериментов с ML-моделями в облаке.",
+    "file": "evolution-notebooks.md"
+  }
+]

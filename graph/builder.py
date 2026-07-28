@@ -1,14 +1,16 @@
 """StateGraph assembly.
 
-App3 redesign (2026-06-21) — 12 propositions, light ranker, set approval,
-then the image/render stage on the TOP-ranked proposition:
+The text stage is "маркетолог предлагает, ЦА выбирает" (2026-07-28): the
+generator over-produces from two creative stances and the persona rejects half.
+Everything is grounded first, by a node that actually studies the product.
 
-    parse_brief
-      -> derive_persona                  (ONE persona from audience + emotion)
-      -> generate_message_candidates     (12 angles into that persona)
-      -> rank_candidates                 (ONE light LLM call: orders the 12 by
-                                          predicted resonance + one-line reason)
-      -> hitl_text_approve               (interrupt; user sees all 12 ranked)
+    understand_product                 (KB card + page behind the marketer's
+                                        link + free-form notes -> ProductBrief)
+      -> derive_persona                (ONE persona from audience + emotion,
+                                        grounded in the KB's real segments)
+      -> generate_message_candidates   (2 parallel calls x 12 = 24 drafts)
+      -> select_by_persona             (the persona, in first person, keeps 12)
+      -> hitl_text_approve             (interrupt; user sees the chosen 12)
          --(regenerate)-> generate_message_candidates
          --(cancel)-----> END
          --(approve)----> route_image_style
@@ -18,10 +20,8 @@ then the image/render stage on the TOP-ranked proposition:
                              --(upload)---------> fill_templates_per_format
                                                   -> render_all -> END
 
-The image stage composes ONE proposition's text (the top-ranked, via
-``chosen_candidate``) onto the user-provided hero across brief.formats, then
-packs a ZIP. Per-candidate heroes (one hero per proposition) remain a future
-extension.
+The image stage runs per selected proposition: a scenario and a metaphor prompt
+each, one hero each, one 300x600 banner each, then a ZIP.
 """
 
 from __future__ import annotations
@@ -34,10 +34,10 @@ from graph.nodes.generate_image_prompt import generate_image_prompt
 from graph.nodes.generate_message_candidates import generate_message_candidates
 from graph.nodes.hitl_image_upload import hitl_image_upload
 from graph.nodes.hitl_text_approve import hitl_text_approve
-from graph.nodes.parse_brief import parse_brief
-from graph.nodes.rank_candidates import rank_candidates
 from graph.nodes.render_all import render_all
 from graph.nodes.route_image_style import route_image_style
+from graph.nodes.select_by_persona import select_by_persona
+from graph.nodes.understand_product import understand_product
 from graph.state import GraphState
 
 
@@ -60,10 +60,10 @@ def _route_after_image_hitl(state: GraphState) -> str:
 def build_text_graph() -> StateGraph:
     g: StateGraph = StateGraph(GraphState)
 
-    g.add_node("parse_brief", parse_brief)
+    g.add_node("understand_product", understand_product)
     g.add_node("derive_persona", derive_persona)
     g.add_node("generate_message_candidates", generate_message_candidates)
-    g.add_node("rank_candidates", rank_candidates)
+    g.add_node("select_by_persona", select_by_persona)
     g.add_node("hitl_text_approve", hitl_text_approve)
     g.add_node("route_image_style", route_image_style)
     g.add_node("generate_image_prompt", generate_image_prompt)
@@ -71,11 +71,11 @@ def build_text_graph() -> StateGraph:
     g.add_node("fill_templates_per_format", fill_templates_per_format)
     g.add_node("render_all", render_all)
 
-    g.add_edge(START, "parse_brief")
-    g.add_edge("parse_brief", "derive_persona")
+    g.add_edge(START, "understand_product")
+    g.add_edge("understand_product", "derive_persona")
     g.add_edge("derive_persona", "generate_message_candidates")
-    g.add_edge("generate_message_candidates", "rank_candidates")
-    g.add_edge("rank_candidates", "hitl_text_approve")
+    g.add_edge("generate_message_candidates", "select_by_persona")
+    g.add_edge("select_by_persona", "hitl_text_approve")
     g.add_conditional_edges(
         "hitl_text_approve",
         _route_after_text_hitl,

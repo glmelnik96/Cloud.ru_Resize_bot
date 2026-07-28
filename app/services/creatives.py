@@ -30,15 +30,16 @@ from app.services.hero_gen import HeroGenerator, HeroGenUnavailable, NullHeroGen
 from app.tasks.events import EventBus
 from app.tasks.manager import TaskManager
 from app.tasks.status import WebStatusReporter
+from graph.state import AdBrief
 
 log = structlog.get_logger(__name__)
 
 # Per-node label for SSE "step" events (mirrors bot/graph_runner._NODE_LABELS).
 _NODE_LABELS: dict[str, str] = {
-    "parse_brief": "Разбираю бриф",
+    "understand_product": "Изучаю продукт",
     "derive_persona": "Готовлю персон ЦА",
-    "generate_message_candidates": "Генерирую 12 предложений",
-    "rank_candidates": "Ранжирую предложения по ЦА",
+    "generate_message_candidates": "Генерирую 24 предложения",
+    "select_by_persona": "ЦА отбирает 12 лучших",
     "route_image_style": "Подбираю стиль картинки",
     "generate_image_prompt": "Пишу промпт для hero-картинки",
     "fill_templates_per_format": "Накладываю в шаблоны",
@@ -89,17 +90,21 @@ async def init_graph(checkpoint_db: str):
     return compiled, cm
 
 
-def build_raw_brief(fields: dict[str, str]) -> str:
-    """Serialize the wizard fields into the raw_brief text parse_brief expects.
-    The brief is product + audience + emotion (the emotion/образ the offer must
-    evoke, formula "[чувство] + [образ/ассоциация]"). Channel/formats/goal are
-    inferred downstream (parse_brief), so only the three collected fields are
-    emitted."""
-    return (
-        f"Продукт: {fields.get('product', '')}\n"
-        f"ЦА: {fields.get('audience', '')}\n"
-        f"Эмоция: {fields.get('emotion', '')}\n"
-    )
+def build_brief(fields: dict[str, str]) -> dict:
+    """Wizard fields → AdBrief, verbatim.
+
+    Until 2026-07-28 this concatenated the fields into one string that an LLM
+    (``parse_brief``) then split back apart — a round trip that could only lose
+    the marketer's wording. The fields are structured here, so the brief is
+    built here.
+    """
+    return AdBrief(
+        product=fields.get("product", ""),
+        audience_raw=fields.get("audience", ""),
+        emotion=fields.get("emotion", ""),
+        notes=fields.get("notes", ""),
+        source_url=fields.get("source_url", ""),
+    ).model_dump()
 
 
 class CreativesService:
@@ -166,13 +171,13 @@ class CreativesService:
         payload = {
             "session_id": task_uid,
             "user_id": int(user_id),
-            "raw_brief": build_raw_brief(fields),
+            "brief": build_brief(fields),
         }
 
         async def runner() -> None:
             await self._run_segment(
                 task_uid, user_id, payload, reporter,
-                first_label=_NODE_LABELS["parse_brief"],
+                first_label=_NODE_LABELS["understand_product"],
             )
 
         if not await self.manager.submit(user_id, runner):

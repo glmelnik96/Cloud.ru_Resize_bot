@@ -39,7 +39,7 @@ def _task_images(t: models.Task, results_dir: Path | None) -> list[str]:
     return [f"/results/{t.task_uid}/{p.name}" for p in sorted(task_dir.glob("*.png"))]
 
 
-_BRIEF_KEYS = ("product", "audience", "emotion")
+_BRIEF_KEYS = ("product", "audience", "emotion", "notes", "source_url")
 
 
 def _task_brief(t: models.Task) -> dict[str, str]:

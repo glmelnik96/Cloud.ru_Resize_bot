@@ -3,9 +3,9 @@ name: generate-image-prompt
 version: 0.6.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
-  primary: glm-5.1
+  primary: glm-4.7
 model_config:
-  glm-5.1:
+  glm-4.7:
     thinking: false
     max_tokens: 400
     temperature: 0.6
@@ -75,8 +75,7 @@ EXAMPLES (message → metaphor)
 ```
 BRIEF:
 product: {{brief.product}}
-goal: {{brief.goal}}
-channel: {{brief.channel}}
+what it is: {{product_what_it_is}}
 tone_hints: {{brief.tone_hints}}
 
 PERSONA:
@@ -102,7 +101,7 @@ Return ONLY valid JSON:
 
 ## Model notes
 
-### GLM-5.1
+### GLM-4.7
 - thinking=false — the mapping message→metaphor is shallow, we want speed.
 - max_tokens=400 — a short metaphor + one-line rationale.
 - temperature=0.6 — enough variety that 12 messages yield 12 distinct
