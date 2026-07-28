@@ -113,3 +113,49 @@ async def test_unreadable_url_does_not_fail_the_run(captured, monkeypatch):
 async def test_missing_brief_is_an_error(captured):
     with pytest.raises(ValueError, match="state.brief is missing"):
         await mod.understand_product({"session_id": "s"})
+
+
+# ── the "no sources at all" path (prod crash 2026-07-28) ───────────────
+# The node promises that no KB match + no URL + no notes degrades to "what the
+# marketer typed". It did not: the prompt orders the model to invent nothing
+# ("пустой список лучше выдуманного пункта") while the schema demanded >= 2
+# capabilities and >= 2 problems. An ungrounded run therefore returned [],
+# retry-with-feedback squeezed out 1, and the run died on ValidationError
+# before the first slogan. Anti-hallucination wins; the floor goes.
+
+
+def test_card_validates_without_capabilities_or_problems():
+    card = ProductBrief(
+        canonical_name="Наша пиццерия",
+        what_it_is="Пиццерия, о которой у нас нет ни одного проверяемого факта.",
+        key_capabilities=[],
+        problems_solved=[],
+    )
+    assert card.key_capabilities == []
+    assert card.problems_solved == []
+
+
+def test_thin_card_still_grounds_the_copywriter():
+    from graph.nodes.context import product_block
+
+    block = product_block(
+        ProductBrief(
+            canonical_name="Наша пиццерия",
+            what_it_is="Пиццерия, о которой у нас нет ни одного проверяемого факта.",
+            key_capabilities=[],
+            problems_solved=[],
+        )
+    )
+    assert "Наша пиццерия" in block
+    assert "Пиццерия" in block
+    # empty sections are omitted, not rendered as dangling headers
+    assert "Что умеет" not in block
+    assert "Какие боли закрывает" not in block
+
+
+def test_prompt_names_the_marketer_wording_as_last_resort_source():
+    from pathlib import Path
+
+    body = Path("prompts/understand_product.md").read_text(encoding="utf-8")
+    system = body.split("## System message", 1)[1]
+    assert "НЕТ НИ ОДНОГО ИСТОЧНИКА" in system

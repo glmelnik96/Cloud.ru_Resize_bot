@@ -74,6 +74,12 @@ class ProductBrief(BaseModel):
     ``must_honour`` is the teeth of the free-form field: instructions the
     marketer flagged as non-negotiable, lifted out so they can also be enforced
     mechanically as generation hooks rather than merely suggested in a prompt.
+
+    Every list may come back empty. All three grounding sources are optional, so
+    a product with no KB card, no link and no notes leaves the model nothing to
+    honestly report — and the prompt orders it to invent nothing. A minimum-item
+    floor here would only convert "no facts" into a hallucination or, as it did
+    live on 2026-07-28, into a ValidationError that killed the run outright.
     """
 
     canonical_name: str = Field(description="Официальное название продукта")
@@ -81,10 +87,12 @@ class ProductBrief(BaseModel):
         min_length=20, description="1–2 предложения: что это, простыми словами"
     )
     key_capabilities: list[str] = Field(
-        min_length=2, max_length=8, description="Что реально умеет — факты, не обещания"
+        default_factory=list,
+        max_length=8,
+        description="Что реально умеет — факты, не обещания",
     )
     problems_solved: list[str] = Field(
-        min_length=2, max_length=8, description="Какие боли закрывает"
+        default_factory=list, max_length=8, description="Какие боли закрывает"
     )
     proof_points: list[str] = Field(
         default_factory=list,
