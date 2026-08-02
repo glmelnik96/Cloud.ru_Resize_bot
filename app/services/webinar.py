@@ -320,7 +320,9 @@ class WebinarService:
 
         if not await self.manager.submit(user_id, runner):
             await reporter.error("queue full")
-            await self._finish(task_uid, "failed", error="queue full")
+            await self._finish(
+                task_uid, "failed", error="queue full", reason="queue_full"
+            )
             raise CapacityError("queue full")
         return task_uid
 
@@ -389,13 +391,15 @@ class WebinarService:
             log.warning("webinar_render_cancelled", task_uid=task_uid)
             with contextlib.suppress(BaseException):
                 await asyncio.shield(
-                    self._finish(task_uid, "failed", error="cancelled")
+                    self._finish(
+                        task_uid, "failed", error="cancelled", reason="shutdown"
+                    )
                 )
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("webinar_render_failed", task_uid=task_uid)
             await reporter.error(f"{type(exc).__name__}: {exc}")
-            await self._finish(task_uid, "failed", error=str(exc))
+            await self._finish(task_uid, "failed", error=str(exc), reason="error")
             return
 
         result_url = f"/results/{task_uid}/{zip_path.name}"
@@ -431,6 +435,9 @@ class WebinarService:
             if task is None:
                 return
             task.status = status
+            usage.close_work_window(task)
+            if status == "running":
+                usage.open_work_window(task)
             if status == "running" and task.started_at is None:
                 task.started_at = datetime.now(timezone.utc)
             await s.commit()
@@ -443,7 +450,14 @@ class WebinarService:
         result_url: Optional[str] = None,
         error: Optional[str] = None,
         meta: Optional[dict] = None,
+        reason: Optional[str] = None,
     ) -> None:
+        """Close the task and log one usage row.
+
+        Webinar has no HITL pause, so work_ms tracks duration_ms closely — it is
+        still written so the platform reads one field across both our blocks
+        instead of learning a per-app exception (see App1 contract 2026-08-02).
+        """
         from datetime import datetime, timezone
 
         async with self.Session() as s:
@@ -457,6 +471,9 @@ class WebinarService:
             task.result_url = result_url
             task.error = error
             task.finished_at = datetime.now(timezone.utc)
+            payload = {**(meta or {}), "work_ms": usage.close_work_window(task)}
+            if reason:
+                payload["reason"] = reason
             try:
                 user = await s.get(models.User, task.user_id)
                 variant = (task.params or {}).get("variant")
@@ -465,7 +482,7 @@ class WebinarService:
                     task=task,
                     user=user,
                     status=status,
-                    meta=meta or {},
+                    meta=payload,
                     app="webinar",
                     workflow=variant or task.workflow,
                 )

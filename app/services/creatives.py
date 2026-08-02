@@ -182,7 +182,9 @@ class CreativesService:
 
         if not await self.manager.submit(user_id, runner):
             await reporter.error("queue full")
-            await self._finish(task_uid, "failed", error="queue full")
+            await self._finish(
+                task_uid, "failed", error="queue full", reason="queue_full"
+            )
             raise CapacityError("queue full")
         return task_uid
 
@@ -381,13 +383,15 @@ class CreativesService:
             log.warning("segment_cancelled", task_uid=task_uid)
             with contextlib.suppress(BaseException):
                 await asyncio.shield(
-                    self._finish(task_uid, "failed", error="cancelled")
+                    self._finish(
+                        task_uid, "failed", error="cancelled", reason="shutdown"
+                    )
                 )
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("segment_failed", task_uid=task_uid)
             await reporter.error(f"{type(exc).__name__}: {exc}")
-            await self._finish(task_uid, "failed", error=str(exc))
+            await self._finish(task_uid, "failed", error=str(exc), reason="error")
             return
 
         interrupts = final.get("__interrupt__")
@@ -440,7 +444,7 @@ class CreativesService:
         # Graph reached END: user cancelled at an interrupt, or pipeline done.
         if final.get("cancelled"):
             reason = "timeout" if final.get("error") == "image_upload_timeout" else "user"
-            await self._finish(task_uid, "cancelled")
+            await self._finish(task_uid, "cancelled", reason=reason)
             await reporter.cancelled(reason=reason)
             log.info("task_cancelled", task_uid=task_uid, reason=reason)
             return
@@ -539,7 +543,8 @@ class CreativesService:
                 self._arm_image_timeout(task.task_uid, delay=remaining)
             else:
                 await self._finish(
-                    task.task_uid, "cancelled", error="image_upload_timeout"
+                    task.task_uid, "cancelled",
+                    error="image_upload_timeout", reason="timeout",
                 )
                 expired += 1
         if parked:
@@ -623,12 +628,15 @@ class CreativesService:
             if task is None or task.status not in ("awaiting_text", "awaiting_image"):
                 return None
             prior = task.status
+            usage.close_work_window(task)
+            usage.open_work_window(task)
             upd = await s.execute(
                 update(models.Task)
                 .where(models.Task.task_uid == task_uid)
                 .where(models.Task.status == prior)
                 .values(
                     status="running",
+                    timings=task.timings,
                     started_at=func.coalesce(
                         models.Task.started_at, datetime.now(timezone.utc)
                     ),
@@ -644,6 +652,12 @@ class CreativesService:
             if task is None:
                 return
             task.status = status
+            # Close the previous compute window on every transition and open a
+            # new one when we enter "running" — parking (awaiting_*) therefore
+            # stops the clock, which is what keeps work_ms free of HITL waits.
+            usage.close_work_window(task)
+            if status == "running":
+                usage.open_work_window(task)
             if started and task.started_at is None:
                 task.started_at = datetime.now(timezone.utc)
             await s.commit()
@@ -657,7 +671,15 @@ class CreativesService:
         error: Optional[str] = None,
         meta: Optional[dict[str, Any]] = None,
         cards: Optional[list[dict]] = None,
+        reason: Optional[str] = None,
     ) -> None:
+        """Close the task and log exactly one usage row.
+
+        ``reason`` says WHY a non-success ended (cross-app contract with App1,
+        2026-08-02): ``user``/``timeout`` for cancelled, ``error``/``shutdown``/
+        ``queue_full`` for failed. Without it a deploy that stopped a running
+        task is indistinguishable from a broken pipeline.
+        """
         async with self.Session() as s:
             res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
             task = res.scalar_one_or_none()
@@ -670,12 +692,15 @@ class CreativesService:
             if cards:
                 # reassign (not mutate) so the JSON column change is tracked
                 task.params = {**(task.params or {}), "cards": cards}
+            payload = {**(meta or {}), "work_ms": usage.close_work_window(task)}
+            if reason:
+                payload["reason"] = reason
             # Append-only usage log (one row per terminal status). Best-effort:
             # a logging failure must never break task completion.
             try:
                 user = await s.get(models.User, task.user_id)
                 await usage.log_creative_usage(
-                    s, task=task, user=user, status=status, meta=meta or {}
+                    s, task=task, user=user, status=status, meta=payload
                 )
             except Exception:  # noqa: BLE001
                 log.warning("usage_log_failed", task_uid=task_uid, exc_info=True)

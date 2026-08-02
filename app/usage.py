@@ -43,6 +43,46 @@ def _duration_ms(task: "models.Task") -> int | None:
     return max(0, int((end - start).total_seconds() * 1000))
 
 
+# ── compute-time accounting ──────────────────────────────────────
+# `duration_ms` is wall-clock and therefore includes the HITL pauses: a build
+# the user approved next morning honestly reports 15 hours. `work_ms` is the
+# time the task actually held a compute slot — the sum of its "running"
+# windows. Kept in the (previously unused) Task.timings JSON so no column has
+# to be added to a live prod DB. Queue wait for the global compute slot counts
+# as work: that is contention, not a human pause.
+_WORK_KEY = "work_ms"
+_WINDOW_KEY = "running_since"
+
+
+def open_work_window(task: "models.Task", *, now: datetime | None = None) -> None:
+    """Mark the task as computing from now on."""
+    at = now or datetime.now(timezone.utc)
+    task.timings = {**(task.timings or {}), _WINDOW_KEY: at.isoformat()}
+
+
+def close_work_window(task: "models.Task", *, now: datetime | None = None) -> int:
+    """Fold the open compute window into the accumulator; return total work ms.
+
+    Idempotent: with no window open it just reports the accumulated total, so
+    terminal paths that never ran (queue full at create) report 0."""
+    at = now or datetime.now(timezone.utc)
+    timings = {**(task.timings or {})}
+    total = int(timings.get(_WORK_KEY) or 0)
+    started = timings.pop(_WINDOW_KEY, None)
+    if started:
+        try:
+            since = datetime.fromisoformat(started)
+        except ValueError:
+            since = None
+        if since is not None:
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            total += max(0, int((at - since).total_seconds() * 1000))
+    timings[_WORK_KEY] = total
+    task.timings = timings
+    return total
+
+
 async def log_creative_usage(
     session: AsyncSession,
     *,
