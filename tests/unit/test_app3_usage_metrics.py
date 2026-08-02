@@ -54,7 +54,7 @@ def _service(Session, graph, tmp_path, **kw):
         sessionmaker=Session,
         graph=graph,
         results_dir=tmp_path / "res",
-        image_timeout_sec=kw.get("image_timeout_sec", 24 * 3600),
+        park_timeout_sec=kw.get("park_timeout_sec", 24 * 3600),
     )
 
 
@@ -130,6 +130,24 @@ async def test_upload_timeout_is_reason_timeout(tmp_path):
     await svc._finish_terminal(
         "t1", _reporter(svc, "t1"),
         {"cancelled": True, "error": "image_upload_timeout"},
+    )
+
+    row = await _only_event(Session)
+    assert row.status == "cancelled"
+    assert row.meta["reason"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_text_approve_timeout_is_reason_timeout(tmp_path):
+    """A session abandoned at the propositions is an abandoned session too —
+    same reason as the hero one, not a deliberate 'no thanks'."""
+    Session = await _sm(tmp_path)
+    await _seed(Session)
+    svc = _service(Session, _PauseGraph(), tmp_path)
+
+    await svc._finish_terminal(
+        "t1", _reporter(svc, "t1"),
+        {"cancelled": True, "error": "text_approve_timeout"},
     )
 
     row = await _only_event(Session)
@@ -240,6 +258,8 @@ async def test_work_ms_excludes_the_hitl_pause(tmp_path):
             select(models.Task).where(models.Task.task_uid == "t1")
         )).scalar_one()
         assert task.status == "awaiting_text"
+    # parking at the text stop must arm its deadline, same as the image one
+    assert "t1" in svc._timeouts
 
     await asyncio.sleep(0.3)  # the human thinks
 

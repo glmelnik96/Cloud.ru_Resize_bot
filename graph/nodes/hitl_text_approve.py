@@ -9,6 +9,7 @@ Decision contract (the value passed to ``Command(resume=...)``):
     {"action": "approve"}     — accept the whole set of 12, proceed
     {"action": "regenerate"}  — throw away the set, generate 12 fresh angles
     {"action": "cancel"}      — abort the run
+    {"action": "timeout"}     — nobody came back; the service gave up waiting
 """
 
 from __future__ import annotations
@@ -50,5 +51,10 @@ async def hitl_text_approve(state: GraphState) -> dict:
     if action == "regenerate":
         # drop the set so generate_message_candidates produces a fresh 12.
         return {"candidates": [], "ranked": []}
+    if action == "timeout":
+        # Abandoned session, not a "no thanks" — mark it so the terminal row
+        # carries reason=timeout instead of reason=user.
+        log.warning("hitl_text_approve_timeout", session_id=state.get("session_id"))
+        return {"text_approved": False, "cancelled": True, "error": "text_approve_timeout"}
     # cancel (and any unknown action) aborts the run
     return {"text_approved": False, "cancelled": True}

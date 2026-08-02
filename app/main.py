@@ -84,9 +84,9 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
                 manager=manager, bus=bus, sessionmaker=Session, graph=graph,
                 results_dir=cfg["results_dir"], hero_generator=hero_gen,
                 max_open_per_user=cfg["user_queue_limit"],
-                image_timeout_sec=cfg["image_timeout_sec"],
+                park_timeout_sec=cfg["park_timeout_sec"],
             )
-            # The upload timeout is an in-memory timer — restore it for tasks
+            # The park timeout is an in-memory timer — restore it for tasks
             # this restart left parked, or they never close (see
             # CreativesService.rearm_parked_timeouts).
             expired = await app.state.creatives.rearm_parked_timeouts()
@@ -188,7 +188,7 @@ def _resolve_settings(test_settings: dict | None) -> dict:
         "max_concurrency": settings.max_concurrency,
         "max_per_user_inflight": settings.max_per_user_inflight,
         "user_queue_limit": settings.user_queue_limit,
-        "image_timeout_sec": settings.image_timeout_sec,
+        "park_timeout_sec": settings.park_timeout_sec,
         "retention_ttl_sec": settings.retention_ttl_sec,
     }
     if test_settings:

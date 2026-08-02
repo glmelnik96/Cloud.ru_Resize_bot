@@ -1,4 +1,4 @@
-"""App3 Phase 6 — reconcile-after-restart, retention, image-upload timeout."""
+"""App3 Phase 6 — reconcile-after-restart, retention, HITL park timeout."""
 from __future__ import annotations
 
 import time
@@ -102,7 +102,7 @@ async def test_image_timeout_fires_when_still_parked(tmp_path):
     svc = CreativesService(
         manager=TaskManager(tmp_root=tmp_path / "tmp"), bus=EventBus(),
         sessionmaker=Session, graph=object(), results_dir=tmp_path / "res",
-        image_timeout_sec=0,  # fire immediately
+        park_timeout_sec=0,  # fire immediately
     )
     captured = {}
 
@@ -110,7 +110,7 @@ async def test_image_timeout_fires_when_still_parked(tmp_path):
         captured["decision"] = decision
 
     svc.submit_decision = fake_submit_decision  # type: ignore[assignment]
-    svc._arm_image_timeout("to")
+    svc._arm_park_timeout("to", "awaiting_image")
     # let the 0-sec sleeper run
     import asyncio
 
@@ -128,7 +128,7 @@ def _svc(Session, tmp_path, *, timeout_sec):
     return CreativesService(
         manager=TaskManager(tmp_root=tmp_path / "tmp"), bus=EventBus(),
         sessionmaker=Session, graph=object(), results_dir=tmp_path / "res",
-        image_timeout_sec=timeout_sec,
+        park_timeout_sec=timeout_sec,
     )
 
 
@@ -182,13 +182,34 @@ async def test_rearm_gives_fresh_parked_task_its_remaining_time(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rearm_ignores_tasks_that_are_not_awaiting_image(tmp_path):
-    """awaiting_text has no upload timeout by design, and terminal rows are
-    none of the sweep's business."""
+async def test_rearm_closes_stale_awaiting_text_too(tmp_path):
+    """The text park is the second door of the same leak: the user opened /new,
+    got the 12 propositions and closed the tab. It used to have no deadline at
+    all, so the row sat open forever and never reached usage stats."""
+    Session = await _sm(tmp_path)
+    async with Session() as s:
+        t = models.Task(task_uid="txt", user_id=1, workflow="creatives", status="awaiting_text")
+        t.created_at = datetime.now(timezone.utc) - timedelta(hours=48)
+        s.add(t)
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=24 * 3600)
+    assert await svc.rearm_parked_timeouts() == 1
+
+    async with Session() as s:
+        row = (await s.execute(select(models.Task))).scalar_one()
+    assert row.status == "cancelled"
+    assert row.error == "text_approve_timeout"  # not the upload one
+    assert "txt" not in svc._timeouts
+
+
+@pytest.mark.asyncio
+async def test_rearm_ignores_terminal_tasks(tmp_path):
+    """Rows that already ended are none of the sweep's business."""
     Session = await _sm(tmp_path)
     old = datetime.now(timezone.utc) - timedelta(hours=48)
     async with Session() as s:
-        for uid, status in (("txt", "awaiting_text"), ("fin", "done"), ("bad", "failed")):
+        for uid, status in (("fin", "done"), ("bad", "failed"), ("no", "cancelled")):
             t = models.Task(task_uid=uid, user_id=1, workflow="creatives", status=status)
             t.created_at = old
             s.add(t)
@@ -199,8 +220,56 @@ async def test_rearm_ignores_tasks_that_are_not_awaiting_image(tmp_path):
 
     async with Session() as s:
         rows = {t.task_uid: t.status for t in (await s.execute(select(models.Task))).scalars()}
-    assert rows == {"txt": "awaiting_text", "fin": "done", "bad": "failed"}
+    assert rows == {"fin": "done", "bad": "failed", "no": "cancelled"}
     assert svc._timeouts == {}
+
+
+@pytest.mark.asyncio
+async def test_text_timeout_fires_when_still_parked(tmp_path):
+    """Armed at the text park, the timer resumes with {action:timeout} — the
+    HITL node turns that into a cancel with its own error marker."""
+    Session = await _sm(tmp_path)
+    async with Session() as s:
+        s.add(models.Task(task_uid="tt", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=0)
+    captured = {}
+
+    async def fake_submit_decision(uid, user_id, decision):
+        captured["decision"] = decision
+
+    svc.submit_decision = fake_submit_decision  # type: ignore[assignment]
+    svc._arm_park_timeout("tt", "awaiting_text")
+
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    assert captured.get("decision") == {"action": "timeout"}
+
+
+@pytest.mark.asyncio
+async def test_timeout_does_not_fire_at_the_other_park(tmp_path):
+    """A timer armed for the text park must not fire on a task that has since
+    moved to the image park — the move re-arms its own deadline."""
+    Session = await _sm(tmp_path)
+    async with Session() as s:
+        s.add(models.Task(task_uid="mv", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=0)
+    fired = {}
+
+    async def fake_submit_decision(uid, user_id, decision):
+        fired["x"] = True
+
+    svc.submit_decision = fake_submit_decision  # type: ignore[assignment]
+    svc._arm_park_timeout("mv", "awaiting_text")
+
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    assert "x" not in fired
 
 
 @pytest.mark.asyncio
@@ -217,7 +286,7 @@ async def test_image_timeout_skipped_if_no_longer_parked(tmp_path):
     svc = CreativesService(
         manager=TaskManager(tmp_root=tmp_path / "tmp"), bus=EventBus(),
         sessionmaker=Session, graph=object(), results_dir=tmp_path / "res",
-        image_timeout_sec=0,
+        park_timeout_sec=0,
     )
     fired = {}
 
@@ -225,7 +294,7 @@ async def test_image_timeout_skipped_if_no_longer_parked(tmp_path):
         fired["x"] = True
 
     svc.submit_decision = fake_submit_decision  # type: ignore[assignment]
-    svc._arm_image_timeout("tp")
+    svc._arm_park_timeout("tp", "awaiting_image")
     import asyncio
 
     await asyncio.sleep(0.05)

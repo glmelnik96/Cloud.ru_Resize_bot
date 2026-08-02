@@ -51,6 +51,17 @@ _NODE_LABELS: dict[str, str] = {
 # tasks legitimately sit open for a long time.
 _OPEN_STATUSES = ("queued", "running", "awaiting_text", "awaiting_image")
 
+# The two HITL parks. Both wait on a human and therefore both need a deadline —
+# without one an abandoned session never ends and never reaches usage stats.
+_PARKED_STATUSES = ("awaiting_text", "awaiting_image")
+
+# Error stamped on a task the deadline closed, per park. Matches what the HITL
+# node itself returns when resumed with {action: timeout}.
+_TIMEOUT_ERRORS = {
+    "awaiting_text": "text_approve_timeout",
+    "awaiting_image": "image_upload_timeout",
+}
+
 # Max concurrent hero generations against App1 during a single /new run. The
 # 12 propositions each need a hero; this bounds the burst on App1's backend.
 _HERO_GEN_CONCURRENCY = int(os.environ.get("HERO_GEN_CONCURRENCY", "4"))
@@ -118,7 +129,7 @@ class CreativesService:
         results_dir: Path | str = "./data/results",
         hero_generator: HeroGenerator | None = None,
         max_open_per_user: int = 5,
-        image_timeout_sec: int = 24 * 3600,
+        park_timeout_sec: int = 24 * 3600,
     ) -> None:
         self.manager = manager
         self.bus = bus
@@ -128,7 +139,7 @@ class CreativesService:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.hero_generator: HeroGenerator = hero_generator or NullHeroGenerator()
         self.max_open_per_user = max_open_per_user
-        self.image_timeout_sec = image_timeout_sec
+        self.park_timeout_sec = park_timeout_sec
         self._timeouts: dict[str, asyncio.Task] = {}
         # Per-user lock serializing create()'s open-count check → insert so two
         # concurrent submissions can't both slip past the cap (TOCTOU).
@@ -217,10 +228,9 @@ class CreativesService:
             )
 
         if not await self.manager.submit(user_id, runner):
-            restored = prior if prior in ("awaiting_text", "awaiting_image") else "awaiting_text"
+            restored = prior if prior in _PARKED_STATUSES else "awaiting_text"
             await self._set_status(task_uid, restored)
-            if restored == "awaiting_image":
-                self._arm_image_timeout(task_uid)
+            self._arm_park_timeout(task_uid, restored)
             log.warning("decision_queue_full", task_uid=task_uid, restored=restored)
             raise CapacityError("queue full")
 
@@ -337,7 +347,7 @@ class CreativesService:
             # Lane queue full — nothing was generated; restore the parked state
             # so the user keeps the generate/upload affordances and can retry.
             await self._set_status(task_uid, "awaiting_image")
-            self._arm_image_timeout(task_uid)
+            self._arm_park_timeout(task_uid, "awaiting_image")
             log.warning("generate_queue_full", task_uid=task_uid)
             raise CapacityError("queue full")
 
@@ -426,24 +436,30 @@ class CreativesService:
         """Set the awaiting status + publish the decision payload for the UI."""
         kind = value.get("kind") if isinstance(value, dict) else None
         if kind == "image_upload":
-            await self._set_status(task_uid, "awaiting_image")
+            status = "awaiting_image"
+            await self._set_status(task_uid, status)
             data = {
                 "image_prompt": value.get("image_prompt", ""),
                 "image_style": value.get("image_style", ""),
                 "can_generate": self.hero_generator.available,
             }
             await reporter.awaiting(phase="image_upload", data=data)
-            self._arm_image_timeout(task_uid)
         else:
-            await self._set_status(task_uid, "awaiting_text")
+            status = "awaiting_text"
+            await self._set_status(task_uid, status)
             data = {"candidates": value.get("candidates") if isinstance(value, dict) else []}
             await reporter.awaiting(phase="text_approve", data=data)
+        self._arm_park_timeout(task_uid, status)
         log.info("task_parked", task_uid=task_uid, phase=kind or "text_approve")
 
     async def _finish_terminal(self, task_uid: str, reporter: WebStatusReporter, final: dict) -> None:
         # Graph reached END: user cancelled at an interrupt, or pipeline done.
         if final.get("cancelled"):
-            reason = "timeout" if final.get("error") == "image_upload_timeout" else "user"
+            reason = (
+                "timeout"
+                if final.get("error") in _TIMEOUT_ERRORS.values()
+                else "user"
+            )
             await self._finish(task_uid, "cancelled", reason=reason)
             await reporter.cancelled(reason=reason)
             log.info("task_cancelled", task_uid=task_uid, reason=reason)
@@ -510,15 +526,15 @@ class CreativesService:
                 zip_url = f"/results/{task_uid}/{pngs[0].name}"
         return zip_url
 
-    # ── image-upload timeout ──────────────────────────────────
+    # ── HITL park timeout ─────────────────────────────────────
     async def rearm_parked_timeouts(self) -> int:
-        """Restore the upload timeout for tasks left at awaiting_image by a
-        restart. Returns how many were closed as expired.
+        """Restore the park timeout for tasks left at awaiting_* by a restart.
+        Returns how many were closed as expired.
 
         The timeout is an in-memory asyncio task, so a restart drops it and the
-        row would sit at awaiting_image forever — never purged (retention keeps
-        open tasks regardless of age) and counting against the user's
-        max_open_per_user budget for good.
+        row would sit parked forever — never purged (retention keeps open tasks
+        regardless of age) and counting against the user's max_open_per_user
+        budget for good.
 
         Deadline is measured from ``created_at``: parking happens seconds after
         creation while the timeout is hours, so the difference is noise.
@@ -529,7 +545,7 @@ class CreativesService:
         now = datetime.now(timezone.utc)
         async with self.Session() as s:
             res = await s.execute(
-                select(models.Task).where(models.Task.status == "awaiting_image")
+                select(models.Task).where(models.Task.status.in_(_PARKED_STATUSES))
             )
             parked = list(res.scalars())
 
@@ -538,13 +554,13 @@ class CreativesService:
             created = task.created_at or now
             if created.tzinfo is None:  # SQLite hands back naive UTC
                 created = created.replace(tzinfo=timezone.utc)
-            remaining = self.image_timeout_sec - (now - created).total_seconds()
+            remaining = self.park_timeout_sec - (now - created).total_seconds()
             if remaining > 0:
-                self._arm_image_timeout(task.task_uid, delay=remaining)
+                self._arm_park_timeout(task.task_uid, task.status, delay=remaining)
             else:
                 await self._finish(
                     task.task_uid, "cancelled",
-                    error="image_upload_timeout", reason="timeout",
+                    error=_TIMEOUT_ERRORS[task.status], reason="timeout",
                 )
                 expired += 1
         if parked:
@@ -555,40 +571,47 @@ class CreativesService:
             )
         return expired
 
-    def _arm_image_timeout(self, task_uid: str, *, delay: float | None = None) -> None:
-        """Resume the graph with {action:timeout} if the user never provides a
-        hero within image_timeout_sec (graph then cancels the task).
+    def _arm_park_timeout(
+        self, task_uid: str, status: str, *, delay: float | None = None
+    ) -> None:
+        """Resume the graph with {action:timeout} if the user never comes back
+        to the ``status`` park within park_timeout_sec (the HITL node then
+        cancels the task).
+
+        Both parks need this: an abandoned session at awaiting_text used to live
+        forever exactly like the awaiting_image ones did, holding a slot of the
+        user's open-session budget and never reaching usage stats at all.
 
         ``delay`` overrides the wait with the time left on an existing deadline
         (see rearm_parked_timeouts)."""
         self._cancel_timeout(task_uid)
-        wait = self.image_timeout_sec if delay is None else delay
+        wait = self.park_timeout_sec if delay is None else delay
 
         async def _sleeper() -> None:
             try:
                 await asyncio.sleep(wait)
             except asyncio.CancelledError:
                 return
-            # only fire if still parked at awaiting_image
+            # only fire if still parked where we armed it
             async with self.Session() as s:
                 res = await s.execute(select(models.Task).where(models.Task.task_uid == task_uid))
                 task = res.scalar_one_or_none()
-            if task is None or task.status != "awaiting_image":
+            if task is None or task.status != status:
                 return
-            log.warning("image_upload_timeout", task_uid=task_uid)
+            log.warning("park_timeout", task_uid=task_uid, status=status)
             try:
                 await self.submit_decision(task_uid, str(task.user_id), {"action": "timeout"})
             except CapacityError:
                 # Lane full at the exact timeout moment — submit_decision already
-                # restored awaiting_image and re-armed the timeout; just log.
-                log.warning("image_timeout_resume_deferred", task_uid=task_uid)
+                # restored the park and re-armed the timeout; just log.
+                log.warning("park_timeout_resume_deferred", task_uid=task_uid)
             except DecisionConflict:
-                # A real upload/generate won the claim between our status read
-                # and here — the task already moved on; nothing to time out.
-                log.info("image_timeout_superseded", task_uid=task_uid)
+                # A real decision won the claim between our status read and
+                # here — the task already moved on; nothing to time out.
+                log.info("park_timeout_superseded", task_uid=task_uid)
 
         try:
-            self._timeouts[task_uid] = asyncio.create_task(_sleeper(), name=f"img-timeout-{task_uid}")
+            self._timeouts[task_uid] = asyncio.create_task(_sleeper(), name=f"park-timeout-{task_uid}")
         except RuntimeError:
             pass  # no running loop (unit context without scheduling)
 

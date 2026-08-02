@@ -53,8 +53,9 @@ class Settings(BaseSettings):
     max_per_user_inflight: int = Field(2, alias="MAX_PER_USER_INFLIGHT", gt=0)
     user_queue_limit: int = Field(5, alias="USER_QUEUE_LIMIT", gt=0)
 
-    # --- HITL image-upload window (graph cancels the task after this) ---
-    image_timeout_sec: int = Field(24 * 3600, alias="IMAGE_TIMEOUT_SEC", gt=0)
+    # --- HITL park window: how long a task may wait on the human at either
+    # stop (text approve / image upload) before the graph cancels it ---
+    park_timeout_sec: int = Field(24 * 3600, alias="PARK_TIMEOUT_SEC", gt=0)
     # --- results retention TTL ---
     # gt=0: a negative TTL makes the purge cutoff land in the future and wipes
     # every result immediately.
