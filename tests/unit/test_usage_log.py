@@ -143,6 +143,40 @@ async def test_workflow_override_is_logged(Session):
     assert ev.workflow == "speaker"
 
 
+async def test_logging_makes_no_outbound_call(Session, monkeypatch):
+    """Platform retired the unified /internal/usage ingest (2026-08-02): each
+    tool now gets its own admin block, so we stop pushing. Logging a terminal
+    task must touch nothing but the local row — any httpx client construction
+    here means a push survived the removal."""
+    import httpx
+
+    def _boom(*a, **kw):  # noqa: ANN002, ANN003
+        raise AssertionError("usage logging opened an HTTP client")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _boom)
+    monkeypatch.setattr(httpx, "Client", _boom)
+
+    uid, tid = await _seed_user_task(Session)
+    async with Session() as s:
+        user = await s.get(models.User, uid)
+        task = await s.get(models.Task, tid)
+        await log_creative_usage(s, task=task, user=user, status="done", meta={"count": 12})
+        await s.commit()
+
+    async with Session() as s:
+        ev = (await s.execute(select(models.UsageEvent))).scalar_one()
+    assert ev.status == "done"
+
+
+async def test_ingest_settings_are_gone():
+    """USAGE_INGEST_* are retired — a lingering field would let someone re-point
+    App3 at the dead ingest by editing .env."""
+    from app.config import settings
+
+    assert not hasattr(settings, "usage_ingest_url")
+    assert not hasattr(settings, "usage_ingest_token")
+
+
 async def test_usage_event_survives_retention(Session, tmp_path: Path):
     uid, tid = await _seed_user_task(Session)
     async with Session() as s:

@@ -4,9 +4,10 @@ One row per completed creatives operation. Holds no images and no full prompt
 — only the metric for analytics. Retention does not purge it. Cross-app
 contract: docs platform repo 2026-06-22-usage-events-logging.md.
 
-Since 2026-07-22 this ALSO fires a best-effort push to the gateway's unified
-usage ingest (see app.usage_push) so every sub-app folds into one /admin
-picture. The local row stays the source of truth; the push is fire-and-forget.
+From 2026-07-22 to 2026-08-02 this also pushed each event to the gateway's
+unified ingest. The platform retired that pooled counter — every tool gets its
+own admin block now — so the push is gone and this table is the only place App3
+records usage. The gateway reads it read-only (same host, same user).
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import usage_push
 from app.config import settings
 from app.db import models
 
@@ -53,16 +53,15 @@ async def log_creative_usage(
     app: str = APP_NAME,
     workflow: str | None = None,
 ) -> None:
-    """Add one usage event to the open session (caller commits) and fire the
-    best-effort gateway push.
+    """Add one usage event to the open session (caller commits).
 
     `meta` must already be the anonymised, whitelisted payload (e.g.
     {"ratios": ["300x600"], "count": 12}) — the brief and prompt are never
     read here, so no private text can leak into the log.
 
     `workflow` overrides ``task.workflow`` for the logged value (webinar passes
-    its variant so speaker/visual split shows up in /admin). Smoke/tech accounts
-    are dropped entirely — no local row, no push — matching App1.
+    its variant so the speaker/visual split shows up in the stats). Smoke/tech
+    accounts are dropped entirely — no row — matching App1.
     """
     if user is not None and user.email in _excluded_emails():
         return
@@ -80,13 +79,4 @@ async def log_creative_usage(
             duration_ms=duration_ms,
             meta=meta or {},
         )
-    )
-    usage_push.emit(
-        app=app,
-        email=(user.email if user else ""),
-        workflow=wf,
-        status=status,
-        duration_ms=duration_ms,
-        gateway_user_id=(user.gateway_user_id if user else None),
-        meta=meta or {},
     )
