@@ -86,7 +86,11 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
                 max_open_per_user=cfg["user_queue_limit"],
                 image_timeout_sec=cfg["image_timeout_sec"],
             )
-            log.info("app3 orchestrator ready")
+            # The upload timeout is an in-memory timer — restore it for tasks
+            # this restart left parked, or they never close (see
+            # CreativesService.rearm_parked_timeouts).
+            expired = await app.state.creatives.rearm_parked_timeouts()
+            log.info("app3 orchestrator ready (expired parked tasks: %d)", expired)
         except Exception as exc:  # noqa: BLE001
             app.state.creatives = None
             log.error("graph init failed (tasks disabled): %s", exc)

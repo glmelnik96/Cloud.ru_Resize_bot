@@ -507,14 +507,61 @@ class CreativesService:
         return zip_url
 
     # ── image-upload timeout ──────────────────────────────────
-    def _arm_image_timeout(self, task_uid: str) -> None:
+    async def rearm_parked_timeouts(self) -> int:
+        """Restore the upload timeout for tasks left at awaiting_image by a
+        restart. Returns how many were closed as expired.
+
+        The timeout is an in-memory asyncio task, so a restart drops it and the
+        row would sit at awaiting_image forever — never purged (retention keeps
+        open tasks regardless of age) and counting against the user's
+        max_open_per_user budget for good.
+
+        Deadline is measured from ``created_at``: parking happens seconds after
+        creation while the timeout is hours, so the difference is noise.
+        A task past its deadline is closed straight in the DB rather than by
+        resuming the graph — the checkpoint may predate the current node set,
+        and nobody is waiting on a resume that only leads to a cancel anyway.
+        """
+        now = datetime.now(timezone.utc)
+        async with self.Session() as s:
+            res = await s.execute(
+                select(models.Task).where(models.Task.status == "awaiting_image")
+            )
+            parked = list(res.scalars())
+
+        expired = 0
+        for task in parked:
+            created = task.created_at or now
+            if created.tzinfo is None:  # SQLite hands back naive UTC
+                created = created.replace(tzinfo=timezone.utc)
+            remaining = self.image_timeout_sec - (now - created).total_seconds()
+            if remaining > 0:
+                self._arm_image_timeout(task.task_uid, delay=remaining)
+            else:
+                await self._finish(
+                    task.task_uid, "cancelled", error="image_upload_timeout"
+                )
+                expired += 1
+        if parked:
+            log.info(
+                "parked_timeouts_rearmed",
+                parked=len(parked),
+                expired=expired,
+            )
+        return expired
+
+    def _arm_image_timeout(self, task_uid: str, *, delay: float | None = None) -> None:
         """Resume the graph with {action:timeout} if the user never provides a
-        hero within image_timeout_sec (graph then cancels the task)."""
+        hero within image_timeout_sec (graph then cancels the task).
+
+        ``delay`` overrides the wait with the time left on an existing deadline
+        (see rearm_parked_timeouts)."""
         self._cancel_timeout(task_uid)
+        wait = self.image_timeout_sec if delay is None else delay
 
         async def _sleeper() -> None:
             try:
-                await asyncio.sleep(self.image_timeout_sec)
+                await asyncio.sleep(wait)
             except asyncio.CancelledError:
                 return
             # only fire if still parked at awaiting_image

@@ -118,6 +118,91 @@ async def test_image_timeout_fires_when_still_parked(tmp_path):
     assert captured.get("decision") == {"action": "timeout"}
 
 
+def _svc(Session, tmp_path, *, timeout_sec):
+    from app.services.creatives import CreativesService
+    from app.tasks.events import EventBus
+    from app.tasks.manager import TaskManager
+
+    # graph=object() on purpose: the restart sweep must never resume a stale
+    # checkpoint, so any graph access here explodes the test.
+    return CreativesService(
+        manager=TaskManager(tmp_root=tmp_path / "tmp"), bus=EventBus(),
+        sessionmaker=Session, graph=object(), results_dir=tmp_path / "res",
+        image_timeout_sec=timeout_sec,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rearm_closes_parked_task_whose_deadline_passed(tmp_path):
+    """The upload timeout is an in-memory timer, so a restart used to drop it
+    and the row stayed awaiting_image forever, eating the user's open-session
+    budget (12 such rows sat on prod since 2026-06-21). Startup must close the
+    ones whose deadline elapsed while we were down."""
+    Session = await _sm(tmp_path)
+    now = datetime.now(timezone.utc)
+    async with Session() as s:
+        t = models.Task(task_uid="stale", user_id=1, workflow="creatives", status="awaiting_image")
+        t.created_at = now - timedelta(hours=48)
+        s.add(t)
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=24 * 3600)
+    n = await svc.rearm_parked_timeouts()
+    assert n == 1
+
+    async with Session() as s:
+        row = (await s.execute(select(models.Task))).scalar_one()
+    assert row.status == "cancelled"
+    assert row.error == "image_upload_timeout"
+    assert row.finished_at is not None
+    assert "stale" not in svc._timeouts  # closed, not waiting
+
+
+@pytest.mark.asyncio
+async def test_rearm_gives_fresh_parked_task_its_remaining_time(tmp_path):
+    """A task parked minutes before the restart keeps waiting — the user may
+    still come back and upload."""
+    Session = await _sm(tmp_path)
+    now = datetime.now(timezone.utc)
+    async with Session() as s:
+        t = models.Task(task_uid="fresh", user_id=1, workflow="creatives", status="awaiting_image")
+        t.created_at = now - timedelta(minutes=5)
+        s.add(t)
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=24 * 3600)
+    n = await svc.rearm_parked_timeouts()
+    assert n == 0  # nothing closed
+
+    async with Session() as s:
+        row = (await s.execute(select(models.Task))).scalar_one()
+    assert row.status == "awaiting_image"
+    assert "fresh" in svc._timeouts  # timer restored
+    svc._cancel_timeout("fresh")
+
+
+@pytest.mark.asyncio
+async def test_rearm_ignores_tasks_that_are_not_awaiting_image(tmp_path):
+    """awaiting_text has no upload timeout by design, and terminal rows are
+    none of the sweep's business."""
+    Session = await _sm(tmp_path)
+    old = datetime.now(timezone.utc) - timedelta(hours=48)
+    async with Session() as s:
+        for uid, status in (("txt", "awaiting_text"), ("fin", "done"), ("bad", "failed")):
+            t = models.Task(task_uid=uid, user_id=1, workflow="creatives", status=status)
+            t.created_at = old
+            s.add(t)
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=24 * 3600)
+    assert await svc.rearm_parked_timeouts() == 0
+
+    async with Session() as s:
+        rows = {t.task_uid: t.status for t in (await s.execute(select(models.Task))).scalars()}
+    assert rows == {"txt": "awaiting_text", "fin": "done", "bad": "failed"}
+    assert svc._timeouts == {}
+
+
 @pytest.mark.asyncio
 async def test_image_timeout_skipped_if_no_longer_parked(tmp_path):
     from app.services.creatives import CreativesService
