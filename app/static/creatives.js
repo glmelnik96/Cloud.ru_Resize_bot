@@ -243,7 +243,7 @@
     hideHitl(); hide($("progressPanel")); show($("resultsPanel"));
     const url = d.result_url ? `${P}${d.result_url}` : null;
     $("resultMsg").innerHTML = url
-      ? `<a class="dl" href="${url}" download>⬇ Скачать ZIP</a>`
+      ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
     $("startBtn").disabled = false;
     loadRecentTasks();
@@ -328,7 +328,7 @@
     }
     let action = "";
     if (t.status === "done" && t.result_url) {
-      action = `<a class="task-dl" href="${P}${t.result_url}" download>⬇ ZIP</a>`;
+      action = `<a class="task-dl" href="${P}${t.result_url}" download>ZIP</a>`;
     } else if (t.status === "failed" && t.error) {
       action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
     }
@@ -368,7 +368,7 @@
       `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
       `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy">` +
       `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
-      `title="Скачать баннер ${i + 1}">⬇</a>${capHtml(cards[i], i)}</figure>`
+      `title="Скачать баннер ${i + 1}">↓</a>${capHtml(cards[i], i)}</figure>`
     ).join("");
     const capsCls = cards.length ? " has-caps" : "";
     grid.innerHTML = briefHtml(briefByUid[uid]) + `<div class="task-thumbs${capsCls}">${thumbs}</div>`;
@@ -417,7 +417,7 @@
       `<img id="lbImg" class="lb-img" alt="">` +
       `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
       `<div class="lb-bar"><span id="lbCount"></span><span id="lbCap" class="lb-cap"></span>` +
-      `<a id="lbDl" class="lb-dl" download>⬇ Скачать</a></div>`;
+      `<a id="lbDl" class="lb-dl" download>Скачать</a></div>`;
     document.body.appendChild(lb);
     lb.addEventListener("click", (ev) => {
       const act = ev.target.getAttribute("data-lb");

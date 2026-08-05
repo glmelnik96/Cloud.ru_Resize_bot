@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260710v11">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260805v1">
 </head>
 <body>
   <header class="topbar">
@@ -59,7 +59,7 @@
       <pre class="prompt" id="imagePrompt"></pre>
       <div class="btn-row">
         <button class="btn btn--accent hidden" id="genBtn">Сгенерировать 12 hero</button>
-        <label class="btn" for="heroFile" style="display:inline-block">Загрузить картинку</label>
+        <label class="btn" for="heroFile">Загрузить картинку</label>
         <input type="file" id="heroFile" accept="image/*" class="hidden">
         <button class="btn btn--danger" id="imgCancel">Отменить</button>
       </div>
@@ -120,6 +120,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260710v11"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260805v1"></script>
 </body>
 </html>

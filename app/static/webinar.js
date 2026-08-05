@@ -498,7 +498,7 @@
       `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
       `<img src="${P}${u}" alt="Формат ${i + 1}" loading="lazy">` +
       `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
-      `title="Скачать формат ${i + 1}">⬇</a></figure>`
+      `title="Скачать формат ${i + 1}">↓</a></figure>`
     ).join("");
     return `<div class="task-thumbs">${thumbs}</div>`;
   }
