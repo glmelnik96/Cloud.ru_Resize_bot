@@ -70,24 +70,24 @@ async def test_text_pipeline_e2e() -> None:
     }
     final = await graph.ainvoke(initial, config=cfg)
 
-    # --- stop 1: graph should pause at hitl_persona_approve
+    # --- stop 1: graph must pause at hitl_persona_approve
     interrupts = final.get("__interrupt__")
-    if interrupts:
-        assert interrupts[0].value.get("kind") == "persona_approve", (
-            f"Expected first interrupt kind='persona_approve', got: {interrupts[0].value}"
-        )
-        # resume with approve so persona is accepted and pipeline continues
-        final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
+    assert interrupts, "graph did not pause at persona stop"
+    assert interrupts[0].value.get("kind") == "persona_approve", (
+        f"Expected first interrupt kind='persona_approve', got: {interrupts[0].value}"
+    )
+    # resume with approve so persona is accepted and pipeline continues
+    final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
 
-    # --- stop 2: graph should pause at hitl_text_approve once the 12 are selected
+    # --- stop 2: graph must pause at hitl_text_approve once the 12 are selected
     interrupts = final.get("__interrupt__")
-    if interrupts:
-        assert interrupts[0].value.get("kind") in ("text_approve",), (
-            f"Expected second interrupt kind='text_approve', got: {interrupts[0].value}"
-        )
-        # resume with approve so the pipeline reaches terminal state
-        final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
-        assert final.get("text_approved") is True
+    assert interrupts, "graph did not pause at text approve stop"
+    assert interrupts[0].value.get("kind") == "text_approve", (
+        f"Expected second interrupt kind='text_approve', got: {interrupts[0].value}"
+    )
+    # resume with approve so the pipeline reaches terminal state
+    final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
+    assert final.get("text_approved") is True
 
     # --- brief survives verbatim (no LLM re-parse)
     brief = final["brief"]

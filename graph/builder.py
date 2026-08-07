@@ -8,6 +8,10 @@ Everything is grounded first, by a node that actually studies the product.
                                         link + free-form notes -> ProductBrief)
       -> derive_persona                (ONE persona from audience + emotion,
                                         grounded in the KB's real segments)
+      -> hitl_persona_approve          (interrupt; user confirms persona)
+         --(approve)----> generate_message_candidates
+         --(regenerate)-> derive_persona
+         --(cancel)-----> END
       -> generate_message_candidates   (2 parallel calls x 12 = 24 drafts)
       -> select_by_persona             (the persona, in first person, keeps 12)
       -> lint_candidates               (флажки честности: код-фильтры +

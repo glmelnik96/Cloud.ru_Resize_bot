@@ -42,3 +42,24 @@ def test_graph_edge_derive_to_persona_hitl():
     assert ("derive_persona", "hitl_persona_approve") in edges
     # прямого ребра derive_persona → generate_message_candidates быть не должно
     assert ("derive_persona", "generate_message_candidates") not in edges
+
+
+def test_persona_hitl_conditional_branches():
+    """hitl_persona_approve должна иметь conditional-рёбра в три узла:
+    generate_message_candidates, derive_persona и END (__end__)."""
+    compiled = builder.build_text_graph().compile()
+    cg = compiled.get_graph()
+    persona_targets = {
+        e.target
+        for e in cg.edges
+        if e.source == "hitl_persona_approve" and e.conditional
+    }
+    assert "generate_message_candidates" in persona_targets, (
+        f"missing branch → generate_message_candidates; got {persona_targets}"
+    )
+    assert "derive_persona" in persona_targets, (
+        f"missing branch → derive_persona; got {persona_targets}"
+    )
+    assert "__end__" in persona_targets, (
+        f"missing branch → END; got {persona_targets}"
+    )
