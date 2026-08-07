@@ -45,9 +45,8 @@ async def derive_persona(state: GraphState) -> dict:
     system_msg = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
 
-    doc = knowledge.find_product(
-        product.canonical_name if product else "", brief.product, brief.notes
-    )
+    kb_match = state.get("kb_match")
+    doc = knowledge.get_by_slug(kb_match["slug"]) if kb_match else None
     tone_block = (
         f"TONE HINTS: {brief.tone_hints}" if brief.tone_hints else ""
     )

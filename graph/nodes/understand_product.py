@@ -45,12 +45,26 @@ _SKILL_NAME = "understand_product"
 _NONE = "(не указано)"
 
 
+def _resolve_kb(brief: AdBrief, *, session_id: str | None) -> object:
+    """Выбор продукта: явный slug из брифа > alias-автодетект; 'none' — без KB."""
+    if brief.product_slug == "none":
+        return None
+    if brief.product_slug and brief.product_slug != "auto":
+        doc = knowledge.get_by_slug(brief.product_slug)
+        if doc is not None:
+            return doc
+        log.warning(
+            "kb_slug_unknown", session_id=session_id, slug=brief.product_slug
+        )
+    return knowledge.find_product(brief.product, brief.notes)
+
+
 async def understand_product(state: GraphState) -> dict:
     brief = _coerce_brief(state.get("brief"))
     session_id = state.get("session_id")
 
     source_text = await _read_source(brief.source_url, session_id=session_id)
-    doc = knowledge.find_product(brief.product, brief.notes)
+    doc = _resolve_kb(brief, session_id=session_id)
 
     skill = load_skill(_SKILL_NAME)
     system_msg = extract_section(skill.body, "## System message")
@@ -93,6 +107,11 @@ async def understand_product(state: GraphState) -> dict:
     return {
         "brief": brief.model_copy(update={"source_text": source_text}).model_dump(),
         "product": product.model_dump(),
+        "kb_match": (
+            {"slug": doc.slug, "name": doc.name, "version": doc.version}
+            if doc
+            else None
+        ),
     }
 
 

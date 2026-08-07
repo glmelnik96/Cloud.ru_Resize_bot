@@ -116,6 +116,7 @@ def build_brief(fields: dict[str, str]) -> dict:
         emotion=fields.get("emotion", ""),
         notes=fields.get("notes", ""),
         source_url=fields.get("source_url", ""),
+        product_slug=(fields.get("product_slug") or "auto"),
     ).model_dump()
 
 

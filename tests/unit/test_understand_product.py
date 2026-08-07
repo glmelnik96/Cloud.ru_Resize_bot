@@ -13,10 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from graph import knowledge
+from graph.knowledge import ProductDoc
 from graph.nodes import understand_product as mod
 from graph.state import ProductBrief
 from infra.urlfetch import UrlFetchError
-
 
 _PRODUCT = ProductBrief(
     canonical_name="Evolution Managed RAG",
@@ -159,3 +160,57 @@ def test_prompt_names_the_marketer_wording_as_last_resort_source():
     body = Path("prompts/understand_product.md").read_text(encoding="utf-8")
     system = body.split("## System message", 1)[1]
     assert "НЕТ НИ ОДНОГО ИСТОЧНИКА" in system
+
+
+# ── Task 4: product_slug — явный выбор продукта из KB ─────────────────
+
+
+def _make_doc(slug: str, name: str) -> ProductDoc:
+    """Минимальный ProductDoc для изоляции KB в тестах."""
+    return ProductDoc(
+        slug=slug,
+        name=name,
+        aliases=(name,),
+        tagline=f"{name} tagline",
+        body=(
+            "## Блок 1. Что это\nОписание продукта.\n\n"
+            "## Блок 3. Аудитории\nАудитория продукта.\n"
+        ),
+    )
+
+
+async def test_product_slug_explicit_overrides_autodetect(captured):
+    """product_slug='evolution-notebooks' → KB-матч по слагу, игнорируя autodetect."""
+    doc = _make_doc("evolution-notebooks", "Evolution Notebooks")
+    prev = knowledge._catalog_override
+    try:
+        knowledge.set_catalog((doc,))
+        # product не содержит алиасов → autodetect вернул бы None; slug Override
+        out = await mod.understand_product(
+            _state(product="просто текст без алиасов", product_slug="evolution-notebooks")
+        )
+    finally:
+        knowledge.set_catalog(prev)
+
+    assert out["kb_match"] == {
+        "slug": "evolution-notebooks",
+        "name": "Evolution Notebooks",
+        "version": 1,
+    }
+
+
+async def test_product_slug_none_disables_kb(captured):
+    """product_slug='none' → kb_match=None, даже если autodetect нашёл бы матч."""
+    out = await mod.understand_product(
+        _state(product="Evolution ML Inference", product_slug="none")
+    )
+    assert out["kb_match"] is None
+
+
+async def test_product_slug_auto_keeps_alias_match(captured):
+    """product_slug='auto' (дефолт) → стандартный alias-матч по vendored-каталогу."""
+    out = await mod.understand_product(
+        _state(product="Evolution ML Inference", product_slug="auto")
+    )
+    assert out["kb_match"] is not None
+    assert out["kb_match"]["slug"] == "evolution-ml-inference"

@@ -12,7 +12,6 @@ from typing import TypedDict
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ----- Brief & inputs -------------------------------------------------------
 
 
@@ -57,6 +56,13 @@ class AdBrief(BaseModel):
     source_text: str = Field(
         default="",
         description="Текст, вычитанный из source_url (пусто, если ссылки не было)",
+    )
+    product_slug: str = Field(
+        default="auto",
+        description=(
+            "Явный выбор продукта библиотеки: 'auto' — alias-матч, "
+            "'none' — без библиотеки, иначе slug карточки"
+        ),
     )
     tone_hints: str | None = None
 
@@ -348,6 +354,8 @@ class GraphState(TypedDict, total=False):
     user_id: int
     brief: AdBrief
     product: dict  # ProductBrief.model_dump() — grounding for every text node
+    # Какая карточка библиотеки подхвачена (None — работаем только по брифу).
+    kb_match: dict | None  # {"slug": str, "name": str, "version": int}
     personas: list[Persona]
     # 24 drafts (2 generator batches x 12) — the pool the persona picks from.
     candidates: list[MessageCandidate]
