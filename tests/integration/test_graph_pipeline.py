@@ -1,13 +1,15 @@
 """End-to-end LangGraph text pipeline test.
 
 Feeds a structured brief through understand_product → derive_persona →
-generate_message_candidates → select_by_persona. Verifies that:
+hitl_persona_approve → generate_message_candidates → select_by_persona.
+Verifies that:
 - the product card is assembled from the knowledge base (no LLM round trip of
   the marketer's own wording, which is what parse_brief used to do)
 - exactly ONE persona derived (audience is single)
+- the graph parks first at hitl_persona_approve (persona pause, stop 1)
+- then at hitl_text_approve (text approval, stop 2)
 - 24 candidates generated (two batches of 12)
 - the persona selects exactly 12, each carrying score + reason, best-first
-- the graph parks at hitl_text_approve and resumes through `approve`
 
 Skipped if CLOUDRU_API_KEY not set (real network calls — costs tokens).
 """
@@ -23,7 +25,6 @@ from langgraph.types import Command
 
 from graph.builder import build_text_graph
 from graph.state import AdBrief, MessageCandidate, Persona, ProductBrief
-
 
 # interrupt() in async nodes needs Python 3.11+. On 3.10 langgraph's get_config()
 # hard-branches and the runnable-config contextvar isn't propagated into async
@@ -68,9 +69,22 @@ async def test_text_pipeline_e2e() -> None:
         "brief": _BRIEF,
     }
     final = await graph.ainvoke(initial, config=cfg)
-    # graph should pause at hitl_text_approve once the 12 are selected
+
+    # --- stop 1: graph should pause at hitl_persona_approve
     interrupts = final.get("__interrupt__")
     if interrupts:
+        assert interrupts[0].value.get("kind") == "persona_approve", (
+            f"Expected first interrupt kind='persona_approve', got: {interrupts[0].value}"
+        )
+        # resume with approve so persona is accepted and pipeline continues
+        final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
+
+    # --- stop 2: graph should pause at hitl_text_approve once the 12 are selected
+    interrupts = final.get("__interrupt__")
+    if interrupts:
+        assert interrupts[0].value.get("kind") in ("text_approve",), (
+            f"Expected second interrupt kind='text_approve', got: {interrupts[0].value}"
+        )
         # resume with approve so the pipeline reaches terminal state
         final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
         assert final.get("text_approved") is True

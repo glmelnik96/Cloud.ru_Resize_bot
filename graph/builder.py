@@ -35,6 +35,7 @@ from graph.nodes.fill_templates_per_format import fill_templates_per_format
 from graph.nodes.generate_image_prompt import generate_image_prompt
 from graph.nodes.generate_message_candidates import generate_message_candidates
 from graph.nodes.hitl_image_upload import hitl_image_upload
+from graph.nodes.hitl_persona_approve import hitl_persona_approve
 from graph.nodes.hitl_text_approve import hitl_text_approve
 from graph.nodes.lint_candidates import lint_candidates
 from graph.nodes.render_all import render_all
@@ -42,6 +43,15 @@ from graph.nodes.route_image_style import route_image_style
 from graph.nodes.select_by_persona import select_by_persona
 from graph.nodes.understand_product import understand_product
 from graph.state import GraphState
+
+
+def _route_after_persona_hitl(state: GraphState) -> str:
+    if state.get("cancelled"):
+        return END
+    if state.get("persona_approved"):
+        return "generate_message_candidates"
+    # regenerate — personas очищены в hitl_persona_approve
+    return "derive_persona"
 
 
 def _route_after_text_hitl(state: GraphState) -> str:
@@ -65,6 +75,7 @@ def build_text_graph() -> StateGraph:
 
     g.add_node("understand_product", understand_product)
     g.add_node("derive_persona", derive_persona)
+    g.add_node("hitl_persona_approve", hitl_persona_approve)
     g.add_node("generate_message_candidates", generate_message_candidates)
     g.add_node("select_by_persona", select_by_persona)
     g.add_node("lint_candidates", lint_candidates)
@@ -77,7 +88,16 @@ def build_text_graph() -> StateGraph:
 
     g.add_edge(START, "understand_product")
     g.add_edge("understand_product", "derive_persona")
-    g.add_edge("derive_persona", "generate_message_candidates")
+    g.add_edge("derive_persona", "hitl_persona_approve")
+    g.add_conditional_edges(
+        "hitl_persona_approve",
+        _route_after_persona_hitl,
+        {
+            "generate_message_candidates": "generate_message_candidates",
+            "derive_persona": "derive_persona",
+            END: END,
+        },
+    )
     g.add_edge("generate_message_candidates", "select_by_persona")
     g.add_edge("select_by_persona", "lint_candidates")
     g.add_edge("lint_candidates", "hitl_text_approve")
