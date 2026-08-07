@@ -71,9 +71,14 @@ async def select_by_persona(state: GraphState) -> dict:
     system_msg = extract_section(skill.body, "## System message")
     user_tpl = extract_section(skill.body, "## User message template")
 
+    # anchor/desired_outcome (контракт-lite 2026-08-07) даются критику явно:
+    # обещанный результат проверяется по фактам, якорь — по СВОИМ болям/
+    # мотивациям/возражениям. Пустые поля (старые parked-сессии) не печатаем.
     cards_block = "\n".join(
         f"- id={c.id} | slogan: {c.slogan} | cta: {c.cta} | hook: {c.hook_angle}"
-        f" | body: {c.body}"
+        + (f" | якорь: {c.anchor}" if c.anchor else "")
+        + (f" | обещанный результат: {c.desired_outcome}" if c.desired_outcome else "")
+        + f" | body: {c.body}"
         for c in candidates
     )
 

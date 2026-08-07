@@ -1,13 +1,13 @@
 ---
 name: generate-image-prompt
-version: 0.6.0
+version: 0.7.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-4.7
 model_config:
   glm-4.7:
     thinking: false
-    max_tokens: 400
+    max_tokens: 600
     temperature: 0.6
 output_format: json
 retry_policy: 1_with_feedback
@@ -47,6 +47,13 @@ WHAT TO OUTPUT
   for photo). Name only the subject and, if needed, its action or state.
 - rationale: one short English sentence — how the metaphor maps to the
   message. Logged only.
+- intended_inference: one short English sentence — what the viewer should
+  CONCLUDE after seeing the metaphor next to the slogan (first person works
+  well: "with this product I ..."). Not what they see — what they infer.
+- anti_reading: one short English sentence — the most likely WRONG reading
+  of this metaphor (what a hurried viewer could mistake it for). If the
+  anti-reading feels stronger than the intended inference, pick a
+  different metaphor before answering.
 
 WHAT NOT TO OUTPUT (owned by later stages — repeating it here is harmful)
 - No styling: no colours, no materials (metal/glass), no finish, no
@@ -89,13 +96,17 @@ slogan: {{message.slogan}}
 idea: {{message.body}}
 cta: {{message.cta}}
 hook_angle: {{message.hook_angle}}
+persona anchor it hits: {{message.anchor}}
+promised outcome: {{message.desired_outcome}}
 
 METAPHOR KIND: {{metaphor_kind}}
 
 Return ONLY valid JSON:
 {
   "metaphor": "<one short English phrase, ~5-25 words>",
-  "rationale": "<one English sentence>"
+  "rationale": "<one English sentence>",
+  "intended_inference": "<one English sentence: what the viewer concludes>",
+  "anti_reading": "<one English sentence: the most likely wrong reading>"
 }
 ```
 
@@ -103,7 +114,7 @@ Return ONLY valid JSON:
 
 ### GLM-4.7
 - thinking=false — the mapping message→metaphor is shallow, we want speed.
-- max_tokens=400 — a short metaphor + one-line rationale.
+- max_tokens=600 — a short metaphor + three one-line meta fields.
 - temperature=0.6 — enough variety that 12 messages yield 12 distinct
   metaphors, without drifting off-message.
 
@@ -116,6 +127,14 @@ Return ONLY valid JSON:
 
 ## Changelog
 
+- v0.7.0 (2026-08-07) — контракт-lite метафоры (этап 1 «Язык», синтез с
+  Bannerzila, семантика их MetaphorSpec): обязательные intended_inference
+  (целевое заключение зрителя) и anti_reading (вероятное ложное прочтение —
+  внутренний самофильтр метафоры). Вход обогащён anchor/desired_outcome из
+  оффер-контракта кандидата. Мета уходит в state.metaphor_meta (provenance,
+  будущий инверсионный судья), wire-промпт не меняется. max_tokens 400→600.
+  Вербальный якорь (их verbal_anchor) отдельным полем не нужен: метафора
+  выводится ИЗ слогана, который всегда печатается на макете.
 - v0.6.0 (2026-07-10) — metaphor-only redesign. The old skill wrote full
   50-100-word prompts; photo scenes came from a canned 8-scene pool assigned
   by banner position and the render metaphor drowned in ~150 words of

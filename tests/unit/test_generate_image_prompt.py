@@ -88,6 +88,8 @@ def _stub_agent(monkeypatch):
 _METAPHOR = ImageMetaphorOutput(
     metaphor="a self-repairing engine block that reassembles itself",
     rationale="tangible uptime metaphor",
+    intended_inference="the infrastructure fixes itself before I notice",
+    anti_reading="could look like a broken engine falling apart",
 )
 
 
@@ -163,10 +165,48 @@ async def test_soft_validator_does_not_raise_on_bad_metaphor(_stub_agent):
     bad = ImageMetaphorOutput(
         metaphor="Короткая русская метафора",
         rationale="r",
+        intended_inference="viewer concludes something",
+        anti_reading="viewer misreads something",
     )
     _stub_agent(bad)
     out = await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
     assert "image_prompt" in out
+
+
+# ── контракт-lite метафоры (2026-08-07, этап 1 «Язык», синтез с Bannerzila) ──
+# intended_inference (что зритель должен заключить) + anti_reading (вероятное
+# ложное прочтение) собираются в state.metaphor_meta — их читает provenance и
+# будущий инверсионный судья. Вербальный якорь у нас структурный: метафора
+# выводится ИЗ слогана, который всегда печатается на макете.
+
+
+@pytest.mark.asyncio
+async def test_metaphor_meta_collected_in_state(_stub_agent):
+    full = ImageMetaphorOutput(
+        metaphor="a turnstile gate wide open with a clear fast lane",
+        rationale="waiting pain made visible",
+        intended_inference="with this product I skip the queue entirely",
+        anti_reading="could be read as a closed checkpoint blocking entry",
+    )
+    _stub_agent(full)
+    out = await mod.generate_image_prompt(_good_state())  # type: ignore[arg-type]
+    meta = out["metaphor_meta"]
+    assert len(meta) == 1
+    assert meta[0]["candidate_id"] == "c1"
+    assert meta[0]["intended_inference"].startswith("with this product")
+    assert meta[0]["anti_reading"].startswith("could be read")
+
+
+@pytest.mark.asyncio
+async def test_llm_receives_offer_fields_from_ranked(_stub_agent):
+    calls = _stub_agent(_METAPHOR)
+    state = _good_state()
+    state["ranked"][0]["anchor"] = "боль: внезапные простои"
+    state["ranked"][0]["desired_outcome"] = "кластер чинит себя без дежурного"
+    await mod.generate_image_prompt(state)  # type: ignore[arg-type]
+    user_msg = calls[0]["messages"][1]["content"]
+    assert "боль: внезапные простои" in user_msg
+    assert "кластер чинит себя без дежурного" in user_msg
 
 
 def test_word_count_helper():

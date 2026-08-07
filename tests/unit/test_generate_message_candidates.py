@@ -54,6 +54,8 @@ def _batch(tag: str) -> CandidateSet:
                 body=f"body-{tag}-{i}",
                 cta="Попробовать",
                 hook_angle="rational",
+                anchor=f"боль: якорь-{tag}-{i}",
+                desired_outcome=f"результат для человека {tag}-{i}",
             )
             for i in range(12)
         ]

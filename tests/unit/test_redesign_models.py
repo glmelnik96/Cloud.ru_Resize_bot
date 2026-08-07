@@ -17,6 +17,7 @@ def _candidate(i: int) -> MessageCandidate:
     return MessageCandidate(
         id=f"c{i}", slogan=f"slogan {i}", body=f"body {i}",
         cta="Начать сейчас", hook_angle="rational",
+        anchor=f"боль: якорь {i}", desired_outcome=f"конкретный результат {i}",
     )
 
 
@@ -97,6 +98,40 @@ def test_base_message_candidate_has_no_cjk_guard():
     # parked checkpoints written before the guard must still coerce on resume
     c = MessageCandidate(slogan="без运维", body="b", cta="Начать", hook_angle="rational")
     assert c.slogan == "без运维"
+
+
+# ── контракт-lite оффера (2026-08-07, этап 1 «Язык», синтез с Bannerzila) ──
+# Семантика OfferSpec в нашем формате: anchor (их pain — но у нас якорём
+# бывает и мотивация/возражение) + desired_outcome (их benefit). Обязательны
+# при генерации (DraftCandidate — retry_with_feedback), permissive на базе —
+# parked checkpoints, записанные до полей, должны coerce на resume.
+
+
+def test_draft_candidate_requires_offer_fields():
+    from graph.state import DraftCandidate
+
+    with pytest.raises(ValidationError):
+        DraftCandidate(slogan="s", body="b", cta="Начать", hook_angle="rational")
+
+
+def test_draft_candidate_accepts_offer_fields():
+    from graph.state import DraftCandidate
+
+    c = DraftCandidate(
+        slogan="GPU без очереди",
+        body="b",
+        cta="Начать",
+        hook_angle="rational",
+        anchor="боль: очередь на on-prem GPU",
+        desired_outcome="обучение стартует через минуты, а не дни",
+    )
+    assert c.anchor.startswith("боль")
+
+
+def test_base_candidate_defaults_offer_fields_for_old_checkpoints():
+    c = MessageCandidate(slogan="s", body="b", cta="Начать", hook_angle="rational")
+    assert c.anchor == ""
+    assert c.desired_outcome == ""
 
 
 def test_explorer_prompt_declares_42_char_hard_limit():

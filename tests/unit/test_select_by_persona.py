@@ -74,6 +74,36 @@ def _patch_skill(monkeypatch, selection: SelectionSet) -> None:
     monkeypatch.setattr(mod, "run_agent", fake_run_agent)
 
 
+async def test_cards_block_shows_offer_fields_to_critic(monkeypatch):
+    """Контракт-lite (2026-08-07): критик-ЦА видит anchor и desired_outcome —
+    иначе ему нечем проверить, что обещанный результат вообще про его якорь."""
+    cands = _pool(24)
+    state = _state(cands)
+    state["candidates"][0]["anchor"] = "боль: ответы теряются в чатах"
+    state["candidates"][0]["desired_outcome"] = "ответ находится за секунды"
+
+    captured: dict = {}
+    selection = SelectionSet.model_construct(
+        selected=[
+            SelectedItem(candidate_id=f"c{i}", score=i / 2, reason=f"r{i}")
+            for i in range(1, 13)
+        ]
+    )
+    _patch_skill(monkeypatch, selection)
+
+    def capture_render(tpl, **kw):
+        captured.update(kw)
+        return "rendered"
+
+    monkeypatch.setattr(mod, "render", capture_render)
+
+    await mod.select_by_persona(state)
+
+    block = captured["candidates_block"]
+    assert "боль: ответы теряются в чатах" in block
+    assert "ответ находится за секунды" in block
+
+
 async def test_selection_sorted_best_first_and_merged(monkeypatch):
     cands = _pool(24)
     selection = SelectionSet.model_construct(

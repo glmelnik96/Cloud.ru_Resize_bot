@@ -155,6 +155,24 @@ class MessageCandidate(BaseModel):
             "fear_of_missing_out | curiosity | authority"
         ),
     )
+    # Контракт-lite оффера (2026-08-07, этап 1 «Язык», синтез с Bannerzila).
+    # Семантика их OfferSpec.pain/benefit в нашем формате: якорь у нас бывает
+    # болью, мотивацией ИЛИ возражением — поэтому anchor, а не pain. Дефолты
+    # пустые: parked checkpoints, записанные до полей, coerce'ятся на resume.
+    anchor: str = Field(
+        default="",
+        description=(
+            "Дословный якорь персоны, в который бьёт кандидат, с меткой вида "
+            "«боль: …» / «мотивация: …» / «возражение: …»"
+        ),
+    )
+    desired_outcome: str = Field(
+        default="",
+        description=(
+            "Конкретный результат для человека («что станет»), выводимый из "
+            "фактов о продукте — не обещание сверх границы достоверности"
+        ),
+    )
 
 
 class DraftCandidate(MessageCandidate):
@@ -165,9 +183,14 @@ class DraftCandidate(MessageCandidate):
     unreadable 20-22px floor. The cap lives HERE (not on MessageCandidate) so
     the LLM retry-with-feedback loop enforces it at generation, while parked
     checkpoints written before the cap still coerce fine on resume.
+
+    anchor/desired_outcome are REQUIRED here (2026-08-07): the offer contract
+    is enforced at generation via retry_with_feedback, base stays permissive.
     """
 
     slogan: str = Field(max_length=42)
+    anchor: str = Field(min_length=3)
+    desired_outcome: str = Field(min_length=10)
 
     @field_validator("slogan", "cta")
     @classmethod
@@ -272,6 +295,17 @@ class ImageMetaphorOutput(BaseModel):
 
     metaphor: str = Field(min_length=10)
     rationale: str
+    # Контракт-lite метафоры (2026-08-07, семантика их MetaphorSpec).
+    # Вербальный якорь у нас структурный: метафора выводится ИЗ слогана,
+    # который всегда печатается на макете, — отдельное поле не нужно.
+    intended_inference: str = Field(
+        min_length=10,
+        description="Что зритель должен ЗАКЛЮЧИТЬ, увидев метафору (одно EN-предложение)",
+    )
+    anti_reading: str = Field(
+        min_length=10,
+        description="Вероятное ЛОЖНОЕ прочтение метафоры (одно EN-предложение)",
+    )
 
 
 # ----- LangGraph state ------------------------------------------------------
@@ -299,6 +333,10 @@ class GraphState(TypedDict, total=False):
     # Per ranked-candidate, aligned by index with state.ranked:
     scenarios: list[str]  # render | photo for each of the 12 propositions
     image_prompts: list[str]  # one EN hero prompt per proposition
+    # Per-proposition metaphor meta (2026-08-07): candidate_id, metaphor,
+    # rationale, intended_inference, anti_reading — читается provenance
+    # (блок 4) и будущим инверсионным судьёй; на wire-промпт не влияет.
+    metaphor_meta: list[dict]
     generated_heroes: list[dict]  # GeneratedImage.model_dump() per proposition
     # ----- Render stage (M3) ------------------------------------------------
     rendered_files: list[dict]  # [{"format": "banner_300x250", "path": "/data/..."}, ...]

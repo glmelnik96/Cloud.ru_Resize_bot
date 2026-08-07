@@ -136,7 +136,7 @@ async def generate_image_prompt(state: GraphState) -> dict:
     system_msg = _extract_section(skill.body, "## System message")
     user_tpl = _extract_section(skill.body, "## User message template")
 
-    prompts = await asyncio.gather(
+    results = await asyncio.gather(
         *(
             _build_one(
                 system_msg, user_tpl, brief, persona, product, cand, style, session_id
@@ -144,14 +144,19 @@ async def generate_image_prompt(state: GraphState) -> dict:
             for cand, style in zip(candidates, styles)
         )
     )
-    prompts = list(prompts)
+    prompts = [prompt for prompt, _meta in results]
+    metaphor_meta = [meta for _prompt, meta in results]
 
     log.info(
         "generate_image_prompt_ok",
         session_id=session_id,
         n=len(prompts),
     )
-    return {"image_prompts": prompts, "image_prompt": prompts[0]}
+    return {
+        "image_prompts": prompts,
+        "image_prompt": prompts[0],
+        "metaphor_meta": metaphor_meta,
+    }
 
 
 async def _build_one(
@@ -163,7 +168,7 @@ async def _build_one(
     cand: MessageCandidate,
     style: str,
     session_id: str | None,
-) -> str:
+) -> tuple[str, dict]:
     user_msg = _render(
         user_tpl,
         **{
@@ -178,6 +183,8 @@ async def _build_one(
             "message.body": cand.body,
             "message.cta": cand.cta,
             "message.hook_angle": cand.hook_angle,
+            "message.anchor": cand.anchor or "(not stated)",
+            "message.desired_outcome": cand.desired_outcome or "(not stated)",
             "metaphor_kind": _METAPHOR_KIND[style],
         },
     )
@@ -192,7 +199,14 @@ async def _build_one(
     )
     metaphor = result.metaphor.strip()
     _soft_validate(metaphor, session_id=session_id)
-    return f"{metaphor.rstrip('.')}. {_COMPOSITION[style]}"
+    meta = {
+        "candidate_id": cand.id,
+        "metaphor": metaphor,
+        "rationale": result.rationale,
+        "intended_inference": result.intended_inference,
+        "anti_reading": result.anti_reading,
+    }
+    return f"{metaphor.rstrip('.')}. {_COMPOSITION[style]}", meta
 
 
 def _soft_validate(metaphor: str, *, session_id: str | None) -> None:

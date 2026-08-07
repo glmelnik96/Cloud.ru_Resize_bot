@@ -186,6 +186,8 @@ def _capture_users(monkeypatch) -> dict[int, str]:
         return ImageMetaphorOutput(
             metaphor=f"a tangible visual metaphor for SLOGAN{idx}",
             rationale="r",
+            intended_inference="viewer concludes the promise holds",
+            anti_reading="viewer could misread the object",
         )
 
     monkeypatch.setattr(gip, "run_agent", fake_run_agent)
