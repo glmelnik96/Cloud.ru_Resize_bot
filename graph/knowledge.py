@@ -48,6 +48,7 @@ class ProductDoc:
     aliases: tuple[str, ...]
     tagline: str
     body: str
+    version: int = 1
 
     def block(self, number: int) -> str:
         """Text of ``## Блок <number>. …`` including its heading, or ``""``."""

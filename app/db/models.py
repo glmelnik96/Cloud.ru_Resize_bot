@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -79,3 +79,29 @@ class Task(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="tasks")
+
+
+class KbProduct(Base):
+    """Библиотека знаний, слой «факты» — append-only версии карточек продуктов.
+
+    Правка = новая строка с version+1 (историю видно, откатывать легко);
+    чтение берёт максимальную версию неархивного slug. Сид — из
+    config/knowledge/*.md (version=1, updated_by="seed")."""
+
+    __tablename__ = "kb_products"
+    __table_args__ = (UniqueConstraint("slug", "version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    name: Mapped[str] = mapped_column(String(128))
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tagline: Mapped[str] = mapped_column(Text, default="")
+    block1: Mapped[str] = mapped_column(Text, default="")
+    block2: Mapped[str] = mapped_column(Text, default="")
+    block3: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+    archived: Mapped[bool] = mapped_column(default=False)
