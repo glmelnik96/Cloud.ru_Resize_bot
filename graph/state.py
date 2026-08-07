@@ -363,6 +363,7 @@ class GraphState(TypedDict, total=False):
     # candidate dict (slogan/body/cta/hook_angle/id) merged with score + reason.
     ranked: list[dict]
     text_approved: bool
+    persona_approved: bool
     # ----- Image stage (M3.3 — user-uploaded hero) --------------------------
     image_style: str  # photo | render — top-ranked scenario (HITL display)
     image_prompt: str | None  # EN prompt shown to the user (top-ranked)
