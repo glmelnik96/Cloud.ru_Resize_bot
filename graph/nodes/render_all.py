@@ -12,6 +12,7 @@ This is the terminal artifact the bot ships to TG via send_document.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import zipfile
 from datetime import datetime
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import structlog
 
+from graph.provenance import build_provenance
 from graph.state import GraphState
 
 log = structlog.get_logger(__name__)
@@ -38,9 +40,19 @@ async def render_all(state: GraphState) -> dict:
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
     zip_path = _ZIP_DIR / f"{session_id}_{ts}.zip"
 
+    # Паспорт происхождения — best-effort: его сбой не роняет сборку ZIP.
+    provenance: bytes | None = None
+    try:
+        prov = build_provenance(dict(state), rendered_files=files)
+        provenance = json.dumps(prov, ensure_ascii=False, indent=2).encode("utf-8")
+    except Exception as exc:  # noqa: BLE001 — паспорт опционален
+        log.warning(
+            "provenance_build_failed", session_id=session_id, error=str(exc)
+        )
+
     # Compression is CPU-bound; build the archive in a worker thread so
     # the event loop is not blocked.
-    await asyncio.to_thread(_build_zip_sync, zip_path, files)
+    await asyncio.to_thread(_build_zip_sync, zip_path, files, provenance)
 
     log.info(
         "render_all_ok",
@@ -52,13 +64,18 @@ async def render_all(state: GraphState) -> dict:
     return {"rendered_zip_path": str(zip_path)}
 
 
-def _build_zip_sync(zip_path: Path, files: list[dict]) -> None:
+def _build_zip_sync(
+    zip_path: Path, files: list[dict], provenance: bytes | None = None
+) -> None:
     """Write the ZIP archive. Runs in a worker thread.
 
     Alpha layer artifacts (Block 1, 2026-07-10) go under layers/ so the
     top-level of the archive — and the results-dir *.png glob that feeds the
-    web grid — stays composites-only."""
+    web grid — stays composites-only. provenance.json (блок 4, 2026-08-07) —
+    паспорт происхождения в корне архива."""
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if provenance is not None:
+            zf.writestr("provenance.json", provenance)
         for entry in files:
             src = Path(entry["path"])
             arcname = f"{entry['format']}{src.suffix}"
