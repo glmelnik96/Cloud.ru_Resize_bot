@@ -46,7 +46,12 @@ async def derive_persona(state: GraphState) -> dict:
     user_tpl = _extract_section(skill.body, "## User message template")
 
     kb_match = state.get("kb_match")
+    # Карточка могла обновиться между узлами — берём свежую версию по slug.
     doc = knowledge.get_by_slug(kb_match["slug"]) if kb_match else None
+    if kb_match and doc is None:
+        log.warning(
+            "kb_match_stale", session_id=state.get("session_id"), slug=kb_match["slug"]
+        )
     tone_block = (
         f"TONE HINTS: {brief.tone_hints}" if brief.tone_hints else ""
     )
