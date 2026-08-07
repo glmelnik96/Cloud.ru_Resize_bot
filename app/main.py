@@ -42,10 +42,13 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
 
         # Библиотека знаний: сид из vendored-файлов при первом старте + инжект
         # БД-каталога в граф (граф не импортирует app — снапшот проталкиваем сюда).
-        from app.kb.store import refresh_catalog, seed_from_files
+        try:
+            from app.kb.store import refresh_catalog, seed_from_files
 
-        await seed_from_files(Session)
-        await refresh_catalog(Session)
+            await seed_from_files(Session)
+            await refresh_catalog(Session)
+        except Exception as exc:  # noqa: BLE001
+            log.error("kb_catalog_init_failed: %s", exc)
 
         from app.tasks.events import EventBus
         from app.tasks.manager import TaskManager
