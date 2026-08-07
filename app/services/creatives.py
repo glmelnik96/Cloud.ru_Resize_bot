@@ -40,6 +40,7 @@ _NODE_LABELS: dict[str, str] = {
     "derive_persona": "Готовлю персон ЦА",
     "generate_message_candidates": "Генерирую 24 предложения",
     "select_by_persona": "ЦА отбирает 12 лучших",
+    "lint_candidates": "Проверяю формулировки на честность",
     "route_image_style": "Подбираю стиль картинки",
     "generate_image_prompt": "Пишу промпт для hero-картинки",
     "fill_templates_per_format": "Накладываю в шаблоны",

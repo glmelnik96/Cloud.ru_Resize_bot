@@ -1,0 +1,17 @@
+id: lint_inversion_judge
+skill: prompts/lint_inversion_judge.md
+# Судья ОБЯЗАН быть другого семейства, чем генератор (GLM-4.7): модель,
+# проверяющая собственный текст, систематически его оправдывает
+# (принцип инверсионного теста Bannerzila).
+model: deepseek-v4-pro
+model_config:
+  thinking: false
+  # 12 карточек на вход, 12 коротких прочтений на выход.
+  max_tokens: 3000
+  temperature: 0.3
+schema: graph.state.JudgeReadingSet
+retry_with_feedback: 1
+pre_hooks: []
+# Без бренд-хуков: судья читает чужой текст, своего не пишет. Узел fail-open —
+# упавший судья не блокирует конвейер.
+post_hooks: []

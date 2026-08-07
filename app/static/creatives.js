@@ -160,9 +160,13 @@
       const head = `<div class="cand-head"><span class="cand-rank">#${rank}</span>` +
         `<span class="cand-slogan">${escapeHtml(c.slogan || "")}</span>` +
         (score ? `<span class="cand-score">${score}</span>` : "") + `</div>`;
+      // Флажки линта (блок 3): информируют, не гейтят — решает человек.
+      const flags = (Array.isArray(c.lint_flags) && c.lint_flags.length)
+        ? `<div class="cand-flags">${c.lint_flags.map((f) => `<span class="cand-flag">${escapeHtml(f)}</span>`).join("")}</div>`
+        : "";
       return `<div class="cand-card">${head}` +
         kv("cta", c.cta) + kv("hook", c.hook_angle) +
-        kv("почему зайдёт ЦА", c.reason) + kv("идея", c.body) + `</div>`;
+        kv("почему зайдёт ЦА", c.reason) + kv("идея", c.body) + flags + `</div>`;
     }).join("");
   }
   const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";

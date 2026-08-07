@@ -168,6 +168,11 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .cand-score{margin-left:auto;font-size:11px;letter-spacing:.02em;border-radius:99px;padding:2px 9px;
   background:var(--brand-chip-bg);color:var(--brand-chip-fg);}
 
+/* флажки линта: предупреждение, не запрет — карточка остаётся выбираемой */
+.cand-flags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.cand-flag{font-size:11px;line-height:1.4;border-radius:99px;padding:2px 9px;
+  background:color-mix(in srgb, #b45309 14%, var(--surface-inset));color:#b45309;}
+
 /* ── промпт картинки (без моноширинного шрифта — канон v5) ── */
 .prompt{background:var(--surface-inset);border:0;border-radius:var(--radius-ctl);
   padding:12px 14px;white-space:pre-wrap;word-break:break-word;

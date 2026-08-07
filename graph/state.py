@@ -248,6 +248,36 @@ class SelectionSet(BaseModel):
     selected: list[SelectedItem] = Field(min_length=12, max_length=12)
 
 
+# ----- Lint (блок 3: инверсионный судья) ------------------------------------
+
+
+class JudgeReading(BaseModel):
+    """One card as read by the inversion judge (a DIFFERENT model family).
+
+    Инверсионный тест Bannerzila в нашем формате: судья видит ТОЛЬКО
+    поверхность баннера (slogan + cta), говорит от первого лица, что понял,
+    и отвечает, совпало ли это с обещанным результатом кандидата.
+    """
+
+    candidate_id: str
+    understood: str = Field(
+        description="Что я понял из баннера, одна строка от первого лица"
+    )
+    matches_offer: bool = Field(
+        description="Совпало ли понятое с обещанным результатом (desired_outcome)"
+    )
+
+
+class JudgeReadingSet(BaseModel):
+    """Wrapper for the lint judge output.
+
+    Намеренно НЕ фиксируем ровно 12: судья — советник, не гейт. Пропущенная
+    карточка просто остаётся без судейского флажка (fail-open по элементу).
+    """
+
+    readings: list[JudgeReading] = Field(default_factory=list, max_length=24)
+
+
 # ----- Image stage (M3) -----------------------------------------------------
 
 
