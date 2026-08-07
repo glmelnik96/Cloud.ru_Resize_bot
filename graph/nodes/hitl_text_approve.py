@@ -6,7 +6,11 @@ asks to regenerate the whole set, or cancels. There is no single winner and no
 per-candidate refine (App3 redesign 2026-06-21).
 
 Decision contract (the value passed to ``Command(resume=...)``):
-    {"action": "approve"}     — accept the whole set of 12, proceed
+    {"action": "approve"}                      — accept the set, ranked[0] остаётся главным
+    {"action": "approve", "winner_id": "..."}  — пометить победителя; ranked переставляется
+                                                 так, что победитель встаёт в ranked[0];
+                                                 неизвестный winner_id — fail-open (порядок
+                                                 скоринговый, warning в лог)
     {"action": "regenerate"}  — throw away the set, generate 12 fresh angles
     {"action": "cancel"}      — abort the run
     {"action": "timeout"}     — nobody came back; the service gave up waiting
@@ -47,7 +51,23 @@ async def hitl_text_approve(state: GraphState) -> dict:
     )
 
     if action == "approve":
-        return {"text_approved": True}
+        winner_id = decision.get("winner_id")
+        if winner_id:
+            idx = next(
+                (i for i, c in enumerate(ranked) if c.get("id") == winner_id), None
+            )
+            if idx is None:
+                # API валидирует раньше; здесь fail-open — скоринговый порядок.
+                log.warning(
+                    "winner_id_unknown",
+                    session_id=state.get("session_id"),
+                    winner_id=winner_id,
+                )
+            elif idx:
+                ranked = [ranked[idx], *ranked[:idx], *ranked[idx + 1 :]]
+        # Даунстрим живёт конвенцией «ranked[0] — главный»: победитель встаёт
+        # в голову списка, и метафора/рендер получают его без своих изменений.
+        return {"text_approved": True, "ranked": ranked, "winner_id": winner_id}
     if action == "regenerate":
         # drop the set so generate_message_candidates produces a fresh 12.
         return {"candidates": [], "ranked": []}

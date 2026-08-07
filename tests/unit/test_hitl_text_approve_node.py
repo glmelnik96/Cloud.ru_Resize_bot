@@ -31,8 +31,12 @@ def _state():
 
 @pytest.mark.asyncio
 async def test_approve_marks_the_set_accepted(monkeypatch):
+    # approve теперь возвращает ranked и winner_id=None вдобавок к text_approved.
     _patch_interrupt(monkeypatch, {"action": "approve"})
-    assert await mod.hitl_text_approve(_state()) == {"text_approved": True}
+    out = await mod.hitl_text_approve(_state())
+    assert out["text_approved"] is True
+    assert out["ranked"] == [{"slogan": "a"}, {"slogan": "b"}]
+    assert out.get("winner_id") is None
 
 
 @pytest.mark.asyncio
@@ -56,3 +60,35 @@ async def test_timeout_marks_the_abandoned_session(monkeypatch):
     out = await mod.hitl_text_approve(_state())
     assert out["cancelled"] is True
     assert out["error"] == "text_approve_timeout"
+
+
+# ----- Task 7: winner_id — победитель выбирается человеком ----------------
+
+
+@pytest.mark.asyncio
+async def test_approve_with_winner_reorders_ranked(monkeypatch):
+    ranked = [{"id": "a", "slogan": "A"}, {"id": "b", "slogan": "B"}, {"id": "c", "slogan": "C"}]
+    _patch_interrupt(monkeypatch, {"action": "approve", "winner_id": "b"})
+    out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
+    assert [c["id"] for c in out["ranked"]] == ["b", "a", "c"]
+    assert out["winner_id"] == "b"
+    assert out["text_approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_approve_with_unknown_winner_is_fail_open(monkeypatch):
+    """API валидирует раньше; узел не роняет граф, порядок остаётся скоринговым."""
+    ranked = [{"id": "a"}, {"id": "b"}]
+    _patch_interrupt(monkeypatch, {"action": "approve", "winner_id": "zzz"})
+    out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
+    assert [c["id"] for c in out["ranked"]] == ["a", "b"]
+    assert out["text_approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_approve_without_winner_keeps_order(monkeypatch):
+    ranked = [{"id": "a"}, {"id": "b"}]
+    _patch_interrupt(monkeypatch, {"action": "approve"})
+    out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
+    assert out.get("winner_id") is None
+    assert [c["id"] for c in out["ranked"]] == ["a", "b"]
