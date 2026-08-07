@@ -384,3 +384,7 @@ class GraphState(TypedDict, total=False):
     rendered_zip_path: str | None
     cancelled: bool
     error: str | None
+    # Петля метафоры: активный комментарий (сбрасывается после перегенерации)
+    # и вся история комментариев для provenance.
+    metaphor_comment: str | None
+    metaphor_comments: list[str]

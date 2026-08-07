@@ -113,6 +113,12 @@ async def generate_image_prompt(state: GraphState) -> dict:
     personas = [_coerce(p, Persona, "persona") for p in personas_raw]
     persona = personas[0]
 
+    # Петля метафоры: если маркетолог оставил комментарий, перегенерируем
+    # ТОЛЬКО образ победителя (1 LLM-вызов вместо N).
+    comment = (state.get("metaphor_comment") or "").strip()
+    if comment:
+        return await _regenerate_winner(state, brief, persona, comment)
+
     candidates = ranked_candidates(state)
     product = get_product(state)
     session_id = state.get("session_id")
@@ -159,6 +165,57 @@ async def generate_image_prompt(state: GraphState) -> dict:
     }
 
 
+async def _regenerate_winner(
+    state: GraphState, brief: AdBrief, persona: Persona, comment: str
+) -> dict:
+    """Петля метафоры: перегенерировать ТОЛЬКО победителя (ranked[0]) с учётом
+    русского комментария маркетолога. 1 LLM-вызов вместо N; остальные
+    прописки и метаданные не трогаем."""
+    candidates = ranked_candidates(state)
+    product = get_product(state)
+    session_id = state.get("session_id")
+
+    scenarios = state.get("scenarios") or []
+    style_raw = scenarios[0] if scenarios else "photo"
+    style = style_raw if style_raw in _VALID_STYLES else "photo"
+
+    prev_meta = (state.get("metaphor_meta") or [{}])[0]
+    skill = load_skill(_SKILL_NAME)
+    system_msg = _extract_section(skill.body, "## System message")
+    user_tpl = _extract_section(skill.body, "## User message template")
+
+    prompt, meta = await _build_one(
+        system_msg,
+        user_tpl,
+        brief,
+        persona,
+        product,
+        candidates[0],
+        style,
+        session_id,
+        feedback=(prev_meta.get("metaphor", ""), comment),
+    )
+
+    prompts = list(state.get("image_prompts") or [])
+    metas = list(state.get("metaphor_meta") or [])
+    if prompts:
+        prompts[0] = prompt
+    else:
+        prompts = [prompt]
+    if metas:
+        metas[0] = meta
+    else:
+        metas = [meta]
+
+    log.info("metaphor_regenerated", session_id=session_id)
+    return {
+        "image_prompts": prompts,
+        "image_prompt": prompt,
+        "metaphor_meta": metas,
+        "metaphor_comment": None,
+    }
+
+
 async def _build_one(
     system_msg: str,
     user_tpl: str,
@@ -168,6 +225,7 @@ async def _build_one(
     cand: MessageCandidate,
     style: str,
     session_id: str | None,
+    feedback: tuple[str, str] | None = None,
 ) -> tuple[str, dict]:
     user_msg = _render(
         user_tpl,
@@ -188,6 +246,14 @@ async def _build_one(
             "metaphor_kind": _METAPHOR_KIND[style],
         },
     )
+    if feedback:
+        prev_metaphor, comment = feedback
+        user_msg += (
+            "\n\nFEEDBACK FROM THE MARKETER (Russian) about the previous "
+            f"metaphor — address it directly:\nPrevious metaphor: {prev_metaphor}\n"
+            f"Comment: {comment}\n"
+            "Propose a DIFFERENT metaphor honouring this feedback."
+        )
     result = await run_agent(
         _AGENT_ID,
         messages=[

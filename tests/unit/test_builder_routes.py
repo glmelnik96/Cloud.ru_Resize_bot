@@ -44,6 +44,19 @@ def test_graph_edge_derive_to_persona_hitl():
     assert ("derive_persona", "generate_message_candidates") not in edges
 
 
+def test_route_after_image_hitl_metaphor_loop():
+    """metaphor_comment → generate_image_prompt; без него → fill_templates_per_format."""
+    from langgraph.graph import END
+
+    assert (
+        builder._route_after_image_hitl({"metaphor_comment": "другой образ"})
+        == "generate_image_prompt"
+    )
+    assert builder._route_after_image_hitl({}) == "fill_templates_per_format"
+    # cancel по-прежнему ведёт в END
+    assert builder._route_after_image_hitl({"cancelled": True}) == END
+
+
 def test_persona_hitl_conditional_branches():
     """hitl_persona_approve должна иметь conditional-рёбра в три узла:
     generate_message_candidates, derive_persona и END (__end__)."""

@@ -12,12 +12,15 @@ Decision contract (the value passed to ``Command(resume=...)``):
     {"action": "upload", "local_path": str, "style": str, "prompt": str}
     {"action": "cancel"}      # user typed /cancel or pressed inline cancel
     {"action": "timeout"}     # 24h elapsed without upload
+    {"action": "metaphor", "comment": str}
+        # маркетолог оставил комментарий о метафоре — граф зациклится
+        # на generate_image_prompt и перегенерирует ТОЛЬКО образ победителя
 
-There is no revision loop (regenerate/refine) here. If the user wants a
-different prompt or image, they cancel and run /new — much simpler than
-threading per-image revise rounds through the graph for the user-upload
-model. Re-uploads BEFORE the first valid upload are handled by the PTB
-layer (latest-wins) before this node ever resumes.
+There is no revision loop (regenerate/refine) here for direct uploads.
+If the user wants a different prompt or image, they cancel and run /new
+— or leave a metaphor comment to re-spin only the winner's image prompt
+(1 LLM call instead of N). Re-uploads BEFORE the first valid upload are
+handled by the PTB layer (latest-wins) before this node ever resumes.
 """
 
 from __future__ import annotations
@@ -60,6 +63,17 @@ async def hitl_image_upload(state: GraphState) -> dict:
         session_id=state.get("session_id"),
         action=action,
     )
+
+    if action == "metaphor":
+        comment = (decision.get("comment") or "").strip()
+        if not comment:
+            log.warning(
+                "metaphor_comment_empty",
+                session_id=state.get("session_id"),
+            )
+            return {"metaphor_comment": None}
+        history = [*(state.get("metaphor_comments") or []), comment]
+        return {"metaphor_comment": comment, "metaphor_comments": history}
 
     if action == "upload":
         # Generation path: a list of heroes (one per proposition) was produced

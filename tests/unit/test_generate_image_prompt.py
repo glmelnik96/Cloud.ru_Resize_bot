@@ -220,3 +220,62 @@ def test_soft_validate_does_not_raise():
     mod._soft_validate("", session_id=None)
     mod._soft_validate("a b c", session_id=None)
     mod._soft_validate("Тест" * 50, session_id="s")
+
+
+# ── Петля метафоры (Task 8) ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_metaphor_comment_regenerates_only_winner(_stub_agent):
+    """metaphor_comment -> перегенерация ТОЛЬКО ranked[0]; остальные не трогаем."""
+    calls = _stub_agent(_METAPHOR)
+
+    # Базовое состояние с двумя кандидатами
+    state = _good_state(
+        ranked=[
+            {
+                "id": "c1",
+                "slogan": "Инфра без сюрпризов",
+                "body": "Бьём в боль простоев: кластер сам чинит себя.",
+                "cta": "Подробнее",
+                "hook_angle": "rational",
+                "score": 9.0,
+                "reason": "топ",
+            },
+            {
+                "id": "c2",
+                "slogan": "Второй слоган",
+                "body": "Тело второго.",
+                "cta": "Перейти",
+                "hook_angle": "emotional",
+                "score": 7.0,
+                "reason": "второй",
+            },
+        ],
+        scenarios=["render", "photo"],
+    )
+    state["image_prompts"] = ["old0", "old1"]
+    state["image_prompt"] = "old0"
+    state["metaphor_meta"] = [{"metaphor": "old-m0"}, {"metaphor": "old-m1"}]
+    state["metaphor_comment"] = "покажи очередь, которая исчезает"
+
+    out = await mod.generate_image_prompt(state)  # type: ignore[arg-type]
+
+    # Ровно один LLM-вызов — только победитель (index 0)
+    assert len(calls) == 1
+
+    # Только первый промпт заменён
+    assert out["image_prompts"][0] != "old0"
+    assert out["image_prompts"][1:] == ["old1"]
+    assert out["image_prompt"] == out["image_prompts"][0]
+
+    # Мета только для победителя заменена; второй кандидат нетронут
+    assert out["metaphor_meta"][1] == {"metaphor": "old-m1"}
+
+    # metaphor_comment сброшен
+    assert out["metaphor_comment"] is None
+
+    # Комментарий и прежняя метафора дошли до модели
+    user_msg = calls[0]["messages"][1]["content"]
+    assert "покажи очередь, которая исчезает" in user_msg
+    assert "old-m0" in user_msg
