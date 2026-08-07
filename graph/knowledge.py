@@ -72,8 +72,11 @@ class ProductDoc:
 
 
 @lru_cache(maxsize=1)
-def load_catalog() -> tuple[ProductDoc, ...]:
-    """All KB documents, longest alias first so lookup prefers exact names."""
+def _load_file_catalog() -> tuple[ProductDoc, ...]:
+    """All KB documents from vendored files, longest alias first.
+
+    Кэшируется навсегда — файлы меняются только при сборке нового релиза.
+    Публичный доступ — через load_catalog(), которая может вернуть override."""
     if not _INDEX_FILE.exists():
         log.warning("knowledge_index_missing", path=str(_INDEX_FILE))
         return ()
@@ -94,6 +97,32 @@ def load_catalog() -> tuple[ProductDoc, ...]:
             )
         )
     return tuple(docs)
+
+
+# App-layer injection point — set by app/kb/store.py after DB read.
+# None означает «читать из файлов» (штатный режим до первого инжекта).
+_catalog_override: tuple[ProductDoc, ...] | None = None
+
+
+def set_catalog(docs: tuple[ProductDoc, ...] | None) -> None:
+    """App-слой инжектит БД-каталог (None -> обратно к vendored-файлам).
+
+    Инвалидация кэша — на стороне инжектора: после каждой правки карточки
+    app просто вызывает set_catalog со свежим снапшотом."""
+    global _catalog_override
+    _catalog_override = docs
+
+
+def load_catalog() -> tuple[ProductDoc, ...]:
+    """Актуальный каталог: DB-override если задан, иначе vendored-файлы."""
+    if _catalog_override is not None:
+        return _catalog_override
+    return _load_file_catalog()
+
+
+def get_by_slug(slug: str) -> ProductDoc | None:
+    """Карточка по slug — для явного выбора продукта в брифе."""
+    return next((d for d in load_catalog() if d.slug == slug), None)
 
 
 def find_product(*texts: str | None) -> ProductDoc | None:

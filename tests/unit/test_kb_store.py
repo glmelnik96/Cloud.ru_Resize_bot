@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from app.db import models
 from app.db.database import init_db, make_engine, make_sessionmaker
-from app.kb.store import load_product_docs, seed_from_files
-from graph.knowledge import load_catalog as _load_file_catalog
+from app.kb.store import load_product_docs, refresh_catalog, seed_from_files
+from graph.knowledge import _load_file_catalog
 
 
 @pytest.fixture
@@ -43,6 +43,18 @@ async def test_load_docs_equivalent_to_file_catalog(Session):
         for n in (1, 2, 3):
             assert dd.block(n) == fd.block(n)
         assert dd.version == 1
+
+
+async def test_refresh_catalog_injects_db_snapshot(Session):
+    from graph import knowledge
+
+    await seed_from_files(Session)
+    try:
+        n = await refresh_catalog(Session)
+        assert n > 0
+        assert knowledge.load_catalog() == await load_product_docs(Session)
+    finally:
+        knowledge.set_catalog(None)
 
 
 async def test_load_docs_takes_latest_version_and_skips_archived(Session):

@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 
 from app.db import models
-from graph.knowledge import ProductDoc, load_catalog
+from graph.knowledge import ProductDoc, _load_file_catalog
 
 
 async def seed_from_files(sessionmaker) -> int:
@@ -18,7 +18,7 @@ async def seed_from_files(sessionmaker) -> int:
         n = (await s.execute(select(func.count(models.KbProduct.id)))).scalar_one()
         if n:
             return 0
-        docs = load_catalog()
+        docs = _load_file_catalog()
         for doc in docs:
             s.add(
                 models.KbProduct(
@@ -57,3 +57,12 @@ async def load_product_docs(sessionmaker) -> tuple[ProductDoc, ...]:
         for r in sorted(latest.values(), key=lambda r: r.slug)
         if not r.archived
     )
+
+
+async def refresh_catalog(sessionmaker) -> int:
+    """Перечитать kb_products и инжектнуть снапшот в граф. Возвращает размер."""
+    from graph import knowledge
+
+    docs = await load_product_docs(sessionmaker)
+    knowledge.set_catalog(docs)
+    return len(docs)
