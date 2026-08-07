@@ -33,6 +33,7 @@ import structlog
 
 from graph import knowledge
 from graph.agent_runner import run_agent
+from graph.knowledge import ProductDoc
 from graph.prompts import extract_section, load_skill, render
 from graph.state import AdBrief, GraphState, ProductBrief
 from infra.urlfetch import UrlFetchError, fetch_page_text
@@ -45,7 +46,7 @@ _SKILL_NAME = "understand_product"
 _NONE = "(не указано)"
 
 
-def _resolve_kb(brief: AdBrief, *, session_id: str | None) -> object:
+def _resolve_kb(brief: AdBrief, *, session_id: str | None) -> ProductDoc | None:
     """Выбор продукта: явный slug из брифа > alias-автодетект; 'none' — без KB."""
     if brief.product_slug == "none":
         return None
