@@ -63,7 +63,8 @@ async def hitl_text_approve(state: GraphState) -> dict:
                     session_id=state.get("session_id"),
                     winner_id=winner_id,
                 )
-            elif idx:
+                winner_id = None
+            elif idx > 0:
                 ranked = [ranked[idx], *ranked[:idx], *ranked[idx + 1 :]]
         # Даунстрим живёт конвенцией «ranked[0] — главный»: победитель встаёт
         # в голову списка, и метафора/рендер получают его без своих изменений.

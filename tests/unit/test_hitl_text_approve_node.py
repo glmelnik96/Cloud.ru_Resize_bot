@@ -83,6 +83,7 @@ async def test_approve_with_unknown_winner_is_fail_open(monkeypatch):
     out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
     assert [c["id"] for c in out["ranked"]] == ["a", "b"]
     assert out["text_approved"] is True
+    assert out.get("winner_id") is None
 
 
 @pytest.mark.asyncio
@@ -92,3 +93,14 @@ async def test_approve_without_winner_keeps_order(monkeypatch):
     out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
     assert out.get("winner_id") is None
     assert [c["id"] for c in out["ranked"]] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_approve_with_winner_already_first_keeps_order(monkeypatch):
+    """Winner already at index 0 — order unchanged, winner_id preserved."""
+    ranked = [{"id": "a", "slogan": "A"}, {"id": "b", "slogan": "B"}]
+    _patch_interrupt(monkeypatch, {"action": "approve", "winner_id": "a"})
+    out = await mod.hitl_text_approve({"session_id": "s", "ranked": ranked})
+    assert [c["id"] for c in out["ranked"]] == ["a", "b"]
+    assert out["winner_id"] == "a"
+    assert out["text_approved"] is True
