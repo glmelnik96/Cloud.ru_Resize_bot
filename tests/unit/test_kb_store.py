@@ -7,7 +7,17 @@ from sqlalchemy import select
 
 from app.db import models
 from app.db.database import init_db, make_engine, make_sessionmaker
-from app.kb.store import load_product_docs, refresh_catalog, seed_from_files
+from app.kb.store import (
+    KbConflict,
+    KbNotFound,
+    create_product,
+    history,
+    latest_rows,
+    load_product_docs,
+    refresh_catalog,
+    seed_from_files,
+    update_product,
+)
 from graph.knowledge import _load_file_catalog
 
 
@@ -90,8 +100,6 @@ async def test_load_docs_takes_latest_version_and_skips_archived(Session):
 
 
 async def test_latest_rows_hides_archived_by_default(Session):
-    from app.kb.store import latest_rows, update_product
-
     await seed_from_files(Session)
     rows = await latest_rows(Session)
     victim = rows[0].slug
@@ -105,8 +113,6 @@ async def test_latest_rows_hides_archived_by_default(Session):
 
 
 async def test_update_product_appends_version_and_keeps_untouched_fields(Session):
-    from app.kb.store import latest_rows, update_product
-
     await seed_from_files(Session)
     row = (await latest_rows(Session))[0]
     new_version = await update_product(
@@ -124,8 +130,6 @@ async def test_update_product_appends_version_and_keeps_untouched_fields(Session
 
 
 async def test_update_product_unknown_slug_raises(Session):
-    from app.kb.store import KbNotFound, update_product
-
     await seed_from_files(Session)
     with pytest.raises(KbNotFound):
         await update_product(
@@ -134,8 +138,6 @@ async def test_update_product_unknown_slug_raises(Session):
 
 
 async def test_create_product_starts_at_version_1_and_rejects_duplicate(Session):
-    from app.kb.store import KbConflict, create_product, latest_rows
-
     await seed_from_files(Session)
     v = await create_product(
         Session,
@@ -154,8 +156,6 @@ async def test_create_product_starts_at_version_1_and_rejects_duplicate(Session)
 
 
 async def test_history_is_newest_first(Session):
-    from app.kb.store import history, latest_rows, update_product
-
     await seed_from_files(Session)
     slug = (await latest_rows(Session))[0].slug
     await update_product(Session, slug=slug, fields={"tagline": "v2"}, updated_by="a@b")

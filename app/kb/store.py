@@ -105,12 +105,16 @@ async def update_product(sessionmaker, *, slug: str, fields: dict, updated_by: s
     """Правка = строка version+1: непереданные поля переносятся из последней
     версии. Возвращает номер новой версии. KbNotFound, если slug неизвестен."""
     async with sessionmaker() as s:
-        rows = (
-            await s.execute(select(models.KbProduct).where(models.KbProduct.slug == slug))
-        ).scalars().all()
-        if not rows:
+        prev = (
+            await s.execute(
+                select(models.KbProduct)
+                .where(models.KbProduct.slug == slug)
+                .order_by(models.KbProduct.version.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if prev is None:
             raise KbNotFound(slug)
-        prev = max(rows, key=lambda r: r.version)
         data = {k: getattr(prev, k) for k in _EDITABLE}
         data["aliases"] = list(prev.aliases or [])
         data.update({k: v for k, v in fields.items() if k in _EDITABLE and v is not None})
