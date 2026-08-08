@@ -15,6 +15,7 @@ from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db import models
+from app.kb.store import latest_rows
 from app.services.creatives import _PARKED_STATUSES, CapacityError, DecisionConflict
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -39,7 +40,10 @@ def _task_images(t: models.Task, results_dir: Path | None) -> list[str]:
     return [f"/results/{t.task_uid}/{p.name}" for p in sorted(task_dir.glob("*.png"))]
 
 
-_BRIEF_KEYS = ("product", "audience", "emotion", "notes", "source_url")
+_BRIEF_KEYS = ("product", "audience", "emotion", "notes", "source_url", "product_slug")
+
+# Служебные значения product_slug, которые не обязаны существовать в каталоге.
+_SLUG_SENTINELS = ("auto", "none")
 
 
 def _task_brief(t: models.Task) -> dict[str, str]:
@@ -91,6 +95,11 @@ async def create_task(body: CreateTaskIn, request: Request):
     service = getattr(request.app.state, "creatives", None)
     if service is None:
         raise HTTPException(503, "service unavailable (graph not initialised)")
+    slug = body.product_slug or "auto"
+    if slug not in _SLUG_SENTINELS:
+        rows = await latest_rows(request.app.state.sessionmaker)
+        if slug not in {r.slug for r in rows}:
+            raise HTTPException(422, f"unknown product_slug: {slug}")
     try:
         task_uid = await service.create(str(user.id), body.model_dump())
     except CapacityError as exc:

@@ -37,6 +37,7 @@
     const emotion = $("emotion").value.trim();
     const notes = $("notes").value.trim();
     const source_url = $("sourceUrl").value.trim();
+    const product_slug = $("productSlug").value || "auto";
     if (!product || !audience || !emotion) {
       $("briefStatus").textContent = "Заполни продукт, аудиторию и эмоцию.";
       return;
@@ -47,7 +48,7 @@
       const r = await fetch(`${P}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, audience, emotion, notes, source_url }),
+        body: JSON.stringify({ product, audience, emotion, notes, source_url, product_slug }),
       });
       if (!r.ok) throw new Error(errText(r.status));
       const data = await r.json();
@@ -65,6 +66,23 @@
       $("startBtn").disabled = false;
     }
   });
+
+  // ── библиотека знаний: карточки в селект брифа ──────────
+  // Сбой не должен ломать бриф — остаются "auto"/"none".
+  async function loadProducts() {
+    try {
+      const r = await fetch(`${P}/api/kb/products`);
+      if (!r.ok) return;
+      const items = await r.json();
+      const sel = $("productSlug");
+      items.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.slug;
+        o.textContent = p.tagline ? `${p.name} — ${p.tagline}` : p.name;
+        sel.appendChild(o);
+      });
+    } catch (_) {}
+  }
 
   // ── SSE ────────────────────────────────────────────────
   // A dropped connection (gateway restart, wifi blip) also fires an "error"
@@ -508,4 +526,5 @@
 
   rehydrate();
   loadRecentTasks();
+  loadProducts();
 })();

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260805v1">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260808v1">
 </head>
 <body>
   <header class="topbar">
@@ -33,6 +33,12 @@
     <!-- 1. brief -->
     <section class="panel" id="briefPanel">
       <h2>01 · Бриф</h2>
+      <label for="productSlug">Карточка из библиотеки знаний</label>
+      <select id="productSlug">
+        <option value="auto">Определить автоматически</option>
+        <option value="none">Не использовать</option>
+      </select>
+      <p class="page-sub">Факты о продукте, на которые пайплайн опирается и за которые не выходит. Автоопределение ищет продукт по тексту брифа.</p>
       <label for="product">Что рекламируем</label>
       <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
       <label for="audience">Целевая аудитория</label>
@@ -120,6 +126,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260805v1"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260808v1"></script>
 </body>
 </html>

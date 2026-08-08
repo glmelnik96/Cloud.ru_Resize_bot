@@ -30,6 +30,9 @@ class CreateTaskIn(BaseModel):
     emotion: str = Field(min_length=1)
     notes: str = Field(default="", max_length=4000)
     source_url: str = Field(default="", max_length=2000)
+    # Карточка библиотеки знаний: "auto" — найти по тексту брифа (как было),
+    # "none" — не подмешивать карточку вовсе, иначе конкретный slug.
+    product_slug: str = Field(default="auto", max_length=64)
 
 
 class TaskOut(BaseModel):

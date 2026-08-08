@@ -426,3 +426,58 @@ def test_decision_image_generate_501_when_no_backend(tmp_path, monkeypatch):
         _seed_task(db, "ig", "awaiting_image", me["id"])
         r = c.post("/api/tasks/ig/decision/image", data={"action": "generate"}, headers=_HDR)
         assert r.status_code == 501
+
+
+def test_create_passes_product_slug_to_service(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        class _Stub:
+            async def create(self, user_id, fields):
+                self.seen = fields
+                return "deadbeef0002"
+
+        stub = _Stub()
+        app.state.creatives = stub
+        slug = c.get("/api/kb/products", headers=_HDR).json()[0]["slug"]
+        r = c.post(
+            "/api/tasks",
+            json={"product": "p", "audience": "a", "emotion": "e", "product_slug": slug},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen["product_slug"] == slug
+
+
+def test_create_rejects_unknown_product_slug(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        class _Stub:
+            async def create(self, user_id, fields):
+                raise AssertionError("сервис не должен вызываться при неизвестном slug")
+
+        app.state.creatives = _Stub()
+        r = c.post(
+            "/api/tasks",
+            json={"product": "p", "audience": "a", "emotion": "e", "product_slug": "nope"},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
+
+
+def test_create_defaults_product_slug_to_auto(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        class _Stub:
+            async def create(self, user_id, fields):
+                self.seen = fields
+                return "deadbeef0003"
+
+        stub = _Stub()
+        app.state.creatives = stub
+        r = c.post(
+            "/api/tasks",
+            json={"product": "p", "audience": "a", "emotion": "e"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen["product_slug"] == "auto"
