@@ -9,7 +9,7 @@
 
   // Канон v4: empty-state в правой колонке виден только пока там нет контента
   // (прогресс/HITL/результаты/история). Пересчитывается на каждом show/hide.
-  const OUTPUT_PANELS = ["progressPanel", "textPanel", "imagePanel", "resultsPanel", "tasksPanel"];
+  const OUTPUT_PANELS = ["progressPanel", "personaPanel", "textPanel", "imagePanel", "resultsPanel", "tasksPanel"];
   function updateEmpty() {
     const empty = $("emptyState");
     if (!empty) return;
@@ -150,7 +150,12 @@
   // decision panel into view.
   function onAwaiting(d) {
     hide($("progressPanel"));
-    if (d.phase === "text_approve") {
+    if (d.phase === "persona_approve") {
+      renderPersona(d.persona || {}, d.kb_match);
+      setBusy($("personaPanel"), false);
+      hide($("textPanel")); hide($("imagePanel")); show($("personaPanel"));
+      focusPanel($("personaPanel"));
+    } else if (d.phase === "text_approve") {
       renderCandidates(d.candidates || []);
       setBusy($("textPanel"), false);
       hide($("imagePanel")); show($("textPanel"));
@@ -189,7 +194,62 @@
   }
   const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";
 
-  function hideHitl() { hide($("textPanel")); hide($("imagePanel")); }
+  // Персона: списки якорей редактируются как многострочный текст — одна
+  // строка = один якорь. Это ровно та форма, в которой их читает промпт.
+  const linesOf = (v) => (Array.isArray(v) ? v.join("\n") : "");
+  const listOf = (id) => $(id).value.split("\n").map((s) => s.trim()).filter(Boolean);
+
+  function renderPersona(p, kb) {
+    $("personaSegment").value = p.segment || "";
+    $("personaAge").value = p.age_range || "";
+    $("personaPains").value = linesOf(p.pain_points);
+    $("personaMotivations").value = linesOf(p.motivations);
+    $("personaObjections").value = linesOf(p.objections);
+    $("personaStyle").value = p.communication_style || "";
+    const badge = $("personaKb");
+    badge.textContent = kb && kb.slug
+      ? `Карточка знаний: ${kb.name} (версия ${kb.version})`
+      : "Карточка знаний не подобрана — тексты опираются только на бриф.";
+    badge.classList.toggle("kb-badge--none", !(kb && kb.slug));
+  }
+
+  document.querySelectorAll("#personaPanel [data-pact]").forEach((btn) => {
+    btn.addEventListener("click", () => sendPersona(btn.dataset.pact));
+  });
+
+  async function sendPersona(action) {
+    if (action === "cancel" && !window.confirm("Отменить задачу? Прогресс будет потерян.")) return;
+    const pains = listOf("personaPains");
+    const motivations = listOf("personaMotivations");
+    if (action === "approve" && (!pains.length || !motivations.length)) {
+      $("personaStatus").innerHTML = '<span class="err">Нужна хотя бы одна боль и одна мотивация — из них собираются тексты.</span>';
+      return;
+    }
+    const body = { action };
+    if (action === "approve") {
+      body.persona = {
+        segment: $("personaSegment").value.trim(),
+        age_range: $("personaAge").value.trim(),
+        pain_points: pains,
+        motivations: motivations,
+        objections: listOf("personaObjections"),
+        communication_style: $("personaStyle").value.trim(),
+      };
+    }
+    const panel = $("personaPanel");
+    $("personaStatus").textContent = "";
+    setBusy(panel, true);
+    const r = await post(`${P}/api/tasks/${taskUid}/decision/persona`, body);
+    if (r && r.ok) {
+      setBusy(panel, false);
+      hideHitl(); setStep("Пишу тексты…");
+      return;
+    }
+    setBusy(panel, false);
+    $("personaStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
+  }
+
+  function hideHitl() { hide($("personaPanel")); hide($("textPanel")); hide($("imagePanel")); }
 
   // Double-click protection: freeze every control in a HITL panel while its
   // request is in flight; unfreeze if the request fails (panel stays visible).

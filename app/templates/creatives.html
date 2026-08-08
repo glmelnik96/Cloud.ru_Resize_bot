@@ -60,7 +60,7 @@
 
     <!-- 4. image HITL (управление: генерация/загрузка hero) -->
     <section class="panel hidden" id="imagePanel">
-      <h2>03 · Hero-картинки</h2>
+      <h2>04 · Hero-картинки</h2>
       <p class="page-sub">12 hero-картинок (по одной на предложение, сценарий render/photo выбран под каждое). Можно сгенерировать на сервере все сразу или загрузить свою одну картинку. Ниже — пример промпта первого предложения:</p>
       <pre class="prompt" id="imagePrompt"></pre>
       <div class="btn-row">
@@ -81,9 +81,10 @@
       <p>Раздел собирает рекламные баннеры под конкретную аудиторию из короткого брифа: что рекламируете, на кого и какую эмоцию хотите вызвать. Готовые баннеры можно скачать по одному или ZIP-архивом.</p>
       <ul>
         <li><b>01 · Бриф</b> — продукт, аудитория, эмоция/образ; плюс необязательные свободное поле и ссылка на страницу продукта, которую пайплайн прочитает сам.</li>
-        <li><b>02 · Тексты</b> — маркетолог пишет 24 черновика, персона ЦА отбирает из них 12 лучших от своего лица; вы просматриваете и принимаете.</li>
-        <li><b>03 · Hero</b> — под каждое предложение генерируется своя картинка (render или photo — выбирается автоматически), либо вы загружаете одну свою.</li>
-        <li><b>04 · Баннеры</b> — 12 готовых 300×600, текст, CTA и логотип уже наложены композером.</li>
+        <li><b>02 · Кому пишем</b> — пайплайн выводит персону аудитории; вы правите боли, мотивации и возражения, из которых потом собираются тексты.</li>
+        <li><b>03 · Тексты</b> — маркетолог пишет 24 черновика, персона ЦА отбирает из них 12 лучших от своего лица; вы выбираете, какой текст ведёт.</li>
+        <li><b>04 · Hero</b> — под каждое предложение генерируется своя картинка (render или photo — выбирается автоматически), либо вы загружаете одну свою.</li>
+        <li><b>05 · Баннеры</b> — 12 готовых 300×600, текст, CTA и логотип уже наложены композером.</li>
       </ul>
     </div>
 
@@ -94,9 +95,34 @@
       <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
     </section>
 
+    <!-- 2.5 persona HITL -->
+    <section class="panel hidden" id="personaPanel">
+      <h2>02 · Кому пишем</h2>
+      <p class="page-sub">Так пайплайн понял вашу аудиторию. Боли, мотивации и возражения — это якоря, из которых собираются все тексты: правьте прямо здесь, каждая строка с новой строки.</p>
+      <div class="kb-badge" id="personaKb"></div>
+      <label for="personaSegment">Сегмент</label>
+      <input type="text" id="personaSegment">
+      <label for="personaAge">Возраст</label>
+      <input type="text" id="personaAge">
+      <label for="personaPains">Боли</label>
+      <textarea id="personaPains"></textarea>
+      <label for="personaMotivations">Мотивации</label>
+      <textarea id="personaMotivations"></textarea>
+      <label for="personaObjections">Возражения</label>
+      <textarea id="personaObjections"></textarea>
+      <label for="personaStyle">Как с ними говорить</label>
+      <textarea id="personaStyle"></textarea>
+      <div class="btn-row">
+        <button class="btn btn--accent" data-pact="approve">Продолжить</button>
+        <button class="btn" data-pact="regenerate">Вывести заново</button>
+        <button class="btn btn--danger" data-pact="cancel">Отменить</button>
+      </div>
+      <div class="status" id="personaStatus"></div>
+    </section>
+
     <!-- 3. text HITL -->
     <section class="panel hidden" id="textPanel">
-      <h2>02 · Тексты — 12 предложений под аудиторию</h2>
+      <h2>03 · Тексты — 12 предложений под аудиторию</h2>
       <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
       <div id="candidates" class="candidates"></div>
       <div class="btn-row">
@@ -109,7 +135,7 @@
 
     <!-- 5. results -->
     <section class="panel hidden" id="resultsPanel">
-      <h2>04 · Баннеры</h2>
+      <h2>05 · Баннеры</h2>
       <div id="resultMsg"></div>
       <div class="results" id="results"></div>
     </section>

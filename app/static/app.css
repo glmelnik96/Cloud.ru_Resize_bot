@@ -270,3 +270,8 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .dl{display:inline-block;text-decoration:none;background:var(--accent);color:var(--on-accent);
   padding:10px 20px;border-radius:99px;font-weight:600;font-size:14px;transition:background .15s;}
 .dl:hover{background:var(--accent-2);}
+
+/* Плашка карточки знаний на экране персоны */
+.kb-badge { margin: 8px 0 16px; padding: 8px 12px; border-radius: 8px;
+  background: var(--surface-2, #f2f4f7); font-size: 13px; }
+.kb-badge--none { opacity: .7; }
