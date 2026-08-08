@@ -91,14 +91,16 @@ class PersonaDecisionIn(BaseModel):
 
 
 class TextDecisionIn(BaseModel):
-    """Resume the text-approve interrupt (HITL pause #1).
+    """Resume остановки «Выбор текстов».
 
-    The user reviews the SET of 12 ranked propositions and either accepts the
-    whole set, regenerates a fresh 12, or cancels. There is no per-candidate
-    refine in the App3 redesign (2026-06-21).
+    Человек смотрит 12 предложений и либо принимает набор, либо просит
+    сгенерировать заново, либо отменяет. `winner_id` (2026-08-07) помечает,
+    какой текст ведёт: граф ставит его в ranked[0], и метафора/рендер строятся
+    вокруг него. Без winner_id остаётся скоринговый порядок.
     """
 
     action: Literal["approve", "regenerate", "cancel"]
+    winner_id: str | None = Field(default=None, max_length=64)
 
 
 class KbProductOut(BaseModel):

@@ -275,3 +275,9 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .kb-badge { margin: 8px 0 16px; padding: 8px 12px; border-radius: 8px;
   background:var(--panel-2); font-size: 13px; }
 .kb-badge--none { opacity: .7; }
+
+/* Выбор ведущего текста + обоснование кандидата */
+.cand-pick { margin-top: 10px; }
+.cand-pick.is-winner { border-color: var(--accent); font-weight: 600; }
+.cand-why { margin-top: 8px; font-size: 13px; }
+.cand-why summary { cursor: pointer; }

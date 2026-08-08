@@ -608,6 +608,54 @@ def test_decide_persona_cancel_reaches_service(tmp_path, monkeypatch):
         assert stub.seen[2] == {"action": "cancel"}
 
 
+def test_decide_text_forwards_winner_id(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "text01", "awaiting_text", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/text01/decision/text",
+            json={"action": "approve", "winner_id": "cand42"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen[2] == {"action": "approve", "winner_id": "cand42"}
+
+
+def test_decide_text_without_winner_id_is_unchanged(tmp_path, monkeypatch):
+    """Совместимость: «принять как есть» по-прежнему шлёт только action."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "text02", "awaiting_text", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/text02/decision/text", json={"action": "approve"}, headers=_HDR
+        )
+        assert r.status_code == 200
+        assert stub.seen[2] == {"action": "approve"}
+
+
+def test_decide_text_ignores_winner_id_on_regenerate(tmp_path, monkeypatch):
+    """Победитель у выброшенного набора бессмысленен — не пропускаем в граф."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "text03", "awaiting_text", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/text03/decision/text",
+            json={"action": "regenerate", "winner_id": "cand42"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen[2] == {"action": "regenerate"}
+
+
 def test_create_rejects_archived_product_slug(tmp_path, monkeypatch):
     """Архивная карточка — «больше не используем»: запуск по её slug отклоняем."""
     import asyncio

@@ -22,6 +22,9 @@
 
   let taskUid = null;
   let es = null; // EventSource
+  // Выбранный победитель: ranked[0] по умолчанию (скоринговый порядок), пока
+  // человек не ткнул в другую карточку.
+  let winnerId = null;
   // Active-task handle survives the full page reload that canon-header
   // navigation does (links to /images /slides /creatives are absolute). The
   // run keeps going server-side; on load we rehydrate from here or /api/tasks.
@@ -176,10 +179,12 @@
     try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
   }
   function renderCandidates(list) {
+    winnerId = list.length ? (list[0].id || null) : null;
     if (!list.length) { $("candidates").innerHTML = "<p class=\"page-sub\">Нет предложений.</p>"; return; }
     $("candidates").innerHTML = list.map((c, i) => {
       const rank = i + 1;
       const score = (typeof c.score === "number") ? c.score.toFixed(1) : "";
+      const id = c.id || "";
       const head = `<div class="cand-head"><span class="cand-rank">#${rank}</span>` +
         `<span class="cand-slogan">${escapeHtml(c.slogan || "")}</span>` +
         (score ? `<span class="cand-score">${score}</span>` : "") + `</div>`;
@@ -187,11 +192,35 @@
       const flags = (Array.isArray(c.lint_flags) && c.lint_flags.length)
         ? `<div class="cand-flags">${c.lint_flags.map((f) => `<span class="cand-flag">${escapeHtml(f)}</span>`).join("")}</div>`
         : "";
-      return `<div class="cand-card">${head}` +
+      // Обоснование под спойлером: якорь персоны и обещанный результат —
+      // то, из чего кандидат вырос, а не пересказ слогана.
+      const why = (c.anchor || c.desired_outcome || c.reason)
+        ? `<details class="cand-why"><summary>Почему такой текст</summary>` +
+          kv("якорь персоны", c.anchor) + kv("что человек получит", c.desired_outcome) +
+          kv("почему зайдёт ЦА", c.reason) + `</details>`
+        : "";
+      const pick = id
+        ? `<button class="btn cand-pick${i === 0 ? " is-winner" : ""}" data-pick="${escapeHtml(id)}">` +
+          `${i === 0 ? "Ведёт эта" : "Взять эту"}</button>`
+        : "";
+      return `<div class="cand-card" data-cand="${escapeHtml(id)}">${head}` +
         kv("cta", c.cta) + kv("hook", c.hook_angle) +
-        kv("почему зайдёт ЦА", c.reason) + kv("идея", c.body) + flags + `</div>`;
+        kv("идея", c.body) + why + flags + pick + `</div>`;
     }).join("");
   }
+
+  // Делегированный выбор победителя: перекрашиваем кнопки, ничего не шлём —
+  // решение уходит одним запросом по «Принять».
+  $("candidates").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-pick]");
+    if (!btn) return;
+    winnerId = btn.dataset.pick;
+    $("candidates").querySelectorAll(".cand-pick").forEach((b) => {
+      const on = b.dataset.pick === winnerId;
+      b.classList.toggle("is-winner", on);
+      b.textContent = on ? "Ведёт эта" : "Взять эту";
+    });
+  });
   const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";
 
   // Персона: списки якорей редактируются как многострочный текст — одна
@@ -279,7 +308,9 @@
     const panel = $("textPanel");
     $("textStatus").textContent = "";
     setBusy(panel, true);
-    const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, { action });
+    const body = { action };
+    if (action === "approve" && winnerId) body.winner_id = winnerId;
+    const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, body);
     if (r && r.ok) {
       setBusy(panel, false);
       hideHitl(); setStep("Применяю решение…");

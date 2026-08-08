@@ -211,7 +211,11 @@ async def decide_text(uid: str, body: TextDecisionIn, request: Request):
     service = request.app.state.creatives
     if service is None:
         raise HTTPException(503, "service unavailable")
-    decision = {"action": body.action}
+    decision: dict = {"action": body.action}
+    # winner_id имеет смысл только при approve: при regenerate набор
+    # выбрасывается целиком, и указатель на карточку из него — мусор.
+    if body.action == "approve" and body.winner_id:
+        decision["winner_id"] = body.winner_id
     try:
         await service.submit_decision(uid, str(user.id), decision)
     except DecisionConflict as exc:
