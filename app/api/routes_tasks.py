@@ -97,9 +97,11 @@ async def create_task(body: CreateTaskIn, request: Request):
         raise HTTPException(503, "service unavailable (graph not initialised)")
     slug = body.product_slug or "auto"
     if slug not in _SLUG_SENTINELS:
+        # latest_rows без include_archived отдаёт только живые карточки:
+        # архивная — это «больше не используем», запуск по ней отклоняем.
         rows = await latest_rows(request.app.state.sessionmaker)
         if slug not in {r.slug for r in rows}:
-            raise HTTPException(422, f"unknown product_slug: {slug}")
+            raise HTTPException(422, f"unknown or archived product_slug: {slug}")
     try:
         task_uid = await service.create(str(user.id), body.model_dump())
     except CapacityError as exc:

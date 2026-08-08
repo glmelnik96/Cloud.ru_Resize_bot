@@ -481,3 +481,40 @@ def test_create_defaults_product_slug_to_auto(tmp_path, monkeypatch):
         )
         assert r.status_code == 200
         assert stub.seen["product_slug"] == "auto"
+
+
+def test_create_rejects_archived_product_slug(tmp_path, monkeypatch):
+    """Архивная карточка — «больше не используем»: запуск по её slug отклоняем."""
+    import asyncio
+
+    from app.db.database import make_engine, make_sessionmaker
+    from app.kb.store import latest_rows, update_product
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'r.db'}"
+    # Первый прогон приложения нужен только ради сида каталога.
+    with TestClient(_app(tmp_path, monkeypatch, graph_ok=True)):
+        pass
+
+    async def _archive_first() -> str:
+        engine = make_engine(db_url)
+        sm = make_sessionmaker(engine)
+        rows = await latest_rows(sm)
+        assert rows, "сид не создал ни одного продукта"
+        await update_product(sm, slug=rows[0].slug, fields={"archived": True}, updated_by="test")
+        await engine.dispose()
+        return rows[0].slug
+
+    slug = asyncio.run(_archive_first())
+
+    with TestClient(_app(tmp_path, monkeypatch, graph_ok=True)) as c:
+        class _Stub:
+            async def create(self, user_id, fields):
+                raise AssertionError("сервис не должен вызываться при архивном slug")
+
+        c.app.state.creatives = _Stub()
+        r = c.post(
+            "/api/tasks",
+            json={"product": "p", "audience": "a", "emotion": "e", "product_slug": slug},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
