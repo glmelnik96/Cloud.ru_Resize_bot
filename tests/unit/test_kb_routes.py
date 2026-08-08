@@ -14,17 +14,6 @@ from app.main import create_app  # noqa: E402
 _HDR = {"X-User-Id": "5", "X-User-Email": "u@cloud.ru"}
 
 
-@pytest.fixture(autouse=True)
-def _restore_graph_catalog():
-    """Каталог графа — глобальное состояние модуля: и lifespan, и роуты записи
-    подменяют его снапшотом временной БД. Без сброса порядок тестов начинает
-    влиять на соседние файлы."""
-    from graph import knowledge
-
-    yield
-    knowledge.set_catalog(None)
-
-
 def _app(tmp_path, monkeypatch):
     async def fake_init_graph(checkpoint_db):
         return object(), None
@@ -145,20 +134,46 @@ def test_update_appends_version_and_history(tmp_path, monkeypatch):
 
         h = c.get(f"/api/kb/products/{slug}/history", headers=_BOSS).json()
         assert [v["version"] for v in h] == [2, 1]
+        # История без тел блоков бесполезна: «посмотреть старую версию» — это
+        # именно текст, а не номер. Свежая версия — новый, прежняя — прежний.
+        new_v, old_v = h[0], h[1]
+        assert new_v["tagline"] == "Новый тэглайн"
+        assert new_v["block1"] == "## Блок 1. Что это\nНовое."
+        assert old_v["tagline"] != "Новый тэглайн"
+        assert old_v["block1"] != new_v["block1"]
+
+
+def test_history_unknown_slug_404(tmp_path, monkeypatch):
+    """Без гарда история несуществующей карточки отдала бы 200 [] — «продукт
+    есть, просто правок не было», что читается как подтверждение опечатки."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        assert c.get("/api/kb/products/ghost/history", headers=_BOSS).status_code == 404
 
 
 def test_create_and_archive(tmp_path, monkeypatch):
+    from graph import knowledge
+
     with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
         r = c.post(
             "/api/kb/products",
             json={
                 "slug": "evolution-demo", "name": "Evolution Demo",
-                "aliases": ["демо"], "tagline": "Демо-продукт",
+                # Пустые алиасы приходят из формы сплошь и рядом; в БД такой
+                # алиас превратил бы карточку в «матч на любой бриф».
+                "aliases": ["", "  ", "демо"], "tagline": "Демо-продукт",
                 "block1": "## Блок 1. Что это\nДемо.",
             },
             headers=_BOSS,
         )
         assert r.status_code == 201 and r.json()["version"] == 1
+        assert r.json()["aliases"] == ["демо"]
+        # Автора правки ставит сервер по сессии, а не клиент.
+        assert r.json()["updated_by"] == "boss@cloud.ru"
+
+        # Создание, как и правка, должно доезжать до графа без рестарта.
+        fresh = knowledge.get_by_slug("evolution-demo")
+        assert fresh is not None and fresh.name == "Evolution Demo"
+        assert list(fresh.aliases) == ["демо"]
 
         # повторный slug — конфликт, а не тихая перезапись
         assert c.post(
@@ -179,6 +194,47 @@ def test_create_and_archive(tmp_path, monkeypatch):
             ).json()
         }
         assert "evolution-demo" in slugs
+
+
+def test_kb_editor_flag_grants_write_but_not_admin(tmp_path, monkeypatch):
+    """Флаг kb_editor — вся суть роли: править библиотеку можно, раздавать
+    доступы нельзя. Проверяем по HTTP, иначе подмена гарда на require_admin
+    в роутах прошла бы незамеченной."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        slug = _first_slug(c)
+        # Пользователь заводится в БД первым входом через шлюз — до этого
+        # выдавать роль некому (PUT /api/admin/roles ответил бы 404).
+        assert c.get("/api/kb/products", headers=_HDR).status_code == 200
+
+        r = c.put(
+            "/api/admin/roles",
+            json={"email": "u@cloud.ru", "role": "user", "kb_editor": True},
+            headers=_BOSS,
+        )
+        assert r.status_code == 200 and r.json()["kb_editor"] is True
+
+        w = c.put(
+            f"/api/kb/products/{slug}",
+            json={"tagline": "правка редактора библиотеки"},
+            headers=_HDR,
+        )
+        assert w.status_code == 200 and w.json()["updated_by"] == "u@cloud.ru"
+        assert c.get(f"/api/kb/products/{slug}/history", headers=_HDR).status_code == 200
+        assert c.get("/api/admin/roles", headers=_HDR).status_code == 403
+
+
+def test_create_validates_slug_and_name(tmp_path, monkeypatch):
+    """Схема записи — первый рубеж: кривой slug ломает и ссылки, и поиск по
+    брифу, а имя из одной буквы бессмысленно в списке продуктов."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        assert c.post(
+            "/api/kb/products",
+            json={"slug": "Bad Slug", "name": "Нормальное имя"},
+            headers=_BOSS,
+        ).status_code == 422
+        assert c.post(
+            "/api/kb/products", json={"slug": "ok-slug", "name": "X"}, headers=_BOSS
+        ).status_code == 422
 
 
 def test_update_unknown_slug_404(tmp_path, monkeypatch):

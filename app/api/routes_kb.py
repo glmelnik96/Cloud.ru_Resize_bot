@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 
 from app.api.schemas import KbProductIn, KbProductOut, KbProductPatch, KbVersionOut
 from app.auth.deps import get_current_user
@@ -86,6 +87,13 @@ async def create(request: Request, body: KbProductIn):
         # Тихо перезаписать чужую карточку — худший из возможных исходов:
         # правка ушла бы в граф, а автор оригинала об этом не узнал.
         raise HTTPException(status_code=409, detail="slug already exists") from exc
+    except IntegrityError as exc:
+        # Гонка двух редакторов: exists-проверка (или чтение prev.version)
+        # прошла у обоих, а уникальный индекс (slug, version) поймал второго.
+        # Для человека это тот же конфликт, а не поломка сервиса.
+        raise HTTPException(
+            status_code=409, detail="карточку в этот момент правил кто-то ещё"
+        ) from exc
     # Правка должна быть видна СЛЕДУЮЩЕМУ запуску без рестарта — снапшот БД
     # инжектим в graph.knowledge сразу после записи.
     await refresh_catalog(Session)
@@ -105,6 +113,13 @@ async def update(request: Request, slug: str, body: KbProductPatch):
         )
     except KbNotFound as exc:
         raise HTTPException(status_code=404, detail="product not found") from exc
+    except IntegrityError as exc:
+        # Гонка двух редакторов: exists-проверка (или чтение prev.version)
+        # прошла у обоих, а уникальный индекс (slug, version) поймал второго.
+        # Для человека это тот же конфликт, а не поломка сервиса.
+        raise HTTPException(
+            status_code=409, detail="карточку в этот момент правил кто-то ещё"
+        ) from exc
     await refresh_catalog(Session)
     return kb_out(await _latest(Session, slug))
 

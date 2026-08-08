@@ -127,6 +127,23 @@ class KbProductOut(BaseModel):
     block3: str = ""
 
 
+_MAX_ALIASES = 32
+
+
+def _clean_aliases(v: list[str] | None) -> list[str] | None:
+    """Пустой или пробельный алиас — не «ничего», а «матч на что угодно»:
+    knowledge._contains_phrase на пустой строке срабатывает между любой парой
+    не-словных символов, и карточка молча цепляется к чужому брифу."""
+    if v is None:
+        return None
+    out = [a.strip() for a in v if a.strip()]
+    if len(out) > _MAX_ALIASES:
+        raise ValueError(f"не больше {_MAX_ALIASES} алиасов")
+    if any(len(a) > 128 for a in out):
+        raise ValueError("алиас длиннее 128 символов")
+    return out
+
+
 class KbProductIn(BaseModel):
     """Новая карточка. Блоки — markdown из шаблона библиотеки; пустые
     допустимы, карточку часто заводят «скелетом» и дописывают позже."""
@@ -138,6 +155,11 @@ class KbProductIn(BaseModel):
     block1: str = Field("", max_length=20000)
     block2: str = Field("", max_length=20000)
     block3: str = Field("", max_length=20000)
+
+    @field_validator("aliases", mode="after")
+    @classmethod
+    def _strip_aliases(cls, v):
+        return _clean_aliases(v)
 
 
 class KbProductPatch(BaseModel):
@@ -152,10 +174,16 @@ class KbProductPatch(BaseModel):
     block3: str | None = Field(None, max_length=20000)
     archived: bool | None = None
 
+    @field_validator("aliases", mode="after")
+    @classmethod
+    def _strip_aliases(cls, v):
+        return _clean_aliases(v)
+
 
 class KbVersionOut(BaseModel):
-    """Строка истории: что и когда поменялось. Тела блоков тоже отдаём —
-    иначе «посмотреть старую версию» превращается во второй запрос."""
+    """Снапшот одной версии карточки: как она выглядела целиком после той
+    правки (диффа не считаем). Тела блоков тоже отдаём — иначе «посмотреть
+    старую версию» превращается во второй запрос."""
 
     version: int
     name: str
