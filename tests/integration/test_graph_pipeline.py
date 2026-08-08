@@ -85,9 +85,16 @@ async def test_text_pipeline_e2e() -> None:
     assert interrupts[0].value.get("kind") == "text_approve", (
         f"Expected second interrupt kind='text_approve', got: {interrupts[0].value}"
     )
-    # resume with approve so the pipeline reaches terminal state
+    # resume with approve — pipeline runs on to the third stop (image upload)
     final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
     assert final.get("text_approved") is True
+
+    # --- third stop: image upload (hard assert, no silent skip)
+    interrupts = final.get("__interrupt__")
+    assert interrupts, "graph did not pause at image upload stop"
+    assert interrupts[0].value.get("kind") == "image_upload", (
+        f"Expected third interrupt kind='image_upload', got: {interrupts[0].value}"
+    )
 
     # --- brief survives verbatim (no LLM re-parse)
     brief = final["brief"]

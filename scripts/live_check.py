@@ -87,8 +87,17 @@ async def run_case(case: dict, idx: int) -> list[str]:
         {"session_id": thread, "user_id": 0, "brief": case["brief"]}, config=cfg
     )
 
+    # Топология v2: первая остановка — персона, вторая — текст.
+    _check(bool(final.get("__interrupt__")), "graph did not park at hitl_persona_approve", failures)
+    if final.get("__interrupt__"):
+        kind = (final["__interrupt__"][0].value or {}).get("kind")
+        _check(kind == "persona_approve", f"first stop is {kind!r}, not persona_approve", failures)
+        final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
+
     _check(bool(final.get("__interrupt__")), "graph did not park at hitl_text_approve", failures)
     if final.get("__interrupt__"):
+        kind = (final["__interrupt__"][0].value or {}).get("kind")
+        _check(kind == "text_approve", f"second stop is {kind!r}, not text_approve", failures)
         final = await graph.ainvoke(Command(resume={"action": "approve"}), config=cfg)
         _check(final.get("text_approved") is True, "approve did not set text_approved", failures)
 
