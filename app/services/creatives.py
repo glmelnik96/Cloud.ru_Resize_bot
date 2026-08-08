@@ -507,11 +507,14 @@ class CreativesService:
         result_url = self._collect_results(task_uid, final)
         cards = await self._collect_cards(task_uid)
         recipe = await self._collect_recipe(task_uid)
-        await reporter.done(result_url=result_url)
         meta = {"ratios": ["300x600"], "count": len(final.get("rendered_files") or [])}
+        # Пишем в БД ДО события done: по нему браузер сразу идёт за рецептом в
+        # /api/tasks/{uid}, и на незакоммиченных params получил бы пустой ответ,
+        # а второго шанса нет — панель после этого уже не появится.
         await self._finish(
             task_uid, "done", result_url=result_url, meta=meta, cards=cards, recipe=recipe
         )
+        await reporter.done(result_url=result_url)
         log.info("task_done", task_uid=task_uid, result_url=result_url)
 
     # Per-banner card fields surfaced on the final grid (Block 3, 2026-07-10).
@@ -545,36 +548,42 @@ class CreativesService:
 
         Те же поля, что в provenance.json внутри ZIP, но живут в tasks.params:
         архив ретеншен удалит через сутки, а объяснение результата останется.
-        Best-effort: сбой чтения чекпоинта → пустой рецепт, не сломанный финиш.
+        Best-effort целиком: и чтение чекпоинта, и разбор полей. Финиш зовётся
+        вне try/except сегмента, поэтому исключение отсюда оставило бы задачу
+        навсегда в running — с готовым ZIP на диске и без единого события.
         """
         try:
             snapshot = await self.graph.aget_state(self._config(task_uid))
             values = dict(snapshot.values or {})
+            ranked = values.get("ranked") or []
+            winner = ranked[0] if ranked and isinstance(ranked[0], dict) else {}
+            meta = (values.get("metaphor_meta") or [{}])[0]
+            meta = meta if isinstance(meta, dict) else {}
+            persona = (values.get("personas") or [None])[0]
+            persona = persona if isinstance(persona, dict) else {}
+            heroes = values.get("generated_heroes")
+            hero_source = "generated" if heroes else (
+                "uploaded" if values.get("image") else "none"
+            )
+            return {
+                "kb_source": values.get("kb_match"),
+                "persona_segment": persona.get("segment", ""),
+                # Сырой winner_id, как в provenance.json: None означает
+                # «принял набор, не выбирая», и слой опыта должен видеть
+                # разницу между решением человека и скоринговым порядком.
+                "winner_id": values.get("winner_id"),
+                "slogan": winner.get("slogan", ""),
+                "anchor": winner.get("anchor", ""),
+                "desired_outcome": winner.get("desired_outcome", ""),
+                "metaphor": meta.get("metaphor", ""),
+                "intended_inference": meta.get("intended_inference", ""),
+                "anti_reading": meta.get("anti_reading", ""),
+                "metaphor_comments": values.get("metaphor_comments") or [],
+                "hero_source": hero_source,
+            }
         except Exception:  # noqa: BLE001
             log.warning("collect_recipe_failed", task_uid=task_uid, exc_info=True)
             return {}
-        ranked = values.get("ranked") or []
-        winner = ranked[0] if ranked and isinstance(ranked[0], dict) else {}
-        meta = (values.get("metaphor_meta") or [{}])[0] or {}
-        persona = (values.get("personas") or [None])[0] or {}
-        heroes = values.get("generated_heroes")
-        return {
-            "kb_source": values.get("kb_match"),
-            "persona_segment": persona.get("segment", ""),
-            # Явного победителя может не быть: принять набор, не ткнув в
-            # карточку, — законный сценарий, hitl_text_approve тогда пишет
-            # winner_id=None. Ведущим остаётся ranked[0] — из него взяты и
-            # slogan/anchor ниже, так что рецепт называет тот же текст.
-            "winner_id": values.get("winner_id") or winner.get("id"),
-            "slogan": winner.get("slogan", ""),
-            "anchor": winner.get("anchor", ""),
-            "desired_outcome": winner.get("desired_outcome", ""),
-            "metaphor": meta.get("metaphor", ""),
-            "intended_inference": meta.get("intended_inference", ""),
-            "anti_reading": meta.get("anti_reading", ""),
-            "metaphor_comments": values.get("metaphor_comments") or [],
-            "hero_source": "generated" if heroes else ("uploaded" if values.get("image") else "none"),
-        }
 
     def _collect_results(self, task_uid: str, final: dict) -> Optional[str]:
         """Move the graph's per-format PNGs + ZIP into results/<uid>/ and return

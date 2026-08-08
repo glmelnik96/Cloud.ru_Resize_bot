@@ -471,6 +471,66 @@ async def test_terminal_persists_banner_cards(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_terminal_persists_recipe_alongside_cards(tmp_path):
+    """Рецепт запуска должен доехать до БД тем же финишем, что и карточки:
+    ZIP с provenance.json ретеншен удалит через сутки, а объяснение результата
+    остаётся в params. Два снимка пишутся подряд через переприсваивание
+    params — проверяем, что второй не затирает ни первый, ни бриф."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    png = tmp_path / "b.png"
+    png.write_bytes(b"x")
+    graph = _TerminalGraph([{"format": "01_render", "path": str(png)}], None)
+    graph.values = {
+        "ranked": [{"id": "c1", "slogan": "S1", "anchor": "A1",
+                    "desired_outcome": "быстрее", "cta": "CTA1"}],
+        "scenarios": ["render"],
+        "kb_match": "kb-7",
+        "winner_id": "c1",
+        "personas": [{"segment": "архитекторы"}],
+        "metaphor_meta": [{"metaphor": "мост", "intended_inference": "короткий путь",
+                           "anti_reading": "не стройка"}],
+        "metaphor_comments": ["слишком буквально"],
+        "image": {"local_path": "x"},
+    }
+
+    async def _aget_state(config):
+        return _FakeState(graph.values)
+
+    graph.aget_state = _aget_state
+    svc = _service(Session, graph, bus=bus, tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    async with Session() as s:
+        s.add(models.Task(task_uid="rec1", user_id=1, workflow="creatives",
+                          status="awaiting_image", params={"product": "p"}))
+        await s.commit()
+
+    from langgraph.types import Command
+
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="rec1", label="creatives", eta_sec=None)
+    await svc._run_segment(
+        "rec1", "1", Command(resume={"action": "upload", "local_path": "x"}), reporter
+    )
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "rec1"))
+        task = res.scalar_one()
+    assert task.status == "done"
+    recipe = task.params["recipe"]
+    assert recipe["kb_source"] == "kb-7"
+    assert recipe["winner_id"] == "c1"
+    assert recipe["persona_segment"] == "архитекторы"
+    assert recipe["slogan"] == "S1" and recipe["desired_outcome"] == "быстрее"
+    assert recipe["metaphor"] == "мост" and recipe["anti_reading"] == "не стройка"
+    assert recipe["metaphor_comments"] == ["слишком буквально"]
+    assert recipe["hero_source"] == "uploaded"
+    # соседние снимки в params не пострадали от второго переприсваивания
+    assert [c["slogan"] for c in task.params["cards"]] == ["S1"]
+    assert task.params["product"] == "p"
+
+
+@pytest.mark.asyncio
 async def test_terminal_without_aget_state_still_finishes(tmp_path):
     """Cards are best-effort: a graph without aget_state (or a snapshot
     failure) must not break task completion."""
@@ -1251,15 +1311,16 @@ async def test_collect_recipe_snapshots_human_decisions(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_collect_recipe_falls_back_to_leading_card(tmp_path):
+async def test_collect_recipe_keeps_winner_id_empty_when_nobody_chose(tmp_path):
     """Человек принял набор, не ткнув в карточку: hitl_text_approve пишет
-    winner_id=None (fail-open, скоринговый порядок). Ведущий текст при этом
-    всё равно есть — ranked[0], — и рецепт должен назвать именно его."""
+    winner_id=None. Рецепт не подставляет вместо решения ranked[0] — иначе
+    слой опыта примет скоринговый порядок за человеческий выбор, а рецепт
+    разошёлся бы с provenance.json из того же запуска."""
     Session = await _sessionmaker(tmp_path)
 
     class _G:
         values = {
-            "ranked": [{"id": "c1", "slogan": "S"}],
+            "ranked": [{"id": "c1", "slogan": "S", "desired_outcome": "быстрее"}],
             "winner_id": None,
             "image": {"local_path": "/tmp/u.png"},
         }
@@ -1269,8 +1330,44 @@ async def test_collect_recipe_falls_back_to_leading_card(tmp_path):
 
     svc = _service(Session, _G(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
     recipe = await svc._collect_recipe("uid3")
-    assert recipe["winner_id"] == "c1"
+    assert recipe["winner_id"] is None
+    # Ведущий текст при этом всё равно назван — он берётся из ranked[0].
+    assert recipe["slogan"] == "S"
+    assert recipe["desired_outcome"] == "быстрее"
     assert recipe["hero_source"] == "uploaded"
+
+
+@pytest.mark.asyncio
+async def test_collect_recipe_hero_source_none_without_any_image(tmp_path):
+    Session = await _sessionmaker(tmp_path)
+
+    class _G:
+        values = {"ranked": [{"id": "c1"}]}
+
+        async def aget_state(self, config):
+            return _FakeState(self.values)
+
+    svc = _service(Session, _G(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    assert (await svc._collect_recipe("uid4"))["hero_source"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_collect_recipe_survives_garbage_state(tmp_path):
+    """Разбор полей тоже best-effort: _finish_terminal зовётся вне try/except
+    сегмента, и исключение отсюда оставило бы задачу навсегда в running — с
+    готовым ZIP на диске и без единого события в браузер."""
+    Session = await _sessionmaker(tmp_path)
+
+    class _G:
+        values = {"ranked": [{"id": "c1"}], "personas": ["строка вместо персоны"],
+                  "metaphor_meta": ["тоже строка"]}
+
+        async def aget_state(self, config):
+            return _FakeState(self.values)
+
+    svc = _service(Session, _G(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    recipe = await svc._collect_recipe("uid5")
+    assert recipe["persona_segment"] == "" and recipe["metaphor"] == ""
 
 
 @pytest.mark.asyncio

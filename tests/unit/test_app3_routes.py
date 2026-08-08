@@ -260,6 +260,55 @@ def test_list_tasks_cards_empty_when_absent(tmp_path, monkeypatch):
         assert rows[0]["cards"] == []
 
 
+def test_task_recipe_whitelists_known_keys(tmp_path, monkeypatch):
+    """Рецепт запуска ходит тем же путём, что и карточки — через params, —
+    поэтому наружу выходят только перечисленные поля: всё остальное в params
+    служебное и человеку не адресовано."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "rec1", "done", me["id"],
+            params={
+                "product": "p",
+                "recipe": {
+                    "kb_source": "kb-7",
+                    "persona_segment": "архитекторы",
+                    "winner_id": "c2",
+                    "slogan": "Инфра без сюрпризов",
+                    "anchor": "счёт в конце месяца",
+                    "desired_outcome": "перестать бояться",
+                    "metaphor": "мост через каньон",
+                    "intended_inference": "путь становится коротким",
+                    "anti_reading": "не стройка",
+                    "metaphor_comments": ["слишком буквально"],
+                    "hero_source": "generated",
+                    "internal_leak": "x",  # must be dropped
+                },
+            },
+        )
+        rec = c.get("/api/tasks/rec1", headers=_HDR).json()["recipe"]
+        assert rec["slogan"] == "Инфра без сюрпризов"
+        assert rec["winner_id"] == "c2"
+        assert rec["hero_source"] == "generated"
+        assert rec["metaphor_comments"] == ["слишком буквально"]
+        assert "internal_leak" not in rec
+
+
+def test_task_recipe_empty_when_absent(tmp_path, monkeypatch):
+    """Запуски до Плана 2 (и упавший best-effort сбор) рецепта не имеют —
+    ответ отдаёт пустой словарь, панель на экране просто не появляется."""
+    db = tmp_path / "r.db"
+    results = tmp_path / "results"
+    app = _app_with_results(tmp_path, monkeypatch, results)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "rec0", "done", me["id"], params={"product": "p"})
+        assert c.get("/api/tasks/rec0", headers=_HDR).json()["recipe"] == {}
+
+
 def test_list_tasks_images_empty_for_non_done(tmp_path, monkeypatch):
     db = tmp_path / "r.db"
     results = tmp_path / "results"
