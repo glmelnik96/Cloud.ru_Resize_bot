@@ -282,22 +282,15 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .cand-why { margin-top: 8px; font-size: 13px; }
 .cand-why summary { cursor: pointer; }
 
-/* Задумка метафоры на экране картинки — врезка, как .cand-card и .prompt,
-   с которым она стыкуется на том же экране. */
-.metaphor { margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-card);
-  background: var(--surface-inset); }
+/* Врезки-разговоры с человеком: задумка метафоры на экране картинки и отметка
+   исхода на экране результата. Выглядят как .cand-card и .prompt, с которыми
+   стыкуются на тех же экранах. */
+.metaphor, .outcome { margin: 12px 0; padding: 12px 14px;
+  border-radius: var(--radius-card); background: var(--surface-inset); }
 /* Поле ввода на врезке того же цвета: без рамки оно сливалось бы с фоном
    блока, а на hover (--surface-active) — и подавно. */
-.metaphor textarea { border-color: var(--line); }
+.metaphor textarea, .outcome textarea { border-color: var(--line); }
 
 /* Рецепт запуска на экране результата */
 .recipe { margin: 12px 0; font-size: 13px; }
 .recipe summary { cursor: pointer; font-weight: 600; }
-
-/* Отметка исхода на экране результата — врезка того же вида, что .metaphor,
-   с которой она стыкуется по смыслу (оба блока — разговор с человеком). */
-.outcome { margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-card);
-  background: var(--surface-inset); }
-/* Поле ввода на врезке того же цвета: без рамки оно сливалось бы с фоном
-   блока, а на hover (--surface-active) — и подавно. */
-.outcome textarea { border-color: var(--line); }

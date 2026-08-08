@@ -101,6 +101,32 @@ def _seed_task(db_path, uid, status, user_id, **extra):
     asyncio.run(_ins())
 
 
+def _kb_runs(db_path):
+    """Прочитать слой опыта тем же приёмом, что и запись задач: отдельный
+    движок к тому же файлу, потому что цикл приложения крутится в чужом потоке."""
+    import asyncio
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db import models
+
+    async def _sel():
+        eng = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        try:
+            async with async_sessionmaker(eng)() as s:
+                rows = (await s.execute(select(models.KbRun))).scalars().all()
+                return [
+                    {"session_id": r.session_id, "slug": r.slug,
+                     "slogan": r.slogan, "outcome": r.outcome}
+                    for r in rows
+                ]
+        finally:
+            await eng.dispose()
+
+    return asyncio.run(_sel())
+
+
 def test_list_tasks_includes_prompt_and_result(tmp_path, monkeypatch):
     """The recent-creatives list needs a human label (prompt) and the ZIP link
     so a finished run is re-downloadable after a reload."""
@@ -274,7 +300,7 @@ def test_task_recipe_whitelists_known_keys(tmp_path, monkeypatch):
             params={
                 "product": "p",
                 "recipe": {
-                    "kb_source": "kb-7",
+                    "kb_source": {"slug": "kb-7", "name": "KB", "version": 1},
                     "persona_segment": "архитекторы",
                     "winner_id": "c2",
                     "slogan": "Инфра без сюрпризов",
@@ -295,6 +321,13 @@ def test_task_recipe_whitelists_known_keys(tmp_path, monkeypatch):
         assert rec["hero_source"] == "generated"
         assert rec["metaphor_comments"] == ["слишком буквально"]
         assert "internal_leak" not in rec
+        # Эти четыре поля рецепта переезжают в слой опыта (record_outcome),
+        # так что выпасть из whitelist они не имеют права.
+        assert rec["kb_source"]["slug"] == "kb-7"
+        assert rec["persona_segment"] == "архитекторы"
+        assert rec["anchor"] == "счёт в конце месяца"
+        assert rec["desired_outcome"] == "перестать бояться"
+        assert rec["metaphor"] == "мост через каньон"
 
 
 def test_task_recipe_empty_when_absent(tmp_path, monkeypatch):
@@ -808,6 +841,42 @@ def test_outcome_records_and_second_call_updates(tmp_path, monkeypatch):
         again = c.post("/api/tasks/done01/outcome", json={"outcome": "rejected"}, headers=_HDR)
         assert again.status_code == 200 and again.json()["recorded"] is False
         assert again.json()["outcome"] == "rejected"
+        # Ради этого коммит и существует: снимок решений запуска должен доехать
+        # из params задачи в слой опыта, а не просто вернуть 200.
+        rows = _kb_runs(db)
+        assert len(rows) == 1
+        assert rows[0]["session_id"] == "done01"
+        assert rows[0]["slug"] == "rag" and rows[0]["slogan"] == "S"
+        assert rows[0]["outcome"] == "rejected"
+
+
+def test_outcome_rejects_foreign_task(tmp_path, monkeypatch):
+    """Опыт по чужому продукту отравить нельзя: отметка возможна только на
+    своей задаче, чужая неотличима от несуществующей."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "alien", "done", me["id"] + 1000)
+        r = c.post("/api/tasks/alien/outcome", json={"outcome": "shipped"}, headers=_HDR)
+        assert r.status_code == 404
+        assert _kb_runs(db) == []
+
+
+def test_outcome_rejects_overlong_comment(tmp_path, monkeypatch):
+    """Комментарий копится в слое опыта и уходит в промпты — у него есть
+    потолок, как у брифа."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "long1", "done", me["id"])
+        r = c.post(
+            "/api/tasks/long1/outcome",
+            json={"outcome": "shipped", "comment": "x" * 2001},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
 
 
 def test_outcome_requires_finished_task(tmp_path, monkeypatch):

@@ -125,7 +125,6 @@ class KbProductOut(BaseModel):
     block3: str = ""
 
 
-
 class OutcomeIn(BaseModel):
     """Отметка исхода на экране результата — единственный вход в слой опыта."""
 

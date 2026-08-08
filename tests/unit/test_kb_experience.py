@@ -40,6 +40,8 @@ async def test_record_outcome_writes_one_row_from_recipe(Session):
     assert r.slogan == "GPU без очереди"
     assert r.anchor == "боль: очередь на GPU"
     assert r.persona_segment == "ML-инженеры"
+    assert r.desired_outcome == "обучение стартует за минуты"
+    assert r.metaphor == "a bridge across a canyon"
     assert r.comment == "ушло в кампанию как есть"
 
 
@@ -63,3 +65,35 @@ async def test_record_outcome_without_kb_source_keeps_empty_slug(Session):
     async with Session() as s:
         row = (await s.execute(select(models.KbRun))).scalars().one()
     assert row.slug == "" and row.slogan == "S"
+
+
+async def test_record_outcome_survives_concurrent_first_marks(tmp_path):
+    """Две вкладки (или ретрай прокси) отмечают исход одновременно: уникальный
+    session_id ловит дубль на INSERT, но для человека это не ошибка, а смена
+    мнения — обе отметки должны вернуться, строка остаться одна.
+
+    Своя БД файлом, а не общая ин-мемори фикстура: на `:memory:` SQLAlchemy
+    держит один общий коннект (StaticPool), поэтому обе сессии сидят в одной
+    транзакции и rollback одной сносит вставку другой — гонки как в проде там
+    не воспроизвести.
+    """
+    import asyncio
+
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'race.db'}")
+    await init_db(engine)
+    Session = make_sessionmaker(engine)
+    try:
+        results = await asyncio.gather(
+            record_outcome(
+                Session, session_id="race", outcome="shipped", comment="a", recipe=_RECIPE
+            ),
+            record_outcome(
+                Session, session_id="race", outcome="rejected", comment="b", recipe=_RECIPE
+            ),
+        )
+        assert sorted(results) == [False, True]
+        async with Session() as s:
+            rows = (await s.execute(select(models.KbRun))).scalars().all()
+        assert len(rows) == 1
+    finally:
+        await engine.dispose()
