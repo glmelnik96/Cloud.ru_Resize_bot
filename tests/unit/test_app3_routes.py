@@ -573,6 +573,41 @@ def test_decide_persona_rejects_empty_anchor_lists(tmp_path, monkeypatch):
         assert r.status_code == 422
 
 
+def test_decide_persona_rejects_blank_anchor_strings(tmp_path, monkeypatch):
+    """Список из пустых строк — тот же пустой список, только незаметный."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona05", "awaiting_persona", me["id"])
+        _stub_decisions(app)
+        bad = {**_PERSONA, "motivations": ["   ", ""]}
+        r = c.post(
+            "/api/tasks/persona05/decision/persona",
+            json={"action": "approve", "persona": bad},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
+
+
+def test_decide_persona_cancel_reaches_service(tmp_path, monkeypatch):
+    """cancel — полноценная ветка решения, а не «ничего не делать»."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona06", "awaiting_persona", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/persona06/decision/persona",
+            json={"action": "cancel", "persona": _PERSONA},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        # Персона в теле при отмене игнорируется — решение уходит голым.
+        assert stub.seen[2] == {"action": "cancel"}
+
+
 def test_create_rejects_archived_product_slug(tmp_path, monkeypatch):
     """Архивная карточка — «больше не используем»: запуск по её slug отклоняем."""
     import asyncio

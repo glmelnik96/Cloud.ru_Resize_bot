@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserOut(BaseModel):
@@ -64,6 +64,19 @@ class PersonaIn(BaseModel):
     motivations: list[str] = Field(min_length=1)
     objections: list[str] = Field(default_factory=list)
     communication_style: str = Field(default="", max_length=600)
+
+    @field_validator("pain_points", "motivations", "objections", mode="after")
+    @classmethod
+    def _strip_anchors(cls, v: list[str]) -> list[str]:
+        """Пустая строка — такой же мусорный якорь, как и отсутствие списка."""
+        return [s.strip() for s in v if s.strip()]
+
+    @field_validator("pain_points", "motivations", mode="after")
+    @classmethod
+    def _anchors_survive_stripping(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("боли и мотивации не могут состоять из пустых строк")
+        return v
 
 
 class PersonaDecisionIn(BaseModel):
