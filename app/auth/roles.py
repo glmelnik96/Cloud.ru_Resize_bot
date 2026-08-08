@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
@@ -41,12 +42,25 @@ class Access:
 async def resolve_access(
     session: AsyncSession, user: models.User, *, bootstrap_admin: str = ""
 ) -> Access:
+    """Вернуть права пользователя, при необходимости подняв bootstrap-админа.
+
+    Строку bootstrap-админа функция только вставляет — коммитит вызывающий
+    (`current_access` это делает). Иначе вставка тихо потеряется вместе с
+    сессией, а следующий вход снова пойдёт по bootstrap-ветке.
+    """
     row = await session.get(models.UserRole, user.id)
     if row is None:
         if bootstrap_admin and _same_email(user.email, bootstrap_admin):
             row = models.UserRole(user_id=user.id, role=ADMIN, updated_by="bootstrap")
-            session.add(row)
-            await session.flush()
+            try:
+                async with session.begin_nested():
+                    session.add(row)
+            except IntegrityError:
+                # Параллельный первый вход того же админа успел вставить строку.
+                # Это не ошибка, а тот же результат другим путём — перечитываем.
+                row = await session.get(models.UserRole, user.id)
+                if row is None:
+                    return Access(role=USER, kb_editor=False)
         else:
             return Access(role=USER, kb_editor=False)
     return Access(role=row.role, kb_editor=bool(row.kb_editor))

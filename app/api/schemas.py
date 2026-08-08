@@ -136,8 +136,10 @@ class OutcomeIn(BaseModel):
 
 class RoleIn(BaseModel):
     email: str = Field(min_length=3, max_length=255)
-    role: Literal["admin", "user"] = "user"
-    kb_editor: bool = False
+    # PUT заменяет состояние целиком: дефолт превратил бы забытое поле в тихое
+    # разжалование с ответом 200, поэтому оба поля обязательны — лучше 422.
+    role: Literal["admin", "user"]
+    kb_editor: bool
 
 
 class RoleOut(BaseModel):

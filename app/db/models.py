@@ -145,6 +145,8 @@ class UserRole(Base):
     role: Mapped[str] = mapped_column(String(16), default="user")
     kb_editor: Mapped[bool] = mapped_column(default=False)
     updated_by: Mapped[str] = mapped_column(String(255), default="")
+    # onupdate обязателен: без него отметка времени застывает на моменте выдачи
+    # первой роли, и на вопрос «когда доступ поменяли» аудит уже не отвечает.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
