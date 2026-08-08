@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.api.schemas import CreateTaskIn, TaskOut, TextDecisionIn
+from app.api.schemas import CreateTaskIn, PersonaDecisionIn, TaskOut, TextDecisionIn
 from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
@@ -177,6 +177,28 @@ async def task_pending(uid: str, request: Request):
         raise HTTPException(503, "service unavailable")
     payload = await service.pending(uid, task.status)
     return payload or {"phase": None, "status": task.status}
+
+
+@router.post("/tasks/{uid}/decision/persona")
+async def decide_persona(uid: str, body: PersonaDecisionIn, request: Request):
+    """Resume остановки «Кому пишем» (первая пауза HITL)."""
+    user = await get_current_user(request)
+    task = await _load_owned(request, uid, user)
+    if task.status != "awaiting_persona":
+        raise HTTPException(409, f"task not awaiting persona (status={task.status})")
+    service = request.app.state.creatives
+    if service is None:
+        raise HTTPException(503, "service unavailable")
+    decision: dict = {"action": body.action}
+    if body.action == "approve" and body.persona is not None:
+        decision["persona"] = body.persona.model_dump()
+    try:
+        await service.submit_decision(uid, str(user.id), decision)
+    except DecisionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CapacityError as exc:
+        raise HTTPException(429, str(exc)) from exc
+    return {"ok": True, "action": body.action}
 
 
 @router.post("/tasks/{uid}/decision/text")

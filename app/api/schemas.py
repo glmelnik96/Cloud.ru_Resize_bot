@@ -50,6 +50,33 @@ class TaskOut(BaseModel):
     cards: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class PersonaIn(BaseModel):
+    """Персона, отредактированная человеком на остановке «Кому пишем».
+
+    Поля повторяют graph.state.Persona, но списки якорей обязательны:
+    из болей/мотиваций/возражений собираются 24 черновика, и пустая персона
+    просто сожгла бы этап. Возражения допускаются пустыми — они есть не всегда.
+    """
+
+    segment: str = Field(min_length=1, max_length=200)
+    age_range: str = Field(default="", max_length=64)
+    pain_points: list[str] = Field(min_length=1)
+    motivations: list[str] = Field(min_length=1)
+    objections: list[str] = Field(default_factory=list)
+    communication_style: str = Field(default="", max_length=600)
+
+
+class PersonaDecisionIn(BaseModel):
+    """Resume остановки «Кому пишем».
+
+    approve без persona — согласие с тем, что вывел граф; approve с persona —
+    правка без повторного LLM-вызова; regenerate — вывести персону заново.
+    """
+
+    action: Literal["approve", "regenerate", "cancel"]
+    persona: PersonaIn | None = None
+
+
 class TextDecisionIn(BaseModel):
     """Resume the text-approve interrupt (HITL pause #1).
 

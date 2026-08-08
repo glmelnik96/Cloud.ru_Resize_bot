@@ -483,6 +483,96 @@ def test_create_defaults_product_slug_to_auto(tmp_path, monkeypatch):
         assert stub.seen["product_slug"] == "auto"
 
 
+_PERSONA = {
+    "segment": "ML-инженеры",
+    "age_range": "25-40",
+    "pain_points": ["очередь на GPU"],
+    "motivations": ["быстрее катить итерации"],
+    "objections": ["дорого экспериментировать"],
+    "communication_style": "по делу, без маркетинга",
+}
+
+
+def _stub_decisions(app):
+    """Подменяет оркестратор на заглушку, которая только запоминает решение."""
+
+    class _Stub:
+        seen = None
+
+        async def submit_decision(self, uid, user_id, decision):
+            self.seen = (uid, user_id, decision)
+
+    stub = _Stub()
+    app.state.creatives = stub
+    return stub
+
+
+def test_decide_persona_forwards_edited_persona(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona01", "awaiting_persona", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/persona01/decision/persona",
+            json={"action": "approve", "persona": _PERSONA},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen[2]["action"] == "approve"
+        assert stub.seen[2]["persona"]["segment"] == "ML-инженеры"
+
+
+def test_decide_persona_regenerate_carries_no_persona(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona02", "awaiting_persona", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/persona02/decision/persona",
+            json={"action": "regenerate"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen[2] == {"action": "regenerate"}
+
+
+def test_decide_persona_wrong_status_is_409(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona03", "awaiting_text", me["id"])
+        _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/persona03/decision/persona",
+            json={"action": "approve"},
+            headers=_HDR,
+        )
+        assert r.status_code == 409
+
+
+def test_decide_persona_rejects_empty_anchor_lists(tmp_path, monkeypatch):
+    """Персона без болей и мотиваций обнуляет весь текстовый этап — 422 здесь,
+    а не тихий мусор в графе."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "persona04", "awaiting_persona", me["id"])
+        _stub_decisions(app)
+        bad = {**_PERSONA, "pain_points": []}
+        r = c.post(
+            "/api/tasks/persona04/decision/persona",
+            json={"action": "approve", "persona": bad},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
+
+
 def test_create_rejects_archived_product_slug(tmp_path, monkeypatch):
     """Архивная карточка — «больше не используем»: запуск по её slug отклоняем."""
     import asyncio
