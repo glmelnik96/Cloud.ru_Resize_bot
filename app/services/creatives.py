@@ -292,6 +292,21 @@ class CreativesService:
         self._cancel_timeout(task_uid)
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
 
+        # Гард топологии — та же дырка, что и в submit_decision: кнопка
+        # веб-генерации hero тоже резюмирует парковку, и чекпоинт другой
+        # версии графа нельзя безопасно поднимать (спека 2026-08-07).
+        guard_snapshot = await self.graph.aget_state(self._config(task_uid))
+        stored = dict(guard_snapshot.values or {}).get("graph_version")
+        if stored != GRAPH_VERSION:
+            log.warning("graph_version_mismatch", task_uid=task_uid, stored=stored)
+            await reporter.error("пайплайн обновился — перезапустите задачу")
+            await self._finish(
+                task_uid, "failed",
+                error="пайплайн обновился — перезапустите задачу",
+                reason="graph_version",
+            )
+            return
+
         async def runner() -> None:
             snapshot = await self.graph.aget_state(self._config(task_uid))
             values = dict(snapshot.values or {})

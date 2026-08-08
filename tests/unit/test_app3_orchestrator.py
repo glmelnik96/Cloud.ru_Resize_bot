@@ -24,6 +24,7 @@ from app.services.creatives import (  # noqa: E402
 )
 from app.tasks.events import EventBus  # noqa: E402
 from app.tasks.manager import TaskManager  # noqa: E402
+from graph.builder import GRAPH_VERSION  # noqa: E402
 
 
 # ── fakes ──────────────────────────────────────────────────────
@@ -55,8 +56,6 @@ class _ResumableGraph:
 
     def __init__(self):
         # graph_version — свежий прогон на текущей топологии (гард резюме проходит)
-        from graph.builder import GRAPH_VERSION
-
         self.values = {
             "ranked": [{"id": "c1", "slogan": "S"}],
             "image_prompt": "P",
@@ -802,8 +801,11 @@ async def test_generate_decision_success_runs_to_done(tmp_path):
     zp = tmp_path / "r.zip"
     zp.write_bytes(b"z")
     graph = _TerminalGraph([{"format": "f1", "path": str(png)}], str(zp))
-    # _TerminalGraph needs aget_state for prompt fetch
-    graph.values = {"image_prompt": "P", "image_style": "render"}
+    # _TerminalGraph needs aget_state for prompt fetch; свежий прогон несёт
+    # актуальную версию топологии — иначе гард graph_version его завернёт
+    graph.values = {
+        "image_prompt": "P", "image_style": "render", "graph_version": GRAPH_VERSION,
+    }
 
     async def _aget_state(config):
         return _FakeState(graph.values)
@@ -1038,6 +1040,41 @@ async def test_submit_decision_on_stale_graph_version_fails_clearly(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_generate_decision_on_stale_graph_version_fails_clearly(tmp_path):
+    """Та же дырка со стороны кнопки веб-генерации hero: парковка awaiting_image
+    со старой топологией (чекпоинт без graph_version) не резюмируется через
+    generate_decision — без исключений и без резюме графа задача завершается
+    понятной ошибкой «перезапустите», таймер парковки снят."""
+    Session = await _sessionmaker(tmp_path)
+    graph = _ResumableGraph()
+    # старый прогон: graph_version отсутствует
+    graph.values = {"image_prompt": "P", "image_style": "render"}
+    svc = _service(Session, graph, tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen())
+    async with Session() as s:
+        s.add(models.Task(task_uid="stale2", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    submits = {"count": 0}
+
+    async def counting_submit(user_id, runner):
+        submits["count"] += 1
+        return True
+
+    svc.manager.submit = counting_submit  # type: ignore[assignment]
+
+    # не raises — ни DecisionConflict, ни что-либо ещё
+    await svc.generate_decision("stale2", "1")
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "stale2"))
+        task = res.scalar_one()
+    assert task.status == "failed"
+    assert "перезапустите" in task.error
+    assert submits["count"] == 0  # граф НЕ резюмировался на чужой топологии
+    assert "stale2" not in svc._timeouts  # таймер парковки снят
+
+
+@pytest.mark.asyncio
 async def test_resume_on_non_awaiting_raises_conflict(tmp_path):
     """A resume against a task that is not awaiting_* (already running/done)
     loses the claim → DecisionConflict, so a late duplicate can't re-resume."""
@@ -1096,6 +1133,7 @@ async def test_hero_generation_publishes_incremental_progress(tmp_path):
     graph.values = {
         "image_prompts": ["P1", "P2", "P3"],
         "scenarios": ["render", "photo", "render"],
+        "graph_version": GRAPH_VERSION,
     }
     svc = _service(
         Session, graph, bus=bus, tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen()
