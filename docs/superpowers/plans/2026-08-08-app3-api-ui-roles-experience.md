@@ -11,7 +11,8 @@
 **Конвенции репо (обязательны):**
 - Тесты роутов — по образцу `tests/unit/test_app3_routes.py`: `monkeypatch.setattr(creatives_mod, "init_graph", fake)`, `TestClient`, заголовки `{"X-User-Id": "5", "X-User-Email": "u@cloud.ru"}`. Тесты БД — in-memory `sqlite+aiosqlite:///:memory:` + `init_db` (образец `tests/unit/test_kb_store.py`).
 - Никаких эмодзи — ни в UI, ни в коде, ни в комментариях.
-- Команда тестов: `.venv311/Scripts/python.exe -m pytest tests/unit tests/contract tests/agents -q`. Ruff: `.venv311/Scripts/python.exe -m ruff check <тронутые файлы>` — только тронутые (в репо есть пре-существующие ошибки, их не чинить).
+- Команда тестов: `.venv311/Scripts/python.exe -m pytest tests/unit tests/contract tests/agents -q`. Ruff: `.venv311/Scripts/python.exe -m ruff check <тронутые файлы>` — только тронутые (в репо есть пре-существующие ошибки, их не чинить). Планка — НОЛЬ новых находок, как в Плане 1.
+- Аннотации в новом коде — современные: `list[str]`, `dict[str, Any]`, `str | None`. В `app/api/schemas.py` и `app/db/models.py` исторически много `typing.List`/`Optional`, ruff (`UP` включён) на них ругается — это принятый долг, но дописывать его нельзя: ещё один `Optional[...]` = ещё одна находка. Существующие строки при этом не переписываем.
 - Каждая правка `app/static/*.js` или `app/templates/*.html` требует поднять cache-buster: `?v=20260805v1` → `?v=20260808v1` (в шаблоне, у css и js).
 - Коммиты на ветке `feature/research-loop`, пушей и деплоя НЕТ.
 - Топология графа не меняется — `GRAPH_VERSION` остаётся 2 во всех задачах этого плана.
@@ -323,11 +324,11 @@ class KbProductOut(BaseModel):
     slug: str
     name: str
     version: int
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     tagline: str = ""
     archived: bool = False
     updated_by: str = ""
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     block1: str = ""
     block2: str = ""
     block3: str = ""
@@ -730,9 +731,9 @@ class PersonaIn(BaseModel):
 
     segment: str = Field(min_length=1, max_length=200)
     age_range: str = Field(default="", max_length=64)
-    pain_points: List[str] = Field(min_length=1)
-    motivations: List[str] = Field(min_length=1)
-    objections: List[str] = Field(default_factory=list)
+    pain_points: list[str] = Field(min_length=1)
+    motivations: list[str] = Field(min_length=1)
+    objections: list[str] = Field(default_factory=list)
     communication_style: str = Field(default="", max_length=600)
 
 
@@ -744,7 +745,7 @@ class PersonaDecisionIn(BaseModel):
     """
 
     action: Literal["approve", "regenerate", "cancel"]
-    persona: Optional[PersonaIn] = None
+    persona: PersonaIn | None = None
 ```
 
 - [ ] **Step 4: Роут**
@@ -1037,7 +1038,7 @@ class TextDecisionIn(BaseModel):
     """
 
     action: Literal["approve", "regenerate", "cancel"]
-    winner_id: Optional[str] = Field(default=None, max_length=64)
+    winner_id: str | None = Field(default=None, max_length=64)
 ```
 
 В `app/api/routes_tasks.py` — тело `decide_text`:
@@ -1574,9 +1575,9 @@ Expected: FAIL — `AttributeError: 'CreativesService' object has no attribute '
 В `_finish` добавить параметр и запись:
 
 ```python
-        cards: Optional[list[dict]] = None,
-        recipe: Optional[dict] = None,
-        reason: Optional[str] = None,
+        cards: list[dict] | None = None,
+        recipe: dict | None = None,
+        reason: str | None = None,
 ```
 ```python
             if cards:
@@ -1596,9 +1597,9 @@ Expected: PASS
 В `app/api/schemas.py`, `TaskOut`, добавить поле:
 
 ```python
-    cards: List[Dict[str, Any]] = Field(default_factory=list)
+    cards: list[dict[str, Any]] = Field(default_factory=list)
     # «Как сделан этот баннер»: победитель, персона, карточка знаний, метафора.
-    recipe: Dict[str, Any] = Field(default_factory=dict)
+    recipe: dict[str, Any] = Field(default_factory=dict)
 ```
 
 В `app/api/routes_tasks.py` добавить рядом с `_task_cards`:
@@ -2600,7 +2601,7 @@ class KbProductIn(BaseModel):
 
     slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
     name: str = Field(min_length=2, max_length=128)
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     tagline: str = Field("", max_length=500)
     block1: str = Field("", max_length=20000)
     block2: str = Field("", max_length=20000)
@@ -2611,13 +2612,13 @@ class KbProductPatch(BaseModel):
     """Правка: только присланные поля меняются, остальные переносятся из
     предыдущей версии (см. store.update_product). None = «не трогать»."""
 
-    name: Optional[str] = Field(None, min_length=2, max_length=128)
-    aliases: Optional[List[str]] = None
-    tagline: Optional[str] = Field(None, max_length=500)
-    block1: Optional[str] = Field(None, max_length=20000)
-    block2: Optional[str] = Field(None, max_length=20000)
-    block3: Optional[str] = Field(None, max_length=20000)
-    archived: Optional[bool] = None
+    name: str | None = Field(None, min_length=2, max_length=128)
+    aliases: list[str] | None = None
+    tagline: str | None = Field(None, max_length=500)
+    block1: str | None = Field(None, max_length=20000)
+    block2: str | None = Field(None, max_length=20000)
+    block3: str | None = Field(None, max_length=20000)
+    archived: bool | None = None
 
 
 class KbVersionOut(BaseModel):
@@ -2629,7 +2630,7 @@ class KbVersionOut(BaseModel):
     tagline: str = ""
     archived: bool = False
     updated_by: str = ""
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     block1: str = ""
     block2: str = ""
     block3: str = ""
@@ -3826,7 +3827,7 @@ class ExperienceOut(BaseModel):
     anchor: str = ""
     persona_segment: str = ""
     comment: str = ""
-    created_at: Optional[str] = None
+    created_at: str | None = None
 ```
 
 Роут в `app/api/routes_kb.py`:
