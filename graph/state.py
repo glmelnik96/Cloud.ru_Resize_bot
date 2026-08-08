@@ -352,6 +352,10 @@ class GraphState(TypedDict, total=False):
 
     session_id: str
     user_id: int
+    # Версия топологии графа на момент СТАРТА прогона (graph.builder.
+    # GRAPH_VERSION). Читается гардом в submit_decision: парковка, записанная
+    # другой версией, не резюмируется — задача завершается честной ошибкой.
+    graph_version: int
     brief: AdBrief
     product: dict  # ProductBrief.model_dump() — grounding for every text node
     # Какая карточка библиотеки подхвачена (None — работаем только по брифу).

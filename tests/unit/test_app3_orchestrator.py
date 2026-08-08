@@ -54,7 +54,15 @@ class _ResumableGraph:
     → image interrupt; Command(resume=cancel) → terminal cancelled."""
 
     def __init__(self):
-        self.values = {"ranked": [{"id": "c1", "slogan": "S"}], "image_prompt": "P", "image_style": "render"}
+        # graph_version — свежий прогон на текущей топологии (гард резюме проходит)
+        from graph.builder import GRAPH_VERSION
+
+        self.values = {
+            "ranked": [{"id": "c1", "slogan": "S"}],
+            "image_prompt": "P",
+            "image_style": "render",
+            "graph_version": GRAPH_VERSION,
+        }
 
     async def astream(self, payload, config=None, stream_mode=None):
         resume = getattr(payload, "resume", None)
@@ -993,6 +1001,40 @@ async def test_double_resume_second_loses_claim(tmp_path):
     async with Session() as s:
         res = await s.execute(select(models.Task).where(models.Task.task_uid == "dr1"))
         assert res.scalar_one().status == "running"
+
+
+@pytest.mark.asyncio
+async def test_submit_decision_on_stale_graph_version_fails_clearly(tmp_path):
+    """Парковка со старой топологией (чекпоинт без graph_version или с другой
+    версией) не восстанавливается на новом графе: submit_decision НЕ бросает
+    исключение и не резюмирует граф — задача завершается понятной ошибкой
+    «перезапустите», таймер парковки не остаётся висеть."""
+    Session = await _sessionmaker(tmp_path)
+    graph = _ResumableGraph()
+    graph.values = {"ranked": [{"id": "c1"}]}  # старый прогон: graph_version отсутствует
+    svc = _service(Session, graph, tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="stale1", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    submits = {"count": 0}
+
+    async def counting_submit(user_id, runner):
+        submits["count"] += 1
+        return True
+
+    svc.manager.submit = counting_submit  # type: ignore[assignment]
+
+    # не raises — ни DecisionConflict, ни что-либо ещё
+    await svc.submit_decision("stale1", "1", {"action": "approve"})
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "stale1"))
+        task = res.scalar_one()
+    assert task.status == "failed"
+    assert "перезапустите" in task.error
+    assert submits["count"] == 0  # граф НЕ резюмировался на чужой топологии
+    assert "stale1" not in svc._timeouts  # таймер парковки снят
 
 
 @pytest.mark.asyncio

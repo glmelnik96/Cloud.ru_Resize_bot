@@ -50,6 +50,12 @@ from graph.nodes.select_by_persona import select_by_persona
 from graph.nodes.understand_product import understand_product
 from graph.state import GraphState
 
+# Версия топологии графа. Растёт при каждом изменении набора узлов/рёбер.
+# Парковка, пережившая деплой с другой версией, не восстанавливается на новой
+# топологии, а завершается понятной ошибкой (спека 2026-08-07). Версия 2 —
+# ветка research-loop: остановка персоны + петля метафоры (self-loop).
+GRAPH_VERSION = 2
+
 
 def _route_after_persona_hitl(state: GraphState) -> str:
     if state.get("cancelled"):

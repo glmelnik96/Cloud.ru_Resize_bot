@@ -30,6 +30,7 @@ from app.services.hero_gen import HeroGenerator, HeroGenUnavailable, NullHeroGen
 from app.tasks.events import EventBus
 from app.tasks.manager import TaskManager
 from app.tasks.status import WebStatusReporter
+from graph.builder import GRAPH_VERSION
 from graph.state import AdBrief
 
 log = structlog.get_logger(__name__)
@@ -185,6 +186,9 @@ class CreativesService:
         payload = {
             "session_id": task_uid,
             "user_id": int(user_id),
+            # Штамп топологии в чекпоинте: гард в submit_decision сравнит его
+            # с текущей GRAPH_VERSION при резюме после деплоя.
+            "graph_version": GRAPH_VERSION,
             "brief": build_brief(fields),
         }
 
@@ -223,6 +227,23 @@ class CreativesService:
             raise DecisionConflict("task is not awaiting a decision")
         self._cancel_timeout(task_uid)
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
+
+        # Гард топологии: чекпоинт, записанный другой версией графа (деплой
+        # сменил набор узлов/рёбер), нельзя безопасно резюмировать — вместо
+        # неопределённого поведения задача завершается честной ошибкой, и
+        # пользователь просто перезапускает её (спека 2026-08-07).
+        snapshot = await self.graph.aget_state(self._config(task_uid))
+        stored = dict(snapshot.values or {}).get("graph_version")
+        if stored != GRAPH_VERSION:
+            log.warning("graph_version_mismatch", task_uid=task_uid, stored=stored)
+            await reporter.error("пайплайн обновился — перезапустите задачу")
+            await self._finish(
+                task_uid, "failed",
+                error="пайплайн обновился — перезапустите задачу",
+                reason="graph_version",
+            )
+            return
+
         payload = Command(resume=decision)
 
         async def runner() -> None:

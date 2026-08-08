@@ -82,7 +82,14 @@ class _PauseGraph:
             yield {"hitl": {"cancelled": True}}
 
     async def aget_state(self, config):
-        raise RuntimeError("no checkpoint in this fake")
+        # Свежий прогон на текущей топологии: гард graph_version в
+        # submit_decision должен проходить (задача НЕ должна падать).
+        from graph.builder import GRAPH_VERSION
+
+        class _S:
+            values = {"graph_version": GRAPH_VERSION}
+
+        return _S()
 
 
 class _BoomGraph:
