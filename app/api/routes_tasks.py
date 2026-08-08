@@ -233,27 +233,50 @@ def _safe_suffix(filename: str) -> str:
     return ext if ext in _IMAGE_EXT else ".png"
 
 
+_IMAGE_ACTIONS = ("upload", "generate", "cancel", "metaphor")
+
+
 @router.post("/tasks/{uid}/decision/image")
 async def decide_image(
     uid: str,
     request: Request,
     action: str = Form("upload"),
+    comment: str = Form(""),
     file: UploadFile | None = File(None),
 ):
-    """Resume HITL pause #2 (hero image).
+    """Resume остановки «Картинка».
 
     multipart form:
-      - action=upload + file  → save the browser upload, resume with local_path
-      - action=cancel         → cancel the task
-      - action=generate       → web Phygital generation (Phase 5; 501 for now)
+      - action=upload + file    → сохранить загрузку, резюмить с local_path
+      - action=generate         → серверная генерация 12 hero
+      - action=metaphor + comment → перегенерация образа победителя (1 вызов LLM)
+      - action=cancel           → отмена задачи
     """
     user = await get_current_user(request)
     task = await _load_owned(request, uid, user)
     if task.status != "awaiting_image":
         raise HTTPException(409, f"task not awaiting image (status={task.status})")
+    if action not in _IMAGE_ACTIONS:
+        raise HTTPException(422, f"unknown action: {action}")
     service = request.app.state.creatives
     if service is None:
         raise HTTPException(503, "service unavailable")
+
+    if action == "metaphor":
+        text = comment.strip()
+        if not text:
+            # Пустой комментарий не несёт правки — граф вернулся бы на ту же
+            # остановку впустую, потратив вызов LLM.
+            raise HTTPException(422, "metaphor comment is empty")
+        try:
+            await service.submit_decision(
+                uid, str(user.id), {"action": "metaphor", "comment": text}
+            )
+        except DecisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except CapacityError as exc:
+            raise HTTPException(429, str(exc)) from exc
+        return {"ok": True, "action": "metaphor"}
 
     if action == "cancel":
         try:

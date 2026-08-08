@@ -48,11 +48,19 @@ async def hitl_image_upload(state: GraphState) -> dict:
         prompt_len=len(image_prompt),
     )
 
+    # Метафора победителя — то, что человек обсуждает на этой остановке.
+    # Пусто, если generate_image_prompt по какой-то причине не отдал meta:
+    # экран тогда просто показывает промпт, как до 2026-08-07.
+    meta = (state.get("metaphor_meta") or [{}])[0] or {}
+
     decision: dict = interrupt(
         {
             "kind": "image_upload",
             "image_prompt": image_prompt,
             "image_style": image_style,
+            "metaphor": meta.get("metaphor", ""),
+            "intended_inference": meta.get("intended_inference", ""),
+            "anti_reading": meta.get("anti_reading", ""),
             "session_id": state.get("session_id"),
         }
     )

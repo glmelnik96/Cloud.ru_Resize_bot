@@ -691,3 +691,51 @@ def test_create_rejects_archived_product_slug(tmp_path, monkeypatch):
             headers=_HDR,
         )
         assert r.status_code == 422
+
+
+def test_decide_image_metaphor_forwards_comment(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "img01", "awaiting_image", me["id"])
+        stub = _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/img01/decision/image",
+            data={"action": "metaphor", "comment": "слишком буквально, дай абстракцию"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200
+        assert stub.seen[2] == {
+            "action": "metaphor",
+            "comment": "слишком буквально, дай абстракцию",
+        }
+
+
+def test_decide_image_metaphor_requires_comment(tmp_path, monkeypatch):
+    """Пустой комментарий увёл бы граф на повторный interrupt без причины."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "img02", "awaiting_image", me["id"])
+        _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/img02/decision/image",
+            data={"action": "metaphor", "comment": "   "},
+            headers=_HDR,
+        )
+        assert r.status_code == 422
+
+
+def test_decide_image_rejects_unknown_action(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "img03", "awaiting_image", me["id"])
+        _stub_decisions(app)
+        r = c.post(
+            "/api/tasks/img03/decision/image", data={"action": "nope"}, headers=_HDR
+        )
+        assert r.status_code == 422

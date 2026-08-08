@@ -380,10 +380,17 @@ class CreativesService:
         if status == "awaiting_text":
             return {"phase": "text_approve", "candidates": values.get("ranked") or []}
         if status == "awaiting_image":
+            # Payload interrupt в чекпоинте не хранится — метафору собираем
+            # из состояния, чтобы переподключившийся браузер увидел ту же
+            # задумку, что и в SSE.
+            meta = (values.get("metaphor_meta") or [{}])[0] or {}
             return {
                 "phase": "image_upload",
                 "image_prompt": values.get("image_prompt", ""),
                 "image_style": values.get("image_style", ""),
+                "metaphor": meta.get("metaphor", ""),
+                "intended_inference": meta.get("intended_inference", ""),
+                "anti_reading": meta.get("anti_reading", ""),
                 "can_generate": True,
             }
         return None
@@ -470,6 +477,9 @@ class CreativesService:
             data = {
                 "image_prompt": value.get("image_prompt", ""),
                 "image_style": value.get("image_style", ""),
+                "metaphor": value.get("metaphor", ""),
+                "intended_inference": value.get("intended_inference", ""),
+                "anti_reading": value.get("anti_reading", ""),
                 "can_generate": self.hero_generator.available,
             }
             await reporter.awaiting(phase="image_upload", data=data)

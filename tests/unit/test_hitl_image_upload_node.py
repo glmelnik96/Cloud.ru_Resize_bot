@@ -130,3 +130,35 @@ async def test_missing_image_prompt_errors_without_interrupt(monkeypatch):
     out = await mod.hitl_image_upload(state)  # type: ignore[arg-type]
     assert "error" in out
     assert called["flag"] is False
+
+
+@pytest.mark.asyncio
+async def test_interrupt_payload_carries_metaphor_meta(monkeypatch):
+    """Человек должен видеть, ЧТО за образ ему предлагают, иначе комментировать
+    метафору нечем."""
+    fake = _patch_interrupt(monkeypatch, {"action": "cancel"})
+    await mod.hitl_image_upload(
+        _state(  # type: ignore[arg-type]
+            metaphor_meta=[
+                {
+                    "candidate_id": "c1",
+                    "metaphor": "a bridge across a canyon",
+                    "rationale": "переход от хаоса к порядку",
+                    "intended_inference": "с продуктом путь становится коротким",
+                    "anti_reading": "не должно читаться как стройка",
+                }
+            ]
+        )
+    )
+    p = fake.last_payload
+    assert p["metaphor"] == "a bridge across a canyon"
+    assert p["intended_inference"] == "с продуктом путь становится коротким"
+    assert p["anti_reading"] == "не должно читаться как стройка"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_payload_without_metaphor_meta_is_empty_strings(monkeypatch):
+    fake = _patch_interrupt(monkeypatch, {"action": "cancel"})
+    await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
+    p = fake.last_payload
+    assert p["metaphor"] == "" and p["anti_reading"] == ""

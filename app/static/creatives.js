@@ -168,6 +168,7 @@
       focusPanel($("textPanel"));
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
+      renderMetaphor(d);
       if (d.can_generate) show($("genBtn")); else hide($("genBtn"));
       let msg = "";
       if (d.gen_error) msg = `Генерация не удалась: ${d.gen_error}. Загрузи картинку.`;
@@ -338,6 +339,30 @@
     $("imageStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
     show($("imagePanel"));
   }
+  // Задумка образа: показываем её, только если петля метафоры реально дала
+  // meta — иначе экран остаётся прежним (один промпт без разговора).
+  function renderMetaphor(d) {
+    const box = $("metaphorBox");
+    if (!d.metaphor) { hide(box); return; }
+    $("mIdea").textContent = d.metaphor;
+    $("mInfer").textContent = d.intended_inference || "—";
+    $("mAnti").textContent = d.anti_reading || "—";
+    $("metaphorComment").value = "";
+    box.classList.remove("hidden");
+  }
+
+  $("metaphorBtn").addEventListener("click", () => {
+    const comment = $("metaphorComment").value.trim();
+    if (!comment) {
+      $("imageStatus").innerHTML = '<span class="err">Напиши, что не так с образом — иначе переделывать нечего.</span>';
+      return;
+    }
+    const fd = new FormData();
+    fd.append("action", "metaphor");
+    fd.append("comment", comment);
+    sendImage(fd, "Переделываю образ…");
+  });
+
   $("genBtn").addEventListener("click", () => {
     const fd = new FormData(); fd.append("action", "generate");
     sendImage(fd, "Генерирую 12 hero…");
