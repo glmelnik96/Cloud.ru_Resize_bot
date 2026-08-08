@@ -228,20 +228,7 @@ class CreativesService:
         self._cancel_timeout(task_uid)
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
 
-        # Гард топологии: чекпоинт, записанный другой версией графа (деплой
-        # сменил набор узлов/рёбер), нельзя безопасно резюмировать — вместо
-        # неопределённого поведения задача завершается честной ошибкой, и
-        # пользователь просто перезапускает её (спека 2026-08-07).
-        snapshot = await self.graph.aget_state(self._config(task_uid))
-        stored = dict(snapshot.values or {}).get("graph_version")
-        if stored != GRAPH_VERSION:
-            log.warning("graph_version_mismatch", task_uid=task_uid, stored=stored)
-            await reporter.error("пайплайн обновился — перезапустите задачу")
-            await self._finish(
-                task_uid, "failed",
-                error="пайплайн обновился — перезапустите задачу",
-                reason="graph_version",
-            )
+        if not await self._guard_graph_version(task_uid, reporter):
             return
 
         payload = Command(resume=decision)
@@ -292,19 +279,7 @@ class CreativesService:
         self._cancel_timeout(task_uid)
         reporter = WebStatusReporter(self.bus, task_uid=task_uid, label="creatives", eta_sec=None)
 
-        # Гард топологии — та же дырка, что и в submit_decision: кнопка
-        # веб-генерации hero тоже резюмирует парковку, и чекпоинт другой
-        # версии графа нельзя безопасно поднимать (спека 2026-08-07).
-        guard_snapshot = await self.graph.aget_state(self._config(task_uid))
-        stored = dict(guard_snapshot.values or {}).get("graph_version")
-        if stored != GRAPH_VERSION:
-            log.warning("graph_version_mismatch", task_uid=task_uid, stored=stored)
-            await reporter.error("пайплайн обновился — перезапустите задачу")
-            await self._finish(
-                task_uid, "failed",
-                error="пайплайн обновился — перезапустите задачу",
-                reason="graph_version",
-            )
+        if not await self._guard_graph_version(task_uid, reporter):
             return
 
         async def runner() -> None:
@@ -688,6 +663,41 @@ class CreativesService:
                 .where(models.Task.status.in_(_OPEN_STATUSES))
             )
             return int(res.scalar_one())
+
+    async def _guard_graph_version(self, task_uid: str, reporter: WebStatusReporter) -> bool:
+        """Гард топологии перед резюме парковки (submit_decision, generate_decision).
+
+        Чекпоинт, записанный другой версией графа (деплой сменил набор
+        узлов/рёбер), нельзя безопасно резюмировать — вместо неопределённого
+        поведения задача завершается честной ошибкой, и пользователь просто
+        перезапускает её (спека 2026-08-07). Чтение чекпоинта тоже под гардом:
+        вызов идёт ПОСЛЕ _claim_running и _cancel_timeout, и вылетевшее здесь
+        исключение оставило бы вечную running-строку без таймера.
+
+        Возвращает True, если резюме можно продолжать.
+        """
+        try:
+            snapshot = await self.graph.aget_state(self._config(task_uid))
+            stored = dict(snapshot.values or {}).get("graph_version")
+        except Exception as exc:
+            log.warning("graph_version_check_failed", task_uid=task_uid, error=str(exc))
+            await reporter.error("не удалось прочитать состояние — перезапустите задачу")
+            await self._finish(
+                task_uid, "failed",
+                error="не удалось прочитать состояние — перезапустите задачу",
+                reason="graph_version_check_failed",
+            )
+            return False
+        if stored != GRAPH_VERSION:
+            log.warning("graph_version_mismatch", task_uid=task_uid, stored=stored)
+            await reporter.error("пайплайн обновился — перезапустите задачу")
+            await self._finish(
+                task_uid, "failed",
+                error="пайплайн обновился — перезапустите задачу",
+                reason="graph_version",
+            )
+            return False
+        return True
 
     async def _claim_running(self, task_uid: str) -> Optional[str]:
         """Atomically flip an awaiting_* task to 'running' (compare-and-set).

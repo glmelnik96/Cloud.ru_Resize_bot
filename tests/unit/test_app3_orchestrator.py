@@ -1075,6 +1075,43 @@ async def test_generate_decision_on_stale_graph_version_fails_clearly(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_submit_decision_checkpoint_read_failure_no_stuck_running(tmp_path):
+    """Если чтение чекпоинта в гарде падает (I/O, битая база чекпоинтера),
+    задача не должна застрять в running с уже снятым таймером: исключение не
+    выходит наружу, задача завершается понятной ошибкой «перезапустите»."""
+    Session = await _sessionmaker(tmp_path)
+    graph = _ResumableGraph()
+
+    async def broken_aget_state(config):
+        raise RuntimeError("checkpoint db corrupted")
+
+    graph.aget_state = broken_aget_state  # type: ignore[assignment]
+    svc = _service(Session, graph, tmp=tmp_path / "tmp")
+    async with Session() as s:
+        s.add(models.Task(task_uid="io1", user_id=1, workflow="creatives", status="awaiting_text"))
+        await s.commit()
+
+    submits = {"count": 0}
+
+    async def counting_submit(user_id, runner):
+        submits["count"] += 1
+        return True
+
+    svc.manager.submit = counting_submit  # type: ignore[assignment]
+
+    # не raises — гард ловит исключение чтения чекпоинта сам
+    await svc.submit_decision("io1", "1", {"action": "approve"})
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "io1"))
+        task = res.scalar_one()
+    assert task.status == "failed"  # не застряла в running
+    assert "перезапустите" in task.error
+    assert submits["count"] == 0
+    assert "io1" not in svc._timeouts
+
+
+@pytest.mark.asyncio
 async def test_resume_on_non_awaiting_raises_conflict(tmp_path):
     """A resume against a task that is not awaiting_* (already running/done)
     loses the claim → DecisionConflict, so a late duplicate can't re-resume."""
