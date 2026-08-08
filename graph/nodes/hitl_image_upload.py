@@ -71,19 +71,32 @@ async def hitl_image_upload(state: GraphState) -> dict:
                 "metaphor_comment_empty",
                 session_id=state.get("session_id"),
             )
-            return {"metaphor_comment": None}
+            # Empty comment = no-op. Signal the router to re-interrupt at this
+            # node rather than falling through to fill_templates_per_format
+            # (which would crash because no image has been uploaded yet).
+            # image_action_pending is cleared by every branch that actually
+            # leaves this stop (upload, non-empty metaphor, cancel/timeout).
+            return {"metaphor_comment": None, "image_action_pending": True}
         history = [*(state.get("metaphor_comments") or []), comment]
-        return {"metaphor_comment": comment, "metaphor_comments": history}
+        return {
+            "metaphor_comment": comment,
+            "metaphor_comments": history,
+            "image_action_pending": False,
+        }
 
     if action == "upload":
         # Generation path: a list of heroes (one per proposition) was produced
         # server-side and resumed here -> state.generated_heroes.
         heroes = decision.get("heroes")
         if heroes:
-            return {"generated_heroes": list(heroes)}
+            return {"generated_heroes": list(heroes), "image_action_pending": False}
         local_path = decision.get("local_path")
         if not local_path:
-            return {"error": "image upload resumed without local_path", "cancelled": True}
+            return {
+                "error": "image upload resumed without local_path",
+                "cancelled": True,
+                "image_action_pending": False,
+            }
         image = GeneratedImage(
             url=None,
             local_path=local_path,
@@ -91,14 +104,14 @@ async def hitl_image_upload(state: GraphState) -> dict:
             variant="default",
             prompt=decision.get("prompt", image_prompt),
         )
-        return {"image": image.model_dump()}
+        return {"image": image.model_dump(), "image_action_pending": False}
 
     if action == "timeout":
         log.warning(
             "hitl_image_upload_timeout",
             session_id=state.get("session_id"),
         )
-        return {"cancelled": True, "error": "image_upload_timeout"}
+        return {"cancelled": True, "error": "image_upload_timeout", "image_action_pending": False}
 
     # cancel (default)
-    return {"cancelled": True}
+    return {"cancelled": True, "image_action_pending": False}

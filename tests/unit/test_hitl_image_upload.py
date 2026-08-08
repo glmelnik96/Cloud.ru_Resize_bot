@@ -46,12 +46,15 @@ async def test_metaphor_action_stores_comment(decide):
 
 
 @pytest.mark.asyncio
-async def test_metaphor_action_empty_comment_is_noop(decide):
-    """Пустой комментарий — не перегенерация и не отмена."""
+async def test_metaphor_action_empty_comment_reinterrupts(decide):
+    """Пустой комментарий — не перегенерация и не отмена; граф должен встать
+    заново в hitl_image_upload (сигнал image_action_pending=True)."""
     decide({"action": "metaphor", "comment": "  "})
     out = await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
     assert out.get("metaphor_comment") is None
     assert out.get("cancelled") is None or out.get("cancelled") is False
+    # явный сигнал для роутера: нет артефакта → пауза снова
+    assert out.get("image_action_pending") is True
 
 
 @pytest.mark.asyncio

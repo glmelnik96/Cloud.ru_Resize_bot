@@ -94,7 +94,8 @@ async def test_upload_action_with_heroes_populates_generated_heroes(monkeypatch)
 async def test_cancel_action(monkeypatch):
     _patch_interrupt(monkeypatch, {"action": "cancel"})
     out = await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
-    assert out == {"cancelled": True}
+    assert out["cancelled"] is True
+    assert out.get("image_action_pending") is False
 
 
 @pytest.mark.asyncio
@@ -109,7 +110,8 @@ async def test_timeout_action(monkeypatch):
 async def test_unknown_action_cancels(monkeypatch):
     _patch_interrupt(monkeypatch, {"action": "garbage"})
     out = await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
-    assert out == {"cancelled": True}
+    assert out["cancelled"] is True
+    assert out.get("image_action_pending") is False
 
 
 @pytest.mark.asyncio

@@ -23,6 +23,7 @@ Everything is grounded first, by a node that actually studies the product.
                           -> generate_image_prompt
                           -> hitl_image_upload      (interrupt; upload/generate)
                              --(cancel/timeout)--------> END
+                             --(empty comment)---------> hitl_image_upload (self-loop, re-interrupt)
                              --(metaphor comment)-----> generate_image_prompt
                              --(upload)---------> fill_templates_per_format
                                                   -> render_all -> END
@@ -72,6 +73,12 @@ def _route_after_image_hitl(state: GraphState) -> str:
     # cancel / timeout park the run as cancelled; only an upload or metaphor loop proceeds.
     if state.get("cancelled"):
         return END
+    # Empty metaphor comment: the user submitted whitespace only. Re-interrupt
+    # at this node so they can try again without consuming the interrupt.
+    # The node sets image_action_pending=True; every non-empty-comment exit
+    # clears it to False so the signal can't leak across loop iterations.
+    if state.get("image_action_pending"):
+        return "hitl_image_upload"
     if state.get("metaphor_comment"):
         # петля: комментарий маркетолога -> перегенерация метафоры победителя
         return "generate_image_prompt"
@@ -126,6 +133,7 @@ def build_text_graph() -> StateGraph:
         {
             "fill_templates_per_format": "fill_templates_per_format",
             "generate_image_prompt": "generate_image_prompt",
+            "hitl_image_upload": "hitl_image_upload",  # empty comment → re-interrupt
             END: END,
         },
     )

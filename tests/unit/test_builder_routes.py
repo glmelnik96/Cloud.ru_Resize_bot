@@ -57,6 +57,41 @@ def test_route_after_image_hitl_metaphor_loop():
     assert builder._route_after_image_hitl({"cancelled": True}) == END
 
 
+def test_route_after_image_hitl_empty_comment_reinterrupts():
+    """image_action_pending=True (пустой комментарий) → hitl_image_upload снова."""
+    assert (
+        builder._route_after_image_hitl({"image_action_pending": True})
+        == "hitl_image_upload"
+    )
+
+
+def test_route_after_image_hitl_upload_clears_pending():
+    """Успешный upload (image присутствует, image_action_pending=False/absent)
+    → fill_templates_per_format, несмотря на любой предыдущий цикл."""
+    # После успешного upload узел сбрасывает image_action_pending → False
+    state_after_upload = {
+        "image": {"local_path": "/tmp/h.png", "style": "render"},
+        "image_action_pending": False,
+    }
+    assert (
+        builder._route_after_image_hitl(state_after_upload) == "fill_templates_per_format"
+    )
+
+
+def test_image_hitl_self_loop_in_graph():
+    """Граф должен содержать conditional-ребро hitl_image_upload → hitl_image_upload."""
+    compiled = builder.build_text_graph().compile()
+    cg = compiled.get_graph()
+    self_loop_targets = {
+        e.target
+        for e in cg.edges
+        if e.source == "hitl_image_upload" and e.conditional
+    }
+    assert "hitl_image_upload" in self_loop_targets, (
+        f"self-loop branch missing; got {self_loop_targets}"
+    )
+
+
 def test_persona_hitl_conditional_branches():
     """hitl_persona_approve должна иметь conditional-рёбра в три узла:
     generate_message_candidates, derive_persona и END (__end__)."""

@@ -388,3 +388,8 @@ class GraphState(TypedDict, total=False):
     # и вся история комментариев для provenance.
     metaphor_comment: str | None
     metaphor_comments: list[str]
+    # Сигнал роутера: пустой комментарий в hitl_image_upload → повторная пауза.
+    # Устанавливается только веткой пустого комментария; сбрасывается всеми
+    # выходящими ветками (upload / metaphor / cancel), чтобы не просочиться
+    # в следующий цикл.
+    image_action_pending: bool

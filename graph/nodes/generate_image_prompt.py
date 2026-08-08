@@ -105,6 +105,14 @@ _WORD_MAX = 40
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
 
 
+def _load_sections() -> tuple[str, str]:
+    """Load (system_msg, user_tpl) from the generate_image_prompt skill."""
+    skill = load_skill(_SKILL_NAME)
+    system_msg = _extract_section(skill.body, "## System message")
+    user_tpl = _extract_section(skill.body, "## User message template")
+    return system_msg, user_tpl
+
+
 async def generate_image_prompt(state: GraphState) -> dict:
     brief = _coerce(state.get("brief"), AdBrief, "brief")
     personas_raw = state.get("personas") or []
@@ -138,16 +146,14 @@ async def generate_image_prompt(state: GraphState) -> dict:
         ]
     styles = [s if s in _VALID_STYLES else "photo" for s in scenarios]
 
-    skill = load_skill(_SKILL_NAME)
-    system_msg = _extract_section(skill.body, "## System message")
-    user_tpl = _extract_section(skill.body, "## User message template")
+    system_msg, user_tpl = _load_sections()
 
     results = await asyncio.gather(
         *(
             _build_one(
                 system_msg, user_tpl, brief, persona, product, cand, style, session_id
             )
-            for cand, style in zip(candidates, styles)
+            for cand, style in zip(candidates, styles, strict=False)
         )
     )
     prompts = [prompt for prompt, _meta in results]
@@ -180,9 +186,7 @@ async def _regenerate_winner(
     style = style_raw if style_raw in _VALID_STYLES else "photo"
 
     prev_meta = (state.get("metaphor_meta") or [{}])[0]
-    skill = load_skill(_SKILL_NAME)
-    system_msg = _extract_section(skill.body, "## System message")
-    user_tpl = _extract_section(skill.body, "## User message template")
+    system_msg, user_tpl = _load_sections()
 
     prompt, meta = await _build_one(
         system_msg,
@@ -193,7 +197,8 @@ async def _regenerate_winner(
         candidates[0],
         style,
         session_id,
-        feedback=(prev_meta.get("metaphor", ""), comment),
+        prev_metaphor=prev_meta.get("metaphor", ""),
+        feedback_comment=comment,
     )
 
     prompts = list(state.get("image_prompts") or [])
@@ -225,7 +230,9 @@ async def _build_one(
     cand: MessageCandidate,
     style: str,
     session_id: str | None,
-    feedback: tuple[str, str] | None = None,
+    *,
+    prev_metaphor: str = "",
+    feedback_comment: str = "",
 ) -> tuple[str, dict]:
     user_msg = _render(
         user_tpl,
@@ -246,13 +253,14 @@ async def _build_one(
             "metaphor_kind": _METAPHOR_KIND[style],
         },
     )
-    if feedback:
-        prev_metaphor, comment = feedback
+    if feedback_comment:
+        prev_line = f"Previous metaphor: {prev_metaphor}\n" if prev_metaphor else ""
         user_msg += (
             "\n\nFEEDBACK FROM THE MARKETER (Russian) about the previous "
-            f"metaphor — address it directly:\nPrevious metaphor: {prev_metaphor}\n"
-            f"Comment: {comment}\n"
-            "Propose a DIFFERENT metaphor honouring this feedback."
+            f"metaphor — address it directly:\n{prev_line}"
+            f"Comment: {feedback_comment}\n"
+            "Propose a revised metaphor that honours this feedback — a different "
+            "image unless the comment asks to keep or adjust the current one."
         )
     result = await run_agent(
         _AGENT_ID,
