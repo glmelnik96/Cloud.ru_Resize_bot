@@ -3,8 +3,9 @@
 Каждый ZIP несёт паспорт происхождения: версии промптов, конфигурацию
 агентов (модель + объявленная fallback-цепочка), версию манифеста шаблонов,
 источник и sha256 hero-ассета, выбранные карточки с оффер-полями и
-lint_flags, метафорные обоснования (metaphor_meta). Provenance — best-effort:
-его сбой никогда не роняет сборку ZIP.
+lint_flags, метафорные обоснования (metaphor_meta). Паспорт отражает
+человеческие решения — победитель, персона, комментарии к метафоре,
+kb_source. Provenance — best-effort: его сбой никогда не роняет сборку ZIP.
 """
 
 from __future__ import annotations
@@ -170,3 +171,31 @@ async def test_provenance_failure_is_fail_open(tmp_path, monkeypatch):
     with zipfile.ZipFile(out["rendered_zip_path"]) as zf:
         assert "provenance.json" not in zf.namelist()
         assert "01_photo.png" in zf.namelist()
+
+
+# ----- человеческие решения в паспорте ----------------------------------------
+
+
+def test_human_decisions_in_provenance(tmp_path):
+    st = _state(
+        winner_id="c1",
+        personas=[{"segment": "ML-инженер", "age_range": "28-40",
+                   "pain_points": ["x"], "motivations": ["y"],
+                   "objections": ["z"], "communication_style": "инженерный"}],
+        metaphor_comments=["не часы, покажи очередь"],
+        kb_match={"slug": "evolution-ml-inference", "name": "Evolution ML Inference",
+                  "version": 3},
+    )
+    prov = build_provenance(st, rendered_files=_rendered(tmp_path))
+    assert prov["winner_id"] == "c1"
+    assert prov["persona"]["segment"] == "ML-инженер"
+    assert prov["metaphor_comments"] == ["не часы, покажи очередь"]
+    assert prov["kb_source"] == {"slug": "evolution-ml-inference",
+                                 "name": "Evolution ML Inference", "version": 3}
+
+
+def test_human_decisions_defaults(tmp_path):
+    prov = build_provenance(_state(), rendered_files=_rendered(tmp_path))
+    assert prov["winner_id"] is None
+    assert prov["metaphor_comments"] == []
+    assert prov["kb_source"] is None

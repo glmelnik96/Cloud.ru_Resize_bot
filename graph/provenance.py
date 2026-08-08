@@ -9,7 +9,9 @@
 - версию манифеста шаблонов (config/templates.json);
 - выбранные карточки с оффер-полями (anchor/desired_outcome) и lint_flags;
 - метафорные обоснования (metaphor_meta из generate_image_prompt);
-- источник hero (generated/uploaded) и sha256 каждого hero-ассета.
+- источник hero (generated/uploaded) и sha256 каждого hero-ассета;
+- человеческие решения — победитель (winner_id), одобренная персона,
+  комментарии к регенерации метафоры, карточка знаний (kb_source).
 
 Паспорт — best-effort: вызывающий (render_all) оборачивает сбой в fail-open,
 ZIP без provenance.json лучше, чем никакого ZIP.
@@ -50,6 +52,11 @@ def build_provenance(state: dict, *, rendered_files: list[dict]) -> dict:
         "metaphor_meta": state.get("metaphor_meta") or [],
         "hero_source": _hero_source(state),
         "files": [_file_entry(e) for e in rendered_files],
+        # человеческие решения, принятые в HITL-остановках
+        "winner_id": state.get("winner_id"),
+        "persona": (state.get("personas") or [None])[0],
+        "metaphor_comments": state.get("metaphor_comments") or [],
+        "kb_source": state.get("kb_match"),
     }
 
 
