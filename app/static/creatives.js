@@ -25,6 +25,9 @@
   // Выбранный победитель: ranked[0] по умолчанию (скоринговый порядок), пока
   // человек не ткнул в другую карточку.
   let winnerId = null;
+  // Задача кончилась — набор кандидатов больше не актуален, а вместе с ним и
+  // победитель: без сброса он утёк бы в следующий запуск на той же вкладке.
+  const resetWinner = () => { winnerId = null; };
   // Active-task handle survives the full page reload that canon-header
   // navigation does (links to /images /slides /creatives are absolute). The
   // run keeps going server-side; on load we rehydrate from here or /api/tasks.
@@ -203,7 +206,7 @@
         ? `<button class="btn cand-pick${i === 0 ? " is-winner" : ""}" data-pick="${escapeHtml(id)}">` +
           `${i === 0 ? "Ведёт эта" : "Взять эту"}</button>`
         : "";
-      return `<div class="cand-card" data-cand="${escapeHtml(id)}">${head}` +
+      return `<div class="cand-card">${head}` +
         kv("cta", c.cta) + kv("hook", c.hook_angle) +
         kv("идея", c.body) + why + flags + pick + `</div>`;
     }).join("");
@@ -354,7 +357,7 @@
   // ── terminal ───────────────────────────────────────────
   function onDone(d) {
     if (es) es.close();
-    clearActive();
+    clearActive(); resetWinner();
     hideHitl(); hide($("progressPanel")); show($("resultsPanel"));
     const url = d.result_url ? `${P}${d.result_url}` : null;
     $("resultMsg").innerHTML = url
@@ -365,7 +368,7 @@
   }
   function onError(e) {
     if (es) es.close();
-    clearActive();
+    clearActive(); resetWinner();
     let msg = "Сбой генерации.";
     try { msg = JSON.parse(e.data).message || msg; } catch {}
     $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
@@ -374,7 +377,7 @@
   }
   function onCancelled(d) {
     if (es) es.close();
-    clearActive();
+    clearActive(); resetWinner();
     hideHitl(); hide($("progressPanel"));
     $("briefStatus").textContent = d.reason === "timeout" ? "Время истекло, сессия отменена." : "Отменено.";
     show($("briefPanel")); $("startBtn").disabled = false;
