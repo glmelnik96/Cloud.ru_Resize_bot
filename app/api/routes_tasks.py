@@ -235,6 +235,10 @@ def _safe_suffix(filename: str) -> str:
 
 _IMAGE_ACTIONS = ("upload", "generate", "cancel", "metaphor")
 
+# Комментарий уходит в промпт LLM и копится в чекпоинте от итерации к итерации,
+# поэтому у него есть потолок — как у notes/source_url в брифе.
+_MAX_COMMENT_CHARS = 2000
+
 
 @router.post("/tasks/{uid}/decision/image")
 async def decide_image(
@@ -268,6 +272,10 @@ async def decide_image(
             # Пустой комментарий не несёт правки — граф вернулся бы на ту же
             # остановку впустую, потратив вызов LLM.
             raise HTTPException(422, "metaphor comment is empty")
+        if len(text) > _MAX_COMMENT_CHARS:
+            raise HTTPException(
+                422, f"metaphor comment too long (max {_MAX_COMMENT_CHARS})"
+            )
         try:
             await service.submit_decision(
                 uid, str(user.id), {"action": "metaphor", "comment": text}

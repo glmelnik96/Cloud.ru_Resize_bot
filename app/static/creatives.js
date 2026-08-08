@@ -339,16 +339,21 @@
     $("imageStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
     show($("imagePanel"));
   }
-  // Задумка образа: показываем её, только если петля метафоры реально дала
-  // meta — иначе экран остаётся прежним (один промпт без разговора).
+  // Задумка образа. Блока нет, если generate_image_prompt не отдал meta —
+  // экран тогда прежний: один промпт без разговора.
   function renderMetaphor(d) {
     const box = $("metaphorBox");
     if (!d.metaphor) { hide(box); return; }
     $("mIdea").textContent = d.metaphor;
     $("mInfer").textContent = d.intended_inference || "—";
     $("mAnti").textContent = d.anti_reading || "—";
-    $("metaphorComment").value = "";
-    box.classList.remove("hidden");
+    // Обрыв SSE тоже приводит сюда (resync), а набранный комментарий — весь
+    // смысл этой остановки: чистим поле, только когда образ реально сменился.
+    if (box.dataset.shown !== d.metaphor) {
+      $("metaphorComment").value = "";
+      box.dataset.shown = d.metaphor;
+    }
+    show(box);
   }
 
   $("metaphorBtn").addEventListener("click", () => {

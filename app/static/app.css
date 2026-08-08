@@ -282,7 +282,10 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .cand-why { margin-top: 8px; font-size: 13px; }
 .cand-why summary { cursor: pointer; }
 
-/* Задумка метафоры на экране картинки */
-.metaphor { margin: 12px 0; padding: 12px; border-radius: 8px;
-  background: var(--panel-2); }
-.metaphor .kv { margin-bottom: 6px; }
+/* Задумка метафоры на экране картинки — врезка, как .cand-card и .prompt,
+   с которым она стыкуется на том же экране. */
+.metaphor { margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-card);
+  background: var(--surface-inset); }
+/* Поле ввода на врезке того же цвета: без рамки оно сливалось бы с фоном
+   блока, а на hover (--surface-active) — и подавно. */
+.metaphor textarea { border-color: var(--line); }

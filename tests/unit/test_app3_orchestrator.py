@@ -60,6 +60,9 @@ class _ResumableGraph:
             "ranked": [{"id": "c1", "slogan": "S"}],
             "image_prompt": "P",
             "image_style": "render",
+            "metaphor_meta": [{"metaphor": "мост через каньон",
+                               "intended_inference": "путь становится коротким",
+                               "anti_reading": "не стройка"}],
             "graph_version": GRAPH_VERSION,
         }
 
@@ -72,7 +75,10 @@ class _ResumableGraph:
         if action == "approve":
             yield {"route_image_style": {"image_style": "render"}}
             yield {"__interrupt__": [_FakeInterrupt(
-                {"kind": "image_upload", "image_prompt": "P", "image_style": "render"}
+                {"kind": "image_upload", "image_prompt": "P", "image_style": "render",
+                 "metaphor": "мост через каньон",
+                 "intended_inference": "путь становится коротким",
+                 "anti_reading": "не стройка"}
             )]}
         elif action == "cancel":
             yield {"hitl_text_approve": {"cancelled": True}}
@@ -319,6 +325,9 @@ async def test_approve_advances_to_awaiting_image(tmp_path):
     assert awaiting and awaiting[0]["phase"] == "image_upload"
     assert awaiting[0]["image_prompt"] == "P"
     assert awaiting[0]["can_generate"] is True
+    # Задумка образа обязана доехать до экрана — иначе комментировать нечего.
+    assert awaiting[0]["metaphor"] == "мост через каньон"
+    assert awaiting[0]["anti_reading"] == "не стройка"
 
 
 @pytest.mark.asyncio
@@ -360,6 +369,12 @@ async def test_pending_rehydrates_from_checkpoint(tmp_path):
     img_payload = await svc.pending("tX", "awaiting_image")
     assert img_payload["phase"] == "image_upload"
     assert img_payload["image_prompt"] == "P"
+    # /pending собирает задумку из состояния, а SSE — из payload interrupt:
+    # два разных источника, которые обязаны сойтись, иначе экран после F5
+    # отличается от экрана по стриму.
+    assert img_payload["metaphor"] == "мост через каньон"
+    assert img_payload["intended_inference"] == "путь становится коротким"
+    assert img_payload["anti_reading"] == "не стройка"
     assert await svc.pending("tX", "done") is None
 
 

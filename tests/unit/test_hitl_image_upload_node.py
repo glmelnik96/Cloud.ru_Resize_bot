@@ -157,8 +157,25 @@ async def test_interrupt_payload_carries_metaphor_meta(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_interrupt_payload_without_metaphor_meta_is_empty_strings(monkeypatch):
+@pytest.mark.parametrize("meta", [None, [], [None]])
+async def test_interrupt_payload_without_metaphor_meta_is_empty_strings(monkeypatch, meta):
+    """Ни одна форма «метафоры нет» не должна ронять остановку: экран просто
+    теряет блок задумки и остаётся прежним."""
     fake = _patch_interrupt(monkeypatch, {"action": "cancel"})
-    await mod.hitl_image_upload(_state())  # type: ignore[arg-type]
+    state = _state() if meta is None else _state(metaphor_meta=meta)
+    await mod.hitl_image_upload(state)  # type: ignore[arg-type]
     p = fake.last_payload
     assert p["metaphor"] == "" and p["anti_reading"] == ""
+
+
+@pytest.mark.asyncio
+async def test_interrupt_payload_takes_the_first_metaphor(monkeypatch):
+    """metaphor_meta[0] — метафора победителя; остальные к этой остановке
+    отношения не имеют."""
+    fake = _patch_interrupt(monkeypatch, {"action": "cancel"})
+    await mod.hitl_image_upload(
+        _state(  # type: ignore[arg-type]
+            metaphor_meta=[{"metaphor": "первая"}, {"metaphor": "вторая"}]
+        )
+    )
+    assert fake.last_payload["metaphor"] == "первая"
