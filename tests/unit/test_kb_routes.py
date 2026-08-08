@@ -244,6 +244,76 @@ def test_update_unknown_slug_404(tmp_path, monkeypatch):
         ).status_code == 404
 
 
+def test_library_page_renders_and_requires_auth(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        assert c.get("/library").status_code == 401
+        r = c.get("/library", headers=_BOSS)
+        assert r.status_code == 200
+        assert "library.js" in r.text
+        assert "Библиотека знаний" in r.text
+
+
+def test_library_link_in_neighbour_topnavs(tmp_path, monkeypatch):
+    """Страница без ссылки — страница, которой нет: попасть на библиотеку можно
+    только из топнава соседей, адрес её никто не помнит наизусть."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        for path in ("/", "/webinar"):
+            html = c.get(path, headers=_BOSS).text
+            assert 'href="/creatives/library"' in html, f"нет ссылки на библиотеку в {path}"
+            assert "Библиотека" in html
+
+
+def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
+    """Канон-топбар и is-active на «Библиотеке»: без них страница выпадает из
+    единой оболочки платформы, а человек не понимает, где он находится."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/library", headers=_BOSS).text
+        assert 'class="topnav__link is-active">Библиотека' in html
+        assert 'href="/images"' in html
+        assert 'href="/slides"' in html
+        assert 'href="/creatives"' in html
+        assert "Cloud.ru <span>Design</span>" in html
+        assert 'action="/logout"' in html
+        assert "boss@cloud.ru" in html
+        # Ассеты и API идут через префикс шлюза — иначе на проде 404 на всё.
+        assert 'window.APP_PREFIX = "/creatives";' in html
+        assert "/creatives/static/library.js" in html
+        assert "/creatives/static/app.css" in html
+
+
+def test_library_js_carries_role_gates(tmp_path, monkeypatch):
+    """Скрипт страницы отдаётся и несёт ролевые гарды: читателю поля заперты,
+    админская панель ролей скрыта. Без этой проверки library.js может
+    выродиться в заглушку, а страница — молча превратиться в витрину."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/static/library.js")
+        assert r.status_code == 200
+        js = r.text
+        assert "can_edit_kb" in js  # гейт правки карточек
+        assert "rolesPanel" in js  # гейт админской панели доступов
+        assert "/api/kb/products" in js  # чтение и запись каталога
+        assert "/api/admin/roles" in js  # раздача доступов
+        assert "history" in js  # история версий карточки
+        # Гейт обязан не только читаться, но и срабатывать: редактору поля
+        # отпираются и открываются кнопки правки/создания и история. Без этих
+        # проверок ветку можно вырезать — страница останется вечной витриной.
+        assert "disabled = false" in js
+        assert "editRow" in js
+        assert "createRow" in js
+        assert "historyBox" in js
+
+
+def test_app_css_carries_library_classes(tmp_path, monkeypatch):
+    """Список продуктов и блоки карточки держатся на .task-item/.kb-block —
+    без них строки списка рендерятся системными кнопками, а блоки схлопываются
+    в однострочные поля."""
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/static/app.css")
+        assert r.status_code == 200
+        assert ".task-item" in r.text
+        assert ".kb-block" in r.text
+
+
 def test_edit_reaches_graph_catalog_without_restart(tmp_path, monkeypatch):
     """PUT → version+1 → refresh_catalog → graph.knowledge отдаёт новый текст."""
     from graph import knowledge

@@ -48,3 +48,16 @@ async def webinar_page(request: Request):
         name="webinar.html",
         context={"email": user.email, "prefix": prefix, "retention_hours": retention_hours},
     )
+
+
+@router.get("/library", response_class=HTMLResponse)
+async def library_page(request: Request):
+    """Библиотека знаний: карточки продуктов, история версий, роли."""
+    user = await get_current_user(request)
+    cfg = getattr(request.app.state, "settings", {}) or {}
+    prefix = cfg.get("prefix", "/creatives")
+    return _TEMPLATES.TemplateResponse(
+        request=request,
+        name="library.html",
+        context={"email": user.email, "prefix": prefix},
+    )

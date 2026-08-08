@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Библиотека знаний — Cloud.ru Design</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v3">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Cloud.ru <span>Design</span></a>
+    <nav class="topnav">
+      <a href="/images" class="topnav__link">Картинки</a>
+      <a href="/slides" class="topnav__link">Слайды</a>
+      <a href="/creatives" class="topnav__link">Креативы</a>
+      <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
+      <a href="/creatives/webinar" class="topnav__link">Вебинары</a>
+      <a href="/creatives/library" class="topnav__link is-active">Библиотека</a>
+    </nav>
+    <div class="topbar__auth">
+      <span class="topbar__user">{{ email }}</span>
+      <form action="/logout" method="post" class="logout-form"><button type="submit">Выйти</button></form>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1 class="page-title">Библиотека знаний</h1>
+    <p class="page-sub">Факты о продуктах, из которых пайплайн строит предложения. Что здесь написано — то и обещают баннеры: правка карточки меняет следующий же запуск.</p>
+
+    <div class="workspace">
+    <div class="workspace__controls">
+
+    <section class="panel" id="listPanel">
+      <h2>Продукты</h2>
+      <div class="task-list" id="kbList"></div>
+      <label class="page-sub" for="showArchived">
+        <input type="checkbox" id="showArchived"> показывать архивные
+      </label>
+      <div class="btn-row hidden" id="createRow">
+        <button class="btn btn--accent" id="newBtn">Новая карточка</button>
+      </div>
+      <div class="status" id="listStatus"></div>
+    </section>
+
+    <section class="panel hidden" id="rolesPanel">
+      <h2>Доступы</h2>
+      <p class="page-sub">Кто может править карточки. Пользователь появляется в списке после первого входа.</p>
+      <div class="task-list" id="rolesList"></div>
+      <div class="status" id="rolesStatus"></div>
+    </section>
+
+    </div><!-- /.workspace__controls -->
+    <div class="workspace__output">
+
+    <div class="empty" id="emptyState">
+      <h2>Как читать эту страницу</h2>
+      <p>Каждая карточка — три блока фактов о продукте: что это, что умеет и кому нужно. Пайплайн берёт из них границу достоверности: обещать сверх карточки нельзя.</p>
+      <ul>
+        <li><b>Блок 1</b> — что это и какую задачу решает.</li>
+        <li><b>Блок 2</b> — возможности, сценарии, доказательства.</li>
+        <li><b>Блок 3</b> — аудитории и что каждой важно; отсюда растёт персона.</li>
+      </ul>
+      <p>Выберите продукт слева, чтобы посмотреть текст и историю правок.</p>
+    </div>
+
+    <section class="panel hidden" id="cardPanel">
+      <h2 id="cardTitle">Карточка</h2>
+      <p class="page-sub" id="cardMeta"></p>
+      <label for="cardName">Название</label>
+      <input type="text" id="cardName" disabled>
+      <label for="cardAliases">Синонимы <span class="page-sub">(по одному в строке — по ним пайплайн узнаёт продукт в брифе)</span></label>
+      <textarea id="cardAliases" disabled></textarea>
+      <label for="cardTagline">Тэглайн</label>
+      <textarea id="cardTagline" disabled></textarea>
+      <label for="cardBlock1">Блок 1. Что это</label>
+      <textarea id="cardBlock1" class="kb-block" disabled></textarea>
+      <label for="cardBlock2">Блок 2. Возможности и сценарии</label>
+      <textarea id="cardBlock2" class="kb-block" disabled></textarea>
+      <label for="cardBlock3">Блок 3. Аудитории</label>
+      <textarea id="cardBlock3" class="kb-block" disabled></textarea>
+      <div class="btn-row hidden" id="editRow">
+        <button class="btn btn--accent" id="saveBtn">Сохранить как новую версию</button>
+        <button class="btn btn--danger" id="archiveBtn">В архив</button>
+      </div>
+      <div class="status" id="cardStatus"></div>
+      <details class="cand-why hidden" id="historyBox">
+        <summary>История версий</summary>
+        <div id="cardHistory"></div>
+      </details>
+    </section>
+
+    </div><!-- /.workspace__output -->
+    </div><!-- /.workspace -->
+  </main>
+
+  <script>window.APP_PREFIX = "{{ prefix }}";</script>
+  <script src="{{ prefix }}/static/library.js?v=20260809v3"></script>
+</body>
+</html>
