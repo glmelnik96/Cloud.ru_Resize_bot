@@ -51,8 +51,8 @@ class WebStatusReporter:
     # ── App3 interactive HITL ────────────────────────────────────
     async def awaiting(self, *, phase: str, data: dict[str, Any]) -> None:
         """Graph parked at an interrupt; browser must render a decision UI.
-        phase ∈ {"text_approve", "image_upload"}. `data` carries the payload
-        (candidate text / image_prompt) for the UI; it is also re-fetchable via
+        phase ∈ {"persona_approve", "text_approve", "image_upload"}. `data` carries
+        the payload (persona / candidate text / image_prompt) for the UI; it is also re-fetchable via
         /api/tasks/{uid}/pending after a reconnect."""
         event = {"kind": "awaiting_input", "phase": phase, **data}
         await self.bus.publish(self.task_uid, event)
