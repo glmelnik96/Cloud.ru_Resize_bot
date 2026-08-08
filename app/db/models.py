@@ -105,3 +105,27 @@ class KbProduct(Base):
         DateTime(timezone=True), default=_utcnow
     )
     archived: Mapped[bool] = mapped_column(default=False)
+
+
+class KbRun(Base):
+    """Библиотека знаний, слой «опыт» — один ряд на ОТМЕЧЕННЫЙ человеком запуск.
+
+    Пишется только когда на экране результата нажали «пошло в кампанию» или
+    «отклонили»: без отметки строки нет, поэтому опыт не копит шум из брошенных
+    и случайных запусков. Читается при сборке промптов (experience_block)."""
+
+    __tablename__ = "kb_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(64), index=True, default="")
+    outcome: Mapped[str] = mapped_column(String(16))  # shipped | rejected
+    comment: Mapped[str] = mapped_column(Text, default="")
+    slogan: Mapped[str] = mapped_column(Text, default="")
+    anchor: Mapped[str] = mapped_column(Text, default="")
+    desired_outcome: Mapped[str] = mapped_column(Text, default="")
+    metaphor: Mapped[str] = mapped_column(Text, default="")
+    persona_segment: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )

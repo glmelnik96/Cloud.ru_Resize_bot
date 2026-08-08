@@ -124,3 +124,10 @@ class KbProductOut(BaseModel):
     block2: str = ""
     block3: str = ""
 
+
+
+class OutcomeIn(BaseModel):
+    """Отметка исхода на экране результата — единственный вход в слой опыта."""
+
+    outcome: Literal["shipped", "rejected"]
+    comment: str = Field(default="", max_length=2000)

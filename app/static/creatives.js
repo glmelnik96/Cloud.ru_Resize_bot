@@ -394,8 +394,31 @@
       ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
     $("startBtn").disabled = false;
+    $("outcomeStatus").textContent = "";
+    $("outcomeComment").value = "";
     loadRecipe(d.task_uid || taskUid);
     loadRecentTasks();
+  }
+
+  // Отметка исхода: результат уже готов, поэтому ошибка здесь — не сбой
+  // задачи, а неудачная запись опыта; текст об этом так и говорит.
+  document.querySelectorAll("#outcomeBox [data-outcome]").forEach((btn) => {
+    btn.addEventListener("click", () => sendOutcome(btn.dataset.outcome));
+  });
+
+  async function sendOutcome(outcome) {
+    const box = $("outcomeBox");
+    setBusy(box, true);
+    const r = await post(`${P}/api/tasks/${taskUid}/outcome`, {
+      outcome, comment: $("outcomeComment").value.trim(),
+    });
+    setBusy(box, false);
+    if (r && r.ok) {
+      const d = await r.json();
+      $("outcomeStatus").textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
+      return;
+    }
+    $("outcomeStatus").innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
   }
 
   // Рецепт лежит в задаче (не в SSE-событии) — дочитываем его после финиша.

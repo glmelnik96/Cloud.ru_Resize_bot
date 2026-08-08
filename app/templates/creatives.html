@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v1">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v2">
 </head>
 <body>
   <header class="topbar">
@@ -151,6 +151,16 @@
         <summary>Как сделан этот баннер</summary>
         <div id="recipeBody"></div>
       </details>
+      <div class="outcome" id="outcomeBox">
+        <p class="page-sub">Что стало с этим баннером? Ответ попадёт в опыт и повлияет на следующие запуски по этому продукту.</p>
+        <label for="outcomeComment">Комментарий <span class="page-sub">(необязательно)</span></label>
+        <textarea id="outcomeComment" placeholder="Почему взяли или почему нет"></textarea>
+        <div class="btn-row">
+          <button class="btn btn--accent" data-outcome="shipped">Пошёл в кампанию</button>
+          <button class="btn" data-outcome="rejected">Отклонили</button>
+        </div>
+        <div class="status" id="outcomeStatus"></div>
+      </div>
       <div class="results" id="results"></div>
     </section>
 
@@ -166,6 +176,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260809v1"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260809v2"></script>
 </body>
 </html>

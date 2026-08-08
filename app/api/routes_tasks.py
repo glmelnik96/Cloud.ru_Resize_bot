@@ -10,11 +10,18 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.api.schemas import CreateTaskIn, PersonaDecisionIn, TaskOut, TextDecisionIn
+from app.api.schemas import (
+    CreateTaskIn,
+    OutcomeIn,
+    PersonaDecisionIn,
+    TaskOut,
+    TextDecisionIn,
+)
 from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db import models
+from app.kb.experience import record_outcome
 from app.kb.store import latest_rows
 from app.services.creatives import _PARKED_STATUSES, CapacityError, DecisionConflict
 
@@ -344,3 +351,26 @@ async def decide_image(
     except CapacityError as exc:
         raise HTTPException(429, str(exc)) from exc
     return {"ok": True, "action": "upload"}
+
+
+@router.post("/tasks/{uid}/outcome")
+async def set_outcome(uid: str, body: OutcomeIn, request: Request):
+    """Отметить, что стало с результатом: пошёл в кампанию или отклонили.
+
+    Единственный путь записи в слой опыта — поэтому опыт состоит только из
+    запусков, о которых человек что-то сказал. Повтор — не ошибка, а смена
+    мнения: строка одна на запуск, последняя отметка выигрывает; отвечаем 200
+    с recorded=false («не создана, а обновлена»).
+    """
+    user = await get_current_user(request)
+    task = await _load_owned(request, uid, user)
+    if task.status != "done":
+        raise HTTPException(409, f"task is not finished (status={task.status})")
+    recorded = await record_outcome(
+        request.app.state.sessionmaker,
+        session_id=uid,
+        outcome=body.outcome,
+        comment=body.comment,
+        recipe=_task_recipe(task),
+    )
+    return {"ok": True, "recorded": recorded, "outcome": body.outcome}

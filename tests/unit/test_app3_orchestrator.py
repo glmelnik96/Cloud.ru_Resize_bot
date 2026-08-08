@@ -485,7 +485,7 @@ async def test_terminal_persists_recipe_alongside_cards(tmp_path):
         "ranked": [{"id": "c1", "slogan": "S1", "anchor": "A1",
                     "desired_outcome": "быстрее", "cta": "CTA1"}],
         "scenarios": ["render"],
-        "kb_match": "kb-7",
+        "kb_match": {"slug": "kb-7", "name": "KB", "version": 1},
         "winner_id": "c1",
         "personas": [{"segment": "архитекторы"}],
         "metaphor_meta": [{"metaphor": "мост", "intended_inference": "короткий путь",
@@ -518,7 +518,7 @@ async def test_terminal_persists_recipe_alongside_cards(tmp_path):
         task = res.scalar_one()
     assert task.status == "done"
     recipe = task.params["recipe"]
-    assert recipe["kb_source"] == "kb-7"
+    assert recipe["kb_source"]["slug"] == "kb-7"
     assert recipe["winner_id"] == "c1"
     assert recipe["persona_segment"] == "архитекторы"
     assert recipe["slogan"] == "S1" and recipe["desired_outcome"] == "быстрее"

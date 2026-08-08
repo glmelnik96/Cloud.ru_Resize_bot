@@ -788,3 +788,43 @@ def test_decide_image_rejects_unknown_action(tmp_path, monkeypatch):
             "/api/tasks/img03/decision/image", data={"action": "nope"}, headers=_HDR
         )
         assert r.status_code == 422
+
+
+def test_outcome_records_and_second_call_updates(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(
+            db, "done01", "done", me["id"],
+            params={"recipe": {"slogan": "S", "kb_source": {"slug": "rag", "name": "R", "version": 1}}},
+        )
+        r = c.post(
+            "/api/tasks/done01/outcome",
+            json={"outcome": "shipped", "comment": "взяли в кампанию"},
+            headers=_HDR,
+        )
+        assert r.status_code == 200 and r.json()["recorded"] is True
+        again = c.post("/api/tasks/done01/outcome", json={"outcome": "rejected"}, headers=_HDR)
+        assert again.status_code == 200 and again.json()["recorded"] is False
+        assert again.json()["outcome"] == "rejected"
+
+
+def test_outcome_requires_finished_task(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "run01", "running", me["id"])
+        r = c.post("/api/tasks/run01/outcome", json={"outcome": "shipped"}, headers=_HDR)
+        assert r.status_code == 409
+
+
+def test_outcome_rejects_unknown_value(tmp_path, monkeypatch):
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "done02", "done", me["id"])
+        r = c.post("/api/tasks/done02/outcome", json={"outcome": "maybe"}, headers=_HDR)
+        assert r.status_code == 422

@@ -293,3 +293,11 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 /* Рецепт запуска на экране результата */
 .recipe { margin: 12px 0; font-size: 13px; }
 .recipe summary { cursor: pointer; font-weight: 600; }
+
+/* Отметка исхода на экране результата — врезка того же вида, что .metaphor,
+   с которой она стыкуется по смыслу (оба блока — разговор с человеком). */
+.outcome { margin: 12px 0; padding: 12px 14px; border-radius: var(--radius-card);
+  background: var(--surface-inset); }
+/* Поле ввода на врезке того же цвета: без рамки оно сливалось бы с фоном
+   блока, а на hover (--surface-active) — и подавно. */
+.outcome textarea { border-color: var(--line); }
