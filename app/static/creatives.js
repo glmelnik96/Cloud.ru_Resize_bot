@@ -26,7 +26,7 @@
   // navigation does (links to /images /slides /creatives are absolute). The
   // run keeps going server-side; on load we rehydrate from here or /api/tasks.
   const LS_KEY = "app3_active_task";
-  const ACTIVE = ["queued", "running", "awaiting_text", "awaiting_image"];
+  const ACTIVE = ["queued", "running", "awaiting_persona", "awaiting_text", "awaiting_image"];
   const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
   const clearActive = () => { try { localStorage.removeItem(LS_KEY); } catch (_) {} };
 
@@ -293,6 +293,7 @@
   // again so a completed ZIP can be re-downloaded after a reload.
   const STATUS_LABEL = {
     queued: "В очереди", running: "В работе",
+    awaiting_persona: "Ждёт персону",
     awaiting_text: "Ждёт решения", awaiting_image: "Ждёт картинку",
     done: "Готово", failed: "Ошибка", cancelled: "Отменено",
   };

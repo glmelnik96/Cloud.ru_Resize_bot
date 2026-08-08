@@ -50,15 +50,16 @@ _NODE_LABELS: dict[str, str] = {
 # Non-terminal statuses count toward a user's open-session budget. App3 gates
 # create() by a DB count of these (not TaskManager.has_capacity) because parked
 # tasks legitimately sit open for a long time.
-_OPEN_STATUSES = ("queued", "running", "awaiting_text", "awaiting_image")
+_OPEN_STATUSES = ("queued", "running", "awaiting_persona", "awaiting_text", "awaiting_image")
 
-# The two HITL parks. Both wait on a human and therefore both need a deadline —
+# The three HITL parks. All wait on a human and therefore all need a deadline —
 # without one an abandoned session never ends and never reaches usage stats.
-_PARKED_STATUSES = ("awaiting_text", "awaiting_image")
+_PARKED_STATUSES = ("awaiting_persona", "awaiting_text", "awaiting_image")
 
 # Error stamped on a task the deadline closed, per park. Matches what the HITL
 # node itself returns when resumed with {action: timeout}.
 _TIMEOUT_ERRORS = {
+    "awaiting_persona": "persona_approve_timeout",
     "awaiting_text": "text_approve_timeout",
     "awaiting_image": "image_upload_timeout",
 }
@@ -358,6 +359,13 @@ class CreativesService:
         reconnecting browser can re-render the decision UI."""
         snapshot = await self.graph.aget_state(self._config(task_uid))
         values = dict(snapshot.values or {})
+        if status == "awaiting_persona":
+            personas = values.get("personas") or []
+            return {
+                "phase": "persona_approve",
+                "persona": personas[0] if personas else None,
+                "kb_match": values.get("kb_match"),
+            }
         if status == "awaiting_text":
             return {"phase": "text_approve", "candidates": values.get("ranked") or []}
         if status == "awaiting_image":
@@ -437,7 +445,15 @@ class CreativesService:
     async def _park(self, task_uid: str, reporter: WebStatusReporter, value: Any) -> None:
         """Set the awaiting status + publish the decision payload for the UI."""
         kind = value.get("kind") if isinstance(value, dict) else None
-        if kind == "image_upload":
+        if kind == "persona_approve":
+            status = "awaiting_persona"
+            await self._set_status(task_uid, status)
+            data = {
+                "persona": value.get("persona"),
+                "kb_match": value.get("kb_match"),
+            }
+            await reporter.awaiting(phase="persona_approve", data=data)
+        elif kind == "image_upload":
             status = "awaiting_image"
             await self._set_status(task_uid, status)
             data = {
@@ -580,9 +596,10 @@ class CreativesService:
         to the ``status`` park within park_timeout_sec (the HITL node then
         cancels the task).
 
-        Both parks need this: an abandoned session at awaiting_text used to live
-        forever exactly like the awaiting_image ones did, holding a slot of the
-        user's open-session budget and never reaching usage stats at all.
+        Every park needs this: an abandoned session at awaiting_text used to
+        live forever exactly like the awaiting_image ones did, holding a slot of
+        the user's open-session budget and never reaching usage stats at all.
+        The persona park (awaiting_persona) leaks the same way.
 
         ``delay`` overrides the wait with the time left on an existing deadline
         (see rearm_parked_timeouts)."""
@@ -650,7 +667,7 @@ class CreativesService:
                 select(models.Task).where(models.Task.task_uid == task_uid)
             )
             task = res.scalar_one_or_none()
-            if task is None or task.status not in ("awaiting_text", "awaiting_image"):
+            if task is None or task.status not in _PARKED_STATUSES:
                 return None
             prior = task.status
             usage.close_work_window(task)

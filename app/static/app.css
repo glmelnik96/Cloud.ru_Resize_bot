@@ -194,6 +194,7 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .task-badge.is-done{background:var(--brand-chip-bg);color:var(--brand-chip-fg);}
 .task-badge.is-failed{background:#332222;color:var(--danger-soft);}
 .task-badge.is-running,.task-badge.is-queued,
+.task-badge.is-awaiting_persona,
 .task-badge.is-awaiting_text,.task-badge.is-awaiting_image{background:var(--brand-chip-bg);color:var(--brand-chip-fg);}
 .task-date{font-size:12px;color:var(--muted-2);}
 .task-dl{text-decoration:none;background:var(--accent);color:var(--on-accent);

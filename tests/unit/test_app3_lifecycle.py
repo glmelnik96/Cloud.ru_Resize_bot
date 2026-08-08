@@ -204,6 +204,27 @@ async def test_rearm_closes_stale_awaiting_text_too(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_rearm_closes_stale_awaiting_persona_too(tmp_path):
+    """Третья парковка (persona) течёт так же, как первые две: брошенная на
+    экране «Кому пишем» сессия должна закрываться по дедлайну со своим кодом."""
+    Session = await _sm(tmp_path)
+    async with Session() as s:
+        t = models.Task(task_uid="prs", user_id=1, workflow="creatives", status="awaiting_persona")
+        t.created_at = datetime.now(timezone.utc) - timedelta(hours=48)
+        s.add(t)
+        await s.commit()
+
+    svc = _svc(Session, tmp_path, timeout_sec=24 * 3600)
+    assert await svc.rearm_parked_timeouts() == 1
+
+    async with Session() as s:
+        row = (await s.execute(select(models.Task))).scalar_one()
+    assert row.status == "cancelled"
+    assert row.error == "persona_approve_timeout"
+    assert "prs" not in svc._timeouts
+
+
+@pytest.mark.asyncio
 async def test_rearm_ignores_terminal_tasks(tmp_path):
     """Rows that already ended are none of the sweep's business."""
     Session = await _sm(tmp_path)

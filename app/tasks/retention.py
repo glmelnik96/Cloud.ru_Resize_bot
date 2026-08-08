@@ -21,7 +21,7 @@ log = structlog.get_logger(__name__)
 
 DEFAULT_TTL_SEC = 24 * 3600
 DEFAULT_INTERVAL_SEC = 10 * 60
-_OPEN = ("queued", "running", "awaiting_text", "awaiting_image")
+_OPEN = ("queued", "running", "awaiting_persona", "awaiting_text", "awaiting_image")
 
 
 async def purge_once(*, results_dir: Path, sessionmaker, ttl_sec: int) -> tuple[int, int]:

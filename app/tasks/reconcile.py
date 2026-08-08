@@ -2,7 +2,8 @@
 
 The in-memory queue and the per-segment compute are lost on restart, so a task
 caught mid-compute (queued / running) is orphaned → mark it failed. Tasks parked
-at an interrupt (awaiting_text / awaiting_image) are NOT touched: their state
+at an interrupt (awaiting_persona / awaiting_text / awaiting_image) are NOT
+touched: their state
 lives in the Redis checkpoint and the browser rehydrates via /api/tasks/{uid}/
 pending, so they remain resumable.
 """

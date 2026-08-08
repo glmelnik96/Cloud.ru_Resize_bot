@@ -15,7 +15,7 @@ from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db import models
-from app.services.creatives import CapacityError, DecisionConflict
+from app.services.creatives import _PARKED_STATUSES, CapacityError, DecisionConflict
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -159,7 +159,7 @@ async def task_pending(uid: str, request: Request):
     """Re-fetch the parked decision payload (reconnect rehydration)."""
     user = await get_current_user(request)
     task = await _load_owned(request, uid, user)
-    if task.status not in ("awaiting_text", "awaiting_image"):
+    if task.status not in _PARKED_STATUSES:
         return {"phase": None, "status": task.status}
     service = request.app.state.creatives
     if service is None:

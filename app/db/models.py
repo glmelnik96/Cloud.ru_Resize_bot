@@ -69,7 +69,7 @@ class Task(Base):
     workflow: Mapped[str] = mapped_column(String(32))
     prompt: Mapped[str] = mapped_column(Text, default="")
     params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    # queued | running | awaiting_text | awaiting_image | done | failed | cancelled
+    # queued | running | awaiting_persona | awaiting_text | awaiting_image | done | failed | cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued")
     result_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

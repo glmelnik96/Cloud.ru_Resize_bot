@@ -1,7 +1,7 @@
 """FastAPI application factory + lifespan for App3 / creatives.
 
 Phase 2: boots the auth skeleton + the task orchestrator. POST /api/tasks runs
-the /new graph's first segment and parks at awaiting_text (Redis checkpoint).
+the /new graph's first segment and parks at the first HITL stop (awaiting_persona).
 SSE + HITL decision endpoints + ZIP delivery land in later phases.
 
 Routes live at the root ("/api/...", "/results/...") because the gateway

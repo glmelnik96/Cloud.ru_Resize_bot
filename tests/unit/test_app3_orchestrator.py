@@ -187,6 +187,62 @@ async def test_segment_parks_at_awaiting_text(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_park_persona_kind_sets_awaiting_persona(tmp_path):
+    """interrupt kind=persona_approve паркует в awaiting_persona с payload
+    персоны + kb_match для экрана «Кому пишем»."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    iv = {
+        "kind": "persona_approve",
+        "persona": {"segment": "ML-инженер"},
+        "kb_match": {"slug": "evolution-ml-inference", "name": "X", "version": 1},
+    }
+    svc = _service(Session, _FakeGraph(iv), bus=bus, tmp=tmp_path / "tmp")
+
+    async with Session() as s:
+        s.add(models.Task(task_uid="p1", user_id=1, workflow="creatives", status="queued"))
+        await s.commit()
+
+    q = bus.subscribe("p1")
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="p1", label="creatives", eta_sec=None)
+    await svc._run_segment("p1", "1", {"brief": {"product": "x"}}, reporter)
+
+    async with Session() as s:
+        res = await s.execute(select(models.Task).where(models.Task.task_uid == "p1"))
+        task = res.scalar_one()
+    assert task.status == "awaiting_persona"
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    awaiting = [e for e in events if e["kind"] == "awaiting_input"]
+    assert awaiting and awaiting[0]["phase"] == "persona_approve"
+    assert awaiting[0]["persona"] == {"segment": "ML-инженер"}
+    assert awaiting[0]["kb_match"] == {
+        "slug": "evolution-ml-inference", "name": "X", "version": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_pending_rehydrates_awaiting_persona(tmp_path):
+    """Reconnect на awaiting_persona: pending() отдаёт персону + kb_match из
+    чекпоинта, чтобы браузер перерисовал экран решения."""
+    graph = _ResumableGraph()
+    graph.values = {
+        "personas": [{"segment": "ML-инженер"}],
+        "kb_match": {"slug": "evolution-ml-inference", "name": "X", "version": 1},
+    }
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(Session, graph, tmp=tmp_path / "tmp")
+    payload = await svc.pending("tP", "awaiting_persona")
+    assert payload["phase"] == "persona_approve"
+    assert payload["persona"] == {"segment": "ML-инженер"}
+    assert payload["kb_match"]["slug"] == "evolution-ml-inference"
+
+
+@pytest.mark.asyncio
 async def test_create_persists_queued_and_enqueues(tmp_path, monkeypatch):
     Session = await _sessionmaker(tmp_path)
     svc = _service(Session, _FakeGraph({"kind": "text_approve"}), tmp=tmp_path / "tmp")
