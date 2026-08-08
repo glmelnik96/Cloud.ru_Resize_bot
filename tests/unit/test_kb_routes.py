@@ -37,3 +37,46 @@ def test_products_list_is_seeded_and_shaped(tmp_path, monkeypatch):
 def test_products_list_requires_auth(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         assert c.get("/api/kb/products").status_code == 401
+
+
+def test_archived_product_hidden_unless_requested(tmp_path, monkeypatch):
+    """Архивный продукт не виден в обычном списке, но виден при include_archived=true."""
+    import asyncio
+
+    from app.db.database import make_engine, make_sessionmaker
+    from app.kb.store import update_product
+
+    # Запускаем приложение один раз, чтобы сид отработал и создал записи в БД.
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'r.db'}"
+    with TestClient(_app(tmp_path, monkeypatch)):
+        pass
+
+    # Архивируем первый доступный slug через store — не вставляем строки вручную.
+    async def _do_archive():
+        engine = make_engine(db_url)
+        sm = make_sessionmaker(engine)
+        from app.kb.store import latest_rows
+        rows = await latest_rows(sm)
+        assert rows, "сид не создал ни одного продукта"
+        target_slug = rows[0].slug
+        await update_product(sm, slug=target_slug, fields={"archived": True}, updated_by="test")
+        await engine.dispose()
+        return target_slug
+
+    slug = asyncio.run(_do_archive())
+
+    # Открываем свежий TestClient на той же БД — сид не перезапишет архивную запись.
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        # Без флага — продукт не должен появляться.
+        items_default = c.get("/api/kb/products", headers=_HDR).json()
+        slugs_default = [i["slug"] for i in items_default]
+        assert slug not in slugs_default, (
+            f"архивный продукт '{slug}' виден без include_archived"
+        )
+
+        # С флагом — продукт должен быть.
+        items_with = c.get("/api/kb/products?include_archived=true", headers=_HDR).json()
+        slugs_with = [i["slug"] for i in items_with]
+        assert slug in slugs_with, (
+            f"архивный продукт '{slug}' не виден при include_archived=true"
+        )
