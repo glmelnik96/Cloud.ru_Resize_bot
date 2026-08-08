@@ -1,4 +1,4 @@
-"""Библиотека знаний по HTTP: чтение каталога (правка — Task 11)."""
+"""Библиотека знаний по HTTP: чтение каталога и правка под ролями."""
 from __future__ import annotations
 
 import pytest
@@ -12,6 +12,17 @@ import app.services.creatives as creatives_mod  # noqa: E402
 from app.main import create_app  # noqa: E402
 
 _HDR = {"X-User-Id": "5", "X-User-Email": "u@cloud.ru"}
+
+
+@pytest.fixture(autouse=True)
+def _restore_graph_catalog():
+    """Каталог графа — глобальное состояние модуля: и lifespan, и роуты записи
+    подменяют его снапшотом временной БД. Без сброса порядок тестов начинает
+    влиять на соседние файлы."""
+    from graph import knowledge
+
+    yield
+    knowledge.set_catalog(None)
 
 
 def _app(tmp_path, monkeypatch):
@@ -80,3 +91,125 @@ def test_archived_product_hidden_unless_requested(tmp_path, monkeypatch):
         assert slug in slugs_with, (
             f"архивный продукт '{slug}' не виден при include_archived=true"
         )
+
+
+# ── Task 11: запись под ролями ─────────────────────────────────────────
+
+_BOSS = {"X-User-Id": "1", "X-User-Email": "boss@cloud.ru"}
+
+
+def _admin_app(tmp_path, monkeypatch):
+    async def fake_init_graph(checkpoint_db):
+        return object(), None
+
+    monkeypatch.setattr(creatives_mod, "init_graph", fake_init_graph)
+    return create_app({
+        "db_url": f"sqlite+aiosqlite:///{tmp_path / 'kbw.db'}",
+        "bootstrap_admin": "boss@cloud.ru",
+    })
+
+
+def _first_slug(c) -> str:
+    return c.get("/api/kb/products", headers=_BOSS).json()[0]["slug"]
+
+
+def test_write_requires_role(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        slug = _first_slug(c)
+        r = c.put(f"/api/kb/products/{slug}", json={"tagline": "нельзя"}, headers=_HDR)
+        assert r.status_code == 403
+        r = c.post(
+            "/api/kb/products",
+            json={"slug": "new-one", "name": "New One"},
+            headers=_HDR,
+        )
+        assert r.status_code == 403
+        # История — тоже редакторский инструмент
+        assert c.get(f"/api/kb/products/{slug}/history", headers=_HDR).status_code == 403
+        # но сам каталог читают все
+        assert c.get("/api/kb/products", headers=_HDR).status_code == 200
+
+
+def test_update_appends_version_and_history(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        slug = _first_slug(c)
+        r = c.put(
+            f"/api/kb/products/{slug}",
+            json={"tagline": "Новый тэглайн", "block1": "## Блок 1. Что это\nНовое."},
+            headers=_BOSS,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["version"] == 2 and body["tagline"] == "Новый тэглайн"
+        assert body["updated_by"] == "boss@cloud.ru"
+
+        h = c.get(f"/api/kb/products/{slug}/history", headers=_BOSS).json()
+        assert [v["version"] for v in h] == [2, 1]
+
+
+def test_create_and_archive(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        r = c.post(
+            "/api/kb/products",
+            json={
+                "slug": "evolution-demo", "name": "Evolution Demo",
+                "aliases": ["демо"], "tagline": "Демо-продукт",
+                "block1": "## Блок 1. Что это\nДемо.",
+            },
+            headers=_BOSS,
+        )
+        assert r.status_code == 201 and r.json()["version"] == 1
+
+        # повторный slug — конфликт, а не тихая перезапись
+        assert c.post(
+            "/api/kb/products",
+            json={"slug": "evolution-demo", "name": "Dup"},
+            headers=_BOSS,
+        ).status_code == 409
+
+        assert c.put(
+            "/api/kb/products/evolution-demo", json={"archived": True}, headers=_BOSS
+        ).status_code == 200
+        slugs = {p["slug"] for p in c.get("/api/kb/products", headers=_BOSS).json()}
+        assert "evolution-demo" not in slugs
+        slugs = {
+            p["slug"]
+            for p in c.get(
+                "/api/kb/products?include_archived=true", headers=_BOSS
+            ).json()
+        }
+        assert "evolution-demo" in slugs
+
+
+def test_update_unknown_slug_404(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        assert c.put(
+            "/api/kb/products/ghost", json={"tagline": "x"}, headers=_BOSS
+        ).status_code == 404
+
+
+def test_edit_reaches_graph_catalog_without_restart(tmp_path, monkeypatch):
+    """PUT → version+1 → refresh_catalog → graph.knowledge отдаёт новый текст."""
+    from graph import knowledge
+
+    try:
+        with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+            slug = _first_slug(c)
+            before = knowledge.get_by_slug(slug)
+            assert before is not None and before.version == 1
+
+            r = c.put(
+                f"/api/kb/products/{slug}",
+                json={"tagline": "Свежий тэглайн из UI"},
+                headers=_BOSS,
+            )
+            assert r.status_code == 200 and r.json()["version"] == 2
+
+            after = knowledge.get_by_slug(slug)
+            assert after is not None
+            assert after.version == 2
+            assert after.tagline == "Свежий тэглайн из UI"
+    finally:
+        # lifespan инжектил снапшот в глобальный модуль графа — снимаем,
+        # чтобы соседние тесты видели файловый каталог.
+        knowledge.set_catalog(None)

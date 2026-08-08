@@ -127,6 +127,47 @@ class KbProductOut(BaseModel):
     block3: str = ""
 
 
+class KbProductIn(BaseModel):
+    """Новая карточка. Блоки — markdown из шаблона библиотеки; пустые
+    допустимы, карточку часто заводят «скелетом» и дописывают позже."""
+
+    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    name: str = Field(min_length=2, max_length=128)
+    aliases: list[str] = Field(default_factory=list)
+    tagline: str = Field("", max_length=500)
+    block1: str = Field("", max_length=20000)
+    block2: str = Field("", max_length=20000)
+    block3: str = Field("", max_length=20000)
+
+
+class KbProductPatch(BaseModel):
+    """Правка: только присланные поля меняются, остальные переносятся из
+    предыдущей версии (см. store.update_product). None = «не трогать»."""
+
+    name: str | None = Field(None, min_length=2, max_length=128)
+    aliases: list[str] | None = None
+    tagline: str | None = Field(None, max_length=500)
+    block1: str | None = Field(None, max_length=20000)
+    block2: str | None = Field(None, max_length=20000)
+    block3: str | None = Field(None, max_length=20000)
+    archived: bool | None = None
+
+
+class KbVersionOut(BaseModel):
+    """Строка истории: что и когда поменялось. Тела блоков тоже отдаём —
+    иначе «посмотреть старую версию» превращается во второй запрос."""
+
+    version: int
+    name: str
+    tagline: str = ""
+    archived: bool = False
+    updated_by: str = ""
+    updated_at: str | None = None
+    block1: str = ""
+    block2: str = ""
+    block3: str = ""
+
+
 class OutcomeIn(BaseModel):
     """Отметка исхода на экране результата — единственный вход в слой опыта."""
 

@@ -73,7 +73,7 @@ def captured(monkeypatch) -> dict:
 # ── Task 4 tests ───────────────────────────────────────────────────────
 
 
-def _make_doc(slug: str, name: str) -> ProductDoc:
+def _make_doc(slug: str, name: str, version: int = 1) -> ProductDoc:
     return ProductDoc(
         slug=slug,
         name=name,
@@ -83,6 +83,7 @@ def _make_doc(slug: str, name: str) -> ProductDoc:
             "## Блок 1. Что это\nОписание продукта.\n\n"
             "## Блок 3. Аудитории\nАудитория-специфично для " + name + ".\n"
         ),
+        version=version,
     )
 
 
@@ -115,3 +116,48 @@ async def test_derive_persona_no_kb_match_means_no_kb_block(captured):
 
     kb_block = captured["kb_audiences_block"]
     assert "нет карточки" in kb_block
+
+
+# ── Task 11: узел возвращает свежий kb_match ───────────────────────────
+
+
+async def test_derive_persona_returns_refreshed_kb_match(captured):
+    """Карточку могли отредактировать после understand_product — узел
+    возвращает kb_match той версии, текст которой реально ушёл в промпт."""
+    doc = _make_doc("evolution-ml-inference", "Evolution ML Inference v2", version=2)
+    prev = knowledge._catalog_override
+    try:
+        knowledge.set_catalog((doc,))
+        state = _state(
+            kb_match={
+                "slug": "evolution-ml-inference",
+                "name": "Evolution ML Inference",
+                "version": 1,
+            }
+        )
+        out = await mod.derive_persona(state)
+    finally:
+        knowledge.set_catalog(prev)
+
+    assert out["kb_match"]["slug"] == "evolution-ml-inference"
+    assert out["kb_match"]["name"] == "Evolution ML Inference v2"
+    assert out["kb_match"]["version"] == 2
+
+
+async def test_derive_persona_keeps_stale_kb_match_when_card_gone(captured):
+    """Карточку заархивировали между узлами — врать про свежесть нельзя,
+    но и терять след источника тоже: возвращаем то, что было в state."""
+    prev = knowledge._catalog_override
+    try:
+        knowledge.set_catalog(())
+        state = _state(kb_match={"slug": "gone", "name": "Gone", "version": 1})
+        out = await mod.derive_persona(state)
+    finally:
+        knowledge.set_catalog(prev)
+
+    assert out["kb_match"] == {"slug": "gone", "name": "Gone", "version": 1}
+
+
+async def test_derive_persona_without_kb_match_writes_nothing(captured):
+    out = await mod.derive_persona(_state(kb_match=None))
+    assert "kb_match" not in out

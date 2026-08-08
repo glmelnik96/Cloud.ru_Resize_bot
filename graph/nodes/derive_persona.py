@@ -46,12 +46,19 @@ async def derive_persona(state: GraphState) -> dict:
     user_tpl = _extract_section(skill.body, "## User message template")
 
     kb_match = state.get("kb_match")
-    # Карточка могла обновиться между узлами — берём свежую версию по slug.
+    # Карточка могла обновиться между узлами — берём свежую версию по slug и
+    # возвращаем её в state: паспорт и рецепт должны показывать ту версию,
+    # текст которой реально ушёл в промпт, а не ту, что нашёл understand_product.
     doc = knowledge.get_by_slug(kb_match["slug"]) if kb_match else None
     if kb_match and doc is None:
         log.warning(
             "kb_match_stale", session_id=state.get("session_id"), slug=kb_match["slug"]
         )
+    fresh_match = (
+        {"slug": doc.slug, "name": doc.name, "version": doc.version}
+        if doc
+        else kb_match
+    )
     tone_block = (
         f"TONE HINTS: {brief.tone_hints}" if brief.tone_hints else ""
     )
@@ -87,6 +94,7 @@ async def derive_persona(state: GraphState) -> dict:
         n_personas=len(persona_set.personas),
         segments=[p.segment for p in persona_set.personas],
     )
-    return {
-        "personas": [p.model_dump() for p in persona_set.personas],
-    }
+    out: dict = {"personas": [p.model_dump() for p in persona_set.personas]}
+    if fresh_match is not None:
+        out["kb_match"] = fresh_match
+    return out
