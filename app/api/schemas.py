@@ -57,3 +57,23 @@ class TextDecisionIn(BaseModel):
 
     action: Literal["approve", "regenerate", "cancel"]
 
+
+class KbProductOut(BaseModel):
+    """Карточка продукта в её последней версии.
+
+    Блоки отдаются целиком: каталог небольшой (десяток продуктов), а страница
+    библиотеки и так показывает их полностью — второй «короткий» эндпоинт был
+    бы лишней сущностью."""
+
+    slug: str
+    name: str
+    version: int
+    aliases: list[str] = Field(default_factory=list)
+    tagline: str = ""
+    archived: bool = False
+    updated_by: str = ""
+    updated_at: str | None = None
+    block1: str = ""
+    block2: str = ""
+    block3: str = ""
+
