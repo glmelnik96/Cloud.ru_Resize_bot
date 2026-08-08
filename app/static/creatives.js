@@ -242,7 +242,9 @@
     const r = await post(`${P}/api/tasks/${taskUid}/decision/persona`, body);
     if (r && r.ok) {
       setBusy(panel, false);
-      hideHitl(); setStep("Пишу тексты…");
+      // regenerate возвращает граф на эту же остановку, а не двигает дальше.
+      hideHitl();
+      setStep(action === "approve" ? "Пишу тексты…" : "Обновляю персону…");
       return;
     }
     setBusy(panel, false);
@@ -254,7 +256,7 @@
   // Double-click protection: freeze every control in a HITL panel while its
   // request is in flight; unfreeze if the request fails (panel stays visible).
   function setBusy(panel, busy) {
-    panel.querySelectorAll("button, input, label.btn").forEach((el) => {
+    panel.querySelectorAll("button, input, textarea, label.btn").forEach((el) => {
       if ("disabled" in el) el.disabled = busy;
       el.classList.toggle("is-busy", busy);
     });
