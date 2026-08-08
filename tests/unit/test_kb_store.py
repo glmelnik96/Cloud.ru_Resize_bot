@@ -87,3 +87,78 @@ async def test_load_docs_takes_latest_version_and_skips_archived(Session):
     assert docs[first.slug].name == "Edited Name"
     assert docs[first.slug].version == 2
     assert other.slug not in docs
+
+
+async def test_latest_rows_hides_archived_by_default(Session):
+    from app.kb.store import latest_rows, update_product
+
+    await seed_from_files(Session)
+    rows = await latest_rows(Session)
+    victim = rows[0].slug
+    await update_product(
+        Session, slug=victim, fields={"archived": True}, updated_by="admin@test"
+    )
+    assert victim not in {r.slug for r in await latest_rows(Session)}
+    archived = {r.slug: r for r in await latest_rows(Session, include_archived=True)}
+    assert archived[victim].archived is True
+    assert archived[victim].version == 2
+
+
+async def test_update_product_appends_version_and_keeps_untouched_fields(Session):
+    from app.kb.store import latest_rows, update_product
+
+    await seed_from_files(Session)
+    row = (await latest_rows(Session))[0]
+    new_version = await update_product(
+        Session,
+        slug=row.slug,
+        fields={"tagline": "новый tagline"},
+        updated_by="admin@test",
+    )
+    assert new_version == row.version + 1
+    fresh = {r.slug: r for r in await latest_rows(Session)}[row.slug]
+    assert fresh.tagline == "новый tagline"
+    assert fresh.name == row.name          # не тронутое поле переносится
+    assert fresh.block1 == row.block1
+    assert fresh.updated_by == "admin@test"
+
+
+async def test_update_product_unknown_slug_raises(Session):
+    from app.kb.store import KbNotFound, update_product
+
+    await seed_from_files(Session)
+    with pytest.raises(KbNotFound):
+        await update_product(
+            Session, slug="no-such-product", fields={"tagline": "x"}, updated_by="a@b"
+        )
+
+
+async def test_create_product_starts_at_version_1_and_rejects_duplicate(Session):
+    from app.kb.store import KbConflict, create_product, latest_rows
+
+    await seed_from_files(Session)
+    v = await create_product(
+        Session,
+        slug="test-product",
+        fields={"name": "Test Product", "tagline": "тест", "block1": "## Блок 1. Что это"},
+        updated_by="admin@test",
+    )
+    assert v == 1
+    fresh = {r.slug: r for r in await latest_rows(Session)}["test-product"]
+    assert fresh.name == "Test Product"
+    assert fresh.aliases == ["Test Product"]  # алиас по умолчанию — имя
+    with pytest.raises(KbConflict):
+        await create_product(
+            Session, slug="test-product", fields={"name": "Dup"}, updated_by="a@b"
+        )
+
+
+async def test_history_is_newest_first(Session):
+    from app.kb.store import history, latest_rows, update_product
+
+    await seed_from_files(Session)
+    slug = (await latest_rows(Session))[0].slug
+    await update_product(Session, slug=slug, fields={"tagline": "v2"}, updated_by="a@b")
+    await update_product(Session, slug=slug, fields={"tagline": "v3"}, updated_by="a@b")
+    versions = [r.version for r in await history(Session, slug)]
+    assert versions == [3, 2, 1]
