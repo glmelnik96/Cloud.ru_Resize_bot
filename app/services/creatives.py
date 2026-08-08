@@ -506,9 +506,12 @@ class CreativesService:
 
         result_url = self._collect_results(task_uid, final)
         cards = await self._collect_cards(task_uid)
+        recipe = await self._collect_recipe(task_uid)
         await reporter.done(result_url=result_url)
         meta = {"ratios": ["300x600"], "count": len(final.get("rendered_files") or [])}
-        await self._finish(task_uid, "done", result_url=result_url, meta=meta, cards=cards)
+        await self._finish(
+            task_uid, "done", result_url=result_url, meta=meta, cards=cards, recipe=recipe
+        )
         log.info("task_done", task_uid=task_uid, result_url=result_url)
 
     # Per-banner card fields surfaced on the final grid (Block 3, 2026-07-10).
@@ -536,6 +539,42 @@ class CreativesService:
             card["scenario"] = scenarios[i] if i < len(scenarios) else ""
             cards.append(card)
         return cards
+
+    async def _collect_recipe(self, task_uid: str) -> dict:
+        """Снимок решений запуска — «как сделан этот баннер».
+
+        Те же поля, что в provenance.json внутри ZIP, но живут в tasks.params:
+        архив ретеншен удалит через сутки, а объяснение результата останется.
+        Best-effort: сбой чтения чекпоинта → пустой рецепт, не сломанный финиш.
+        """
+        try:
+            snapshot = await self.graph.aget_state(self._config(task_uid))
+            values = dict(snapshot.values or {})
+        except Exception:  # noqa: BLE001
+            log.warning("collect_recipe_failed", task_uid=task_uid, exc_info=True)
+            return {}
+        ranked = values.get("ranked") or []
+        winner = ranked[0] if ranked and isinstance(ranked[0], dict) else {}
+        meta = (values.get("metaphor_meta") or [{}])[0] or {}
+        persona = (values.get("personas") or [None])[0] or {}
+        heroes = values.get("generated_heroes")
+        return {
+            "kb_source": values.get("kb_match"),
+            "persona_segment": persona.get("segment", ""),
+            # Явного победителя может не быть: принять набор, не ткнув в
+            # карточку, — законный сценарий, hitl_text_approve тогда пишет
+            # winner_id=None. Ведущим остаётся ranked[0] — из него взяты и
+            # slogan/anchor ниже, так что рецепт называет тот же текст.
+            "winner_id": values.get("winner_id") or winner.get("id"),
+            "slogan": winner.get("slogan", ""),
+            "anchor": winner.get("anchor", ""),
+            "desired_outcome": winner.get("desired_outcome", ""),
+            "metaphor": meta.get("metaphor", ""),
+            "intended_inference": meta.get("intended_inference", ""),
+            "anti_reading": meta.get("anti_reading", ""),
+            "metaphor_comments": values.get("metaphor_comments") or [],
+            "hero_source": "generated" if heroes else ("uploaded" if values.get("image") else "none"),
+        }
 
     def _collect_results(self, task_uid: str, final: dict) -> Optional[str]:
         """Move the graph's per-format PNGs + ZIP into results/<uid>/ and return
@@ -769,6 +808,7 @@ class CreativesService:
         error: Optional[str] = None,
         meta: Optional[dict[str, Any]] = None,
         cards: Optional[list[dict]] = None,
+        recipe: dict | None = None,
         reason: Optional[str] = None,
     ) -> None:
         """Close the task and log exactly one usage row.
@@ -790,6 +830,8 @@ class CreativesService:
             if cards:
                 # reassign (not mutate) so the JSON column change is tracked
                 task.params = {**(task.params or {}), "cards": cards}
+            if recipe:
+                task.params = {**(task.params or {}), "recipe": recipe}
             payload = {**(meta or {}), "work_ms": usage.close_work_window(task)}
             if reason:
                 payload["reason"] = reason

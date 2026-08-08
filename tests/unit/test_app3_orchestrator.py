@@ -1211,3 +1211,76 @@ async def test_hero_generation_publishes_incremental_progress(tmp_path):
     steps = [e["step"] for e in events if e.get("kind") == "step"]
     assert any("1/3" in s for s in steps)
     assert any("3/3" in s for s in steps)
+
+
+@pytest.mark.asyncio
+async def test_collect_recipe_snapshots_human_decisions(tmp_path):
+    """Рецепт собирает то, что решил человек: победитель, персона, карточка
+    знаний, метафора и её комментарии."""
+    Session = await _sessionmaker(tmp_path)
+
+    class _G:
+        values = {
+            "ranked": [
+                {"id": "c7", "slogan": "GPU без очереди", "anchor": "боль: очередь",
+                 "desired_outcome": "обучение стартует за минуты"},
+            ],
+            "winner_id": "c7",
+            "personas": [{"segment": "ML-инженеры"}],
+            "kb_match": {"slug": "managed-rag", "name": "Managed RAG", "version": 3},
+            "metaphor_meta": [{"candidate_id": "c7", "metaphor": "a bridge",
+                               "intended_inference": "путь становится коротким",
+                               "anti_reading": "не стройка"}],
+            "metaphor_comments": ["слишком буквально"],
+            "generated_heroes": [{"local_path": "/tmp/h.png"}],
+        }
+
+        async def aget_state(self, config):
+            return _FakeState(self.values)
+
+    svc = _service(Session, _G(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    recipe = await svc._collect_recipe("uid1")
+    assert recipe["winner_id"] == "c7"
+    assert recipe["slogan"] == "GPU без очереди"
+    assert recipe["anchor"] == "боль: очередь"
+    assert recipe["persona_segment"] == "ML-инженеры"
+    assert recipe["kb_source"] == {"slug": "managed-rag", "name": "Managed RAG", "version": 3}
+    assert recipe["metaphor"] == "a bridge"
+    assert recipe["metaphor_comments"] == ["слишком буквально"]
+    assert recipe["hero_source"] == "generated"
+
+
+@pytest.mark.asyncio
+async def test_collect_recipe_falls_back_to_leading_card(tmp_path):
+    """Человек принял набор, не ткнув в карточку: hitl_text_approve пишет
+    winner_id=None (fail-open, скоринговый порядок). Ведущий текст при этом
+    всё равно есть — ranked[0], — и рецепт должен назвать именно его."""
+    Session = await _sessionmaker(tmp_path)
+
+    class _G:
+        values = {
+            "ranked": [{"id": "c1", "slogan": "S"}],
+            "winner_id": None,
+            "image": {"local_path": "/tmp/u.png"},
+        }
+
+        async def aget_state(self, config):
+            return _FakeState(self.values)
+
+    svc = _service(Session, _G(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    recipe = await svc._collect_recipe("uid3")
+    assert recipe["winner_id"] == "c1"
+    assert recipe["hero_source"] == "uploaded"
+
+
+@pytest.mark.asyncio
+async def test_collect_recipe_survives_broken_checkpoint(tmp_path):
+    """Рецепт — best-effort: сбой чтения чекпоинта не должен ломать финиш."""
+    Session = await _sessionmaker(tmp_path)
+
+    class _Boom:
+        async def aget_state(self, config):
+            raise RuntimeError("checkpoint gone")
+
+    svc = _service(Session, _Boom(), tmp=tmp_path / "tmp", results_dir=tmp_path / "res")
+    assert await svc._collect_recipe("uid2") == {}

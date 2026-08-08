@@ -394,7 +394,43 @@
       ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
       : "Готово, но файл результата не найден.";
     $("startBtn").disabled = false;
+    loadRecipe(d.task_uid || taskUid);
     loadRecentTasks();
+  }
+
+  // Рецепт лежит в задаче (не в SSE-событии) — дочитываем его после финиша.
+  async function loadRecipe(uid) {
+    const box = $("recipePanel");
+    hide(box);
+    if (!uid) return;
+    try {
+      const r = await fetch(`${P}/api/tasks/${uid}`);
+      if (!r.ok) return;
+      const t = await r.json();
+      const html = recipeHtml(t.recipe);
+      if (!html) return;
+      $("recipeBody").innerHTML = html;
+      box.classList.remove("hidden");
+    } catch (_) {}
+  }
+
+  function recipeHtml(rec) {
+    if (!rec || !Object.keys(rec).length) return "";
+    const kbs = rec.kb_source;
+    const HERO = { generated: "сгенерирован на сервере", uploaded: "загружен вручную", none: "нет" };
+    const comments = Array.isArray(rec.metaphor_comments) ? rec.metaphor_comments.join("; ") : "";
+    return (
+      kv("карточка знаний", kbs ? `${kbs.name} (версия ${kbs.version})` : "не использовалась") +
+      kv("персона", rec.persona_segment) +
+      kv("ведущий текст", rec.slogan) +
+      kv("якорь персоны", rec.anchor) +
+      kv("что человек получит", rec.desired_outcome) +
+      kv("образ", rec.metaphor) +
+      kv("читатель должен подумать", rec.intended_inference) +
+      kv("не должно читаться как", rec.anti_reading) +
+      kv("комментарии к образу", comments) +
+      kv("hero", HERO[rec.hero_source] || rec.hero_source)
+    );
   }
   function onError(e) {
     if (es) es.close();

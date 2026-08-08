@@ -69,6 +69,21 @@ def _task_cards(t: models.Task) -> list[dict]:
     ]
 
 
+_RECIPE_KEYS = (
+    "kb_source", "persona_segment", "winner_id", "slogan", "anchor",
+    "desired_outcome", "metaphor", "intended_inference", "anti_reading",
+    "metaphor_comments", "hero_source",
+)
+
+
+def _task_recipe(t: models.Task) -> dict:
+    """Снимок решений запуска, whitelist — как у карточек."""
+    recipe = (t.params or {}).get("recipe")
+    if not isinstance(recipe, dict):
+        return {}
+    return {k: recipe[k] for k in _RECIPE_KEYS if k in recipe}
+
+
 def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
     return TaskOut(
         task_uid=t.task_uid,
@@ -81,6 +96,7 @@ def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
         images=_task_images(t, results_dir),
         brief=_task_brief(t),
         cards=_task_cards(t),
+        recipe=_task_recipe(t),
     )
 
 

@@ -48,6 +48,8 @@ class TaskOut(BaseModel):
     # Per-banner ranked cards (slogan/body/cta/hook_angle/score/reason +
     # scenario), aligned by index with `images` — the final-grid captions.
     cards: List[Dict[str, Any]] = Field(default_factory=list)
+    # «Как сделан этот баннер»: победитель, персона, карточка знаний, метафора.
+    recipe: dict[str, Any] = Field(default_factory=dict)
 
 
 class PersonaIn(BaseModel):

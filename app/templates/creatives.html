@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260808v3">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v1">
 </head>
 <body>
   <header class="topbar">
@@ -147,6 +147,10 @@
     <section class="panel hidden" id="resultsPanel">
       <h2>05 · Баннеры</h2>
       <div id="resultMsg"></div>
+      <details class="recipe hidden" id="recipePanel">
+        <summary>Как сделан этот баннер</summary>
+        <div id="recipeBody"></div>
+      </details>
       <div class="results" id="results"></div>
     </section>
 
@@ -162,6 +166,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260808v3"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260809v1"></script>
 </body>
 </html>
