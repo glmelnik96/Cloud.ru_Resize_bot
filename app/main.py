@@ -157,6 +157,7 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     app = FastAPI(title="App3 — creatives", lifespan=lifespan)
     app.state.settings = cfg
 
+    from app.api.routes_admin import router as admin_router
     from app.api.routes_auth import router as auth_router
     from app.api.routes_kb import router as kb_router
     from app.api.routes_pages import router as pages_router
@@ -166,6 +167,7 @@ def create_app(test_settings: dict | None = None) -> FastAPI:
     from app.api.routes_webinar import router as webinar_router
 
     app.include_router(auth_router)
+    app.include_router(admin_router)
     app.include_router(tasks_router)
     app.include_router(kb_router)
     app.include_router(webinar_router)
@@ -188,6 +190,7 @@ def _resolve_settings(test_settings: dict | None) -> dict:
     base = {
         "prefix": settings.prefix,
         "dev_user": settings.dev_user,
+        "bootstrap_admin": settings.bootstrap_admin,
         "db_url": settings.db_url,
         "results_dir": str(settings.results_dir),
         "tmp_root": str(settings.tmp_root),

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # treat the request as this user (email). Empty (default) → prod behavior:
     # missing header → 401. The gateway always injects the header in prod.
     dev_user: str = Field("", alias="APP3_DEV_USER")
+    # Первый админ библиотеки знаний: email, который получает роль admin при
+    # первом обращении. Нужен ровно один раз — дальше админ раздаёт роли из UI.
+    bootstrap_admin: str = Field("", alias="APP3_BOOTSTRAP_ADMIN")
     # Own DB — isolated per App1 pattern; Task/User lifecycle (NOT graph state).
     db_url: str = Field("sqlite+aiosqlite:///./data/app3.db", alias="DB_URL")
     results_dir: Path = Field(ROOT / "data" / "results", alias="RESULTS_DIR")

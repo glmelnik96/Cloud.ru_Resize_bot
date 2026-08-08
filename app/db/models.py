@@ -129,3 +129,22 @@ class KbRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
+
+
+class UserRole(Base):
+    """Роль пользователя App3 (одна строка на пользователя).
+
+    Отсутствие строки = обычный пользователь: на существующей БД никто не
+    теряет доступ и миграция не нужна. `role` — admin|user (админ раздаёт
+    роли), `kb_editor` — отдельный флаг «правит карточки знаний», чтобы
+    редактор библиотеки не получал заодно право раздавать доступы."""
+
+    __tablename__ = "user_roles"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    kb_editor: Mapped[bool] = mapped_column(default=False)
+    updated_by: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )

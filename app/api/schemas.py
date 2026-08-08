@@ -10,6 +10,8 @@ class UserOut(BaseModel):
     id: int
     email: str
     display_name: str
+    role: str = "user"
+    can_edit_kb: bool = False
 
 
 class CreateTaskIn(BaseModel):
@@ -130,3 +132,15 @@ class OutcomeIn(BaseModel):
 
     outcome: Literal["shipped", "rejected"]
     comment: str = Field(default="", max_length=2000)
+
+
+class RoleIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    role: Literal["admin", "user"] = "user"
+    kb_editor: bool = False
+
+
+class RoleOut(BaseModel):
+    email: str
+    role: str
+    kb_editor: bool
