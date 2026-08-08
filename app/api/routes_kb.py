@@ -5,8 +5,6 @@
 """
 from __future__ import annotations
 
-from typing import List
-
 from fastapi import APIRouter, Request
 
 from app.api.schemas import KbProductOut
@@ -33,7 +31,7 @@ def kb_out(r: models.KbProduct) -> KbProductOut:
     )
 
 
-@router.get("/products", response_model=List[KbProductOut])
+@router.get("/products", response_model=list[KbProductOut])
 async def list_products(request: Request, include_archived: bool = False):
     await get_current_user(request)
     rows = await latest_rows(

@@ -68,11 +68,11 @@ class KbProductOut(BaseModel):
     slug: str
     name: str
     version: int
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     tagline: str = ""
     archived: bool = False
     updated_by: str = ""
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     block1: str = ""
     block2: str = ""
     block3: str = ""
