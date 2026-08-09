@@ -182,15 +182,18 @@ def test_library_page_requires_auth(tmp_path, monkeypatch):
 
 
 def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
-    """Страница отдаётся авторизованному и несёт канон-топбар с is-active на
-    «Библиотеке»: без него страница выпадает из единой оболочки платформы, а
-    человек не понимает, где он находится."""
+    """Страница отдаётся авторизованному и несёт канон-топбар: без него страница
+    выпадает из единой оболочки платформы. Библиотека — не раздел платформы, а
+    внутренность «Креативов», поэтому в топнаве подсвечены именно «Креативы», и
+    со страницы есть путь назад: иначе библиотека — тупик без кнопки «домой»."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         r = c.get("/library", headers=_HDR)
         assert r.status_code == 200
         html = r.text
         assert "Библиотека знаний" in html
-        assert 'class="topnav__link is-active">Библиотека' in html
+        assert 'class="topnav__link is-active">Креативы' in html
+        assert "topnav__link\">Библиотека" not in html
+        assert "Вернуться к генерации креативов" in html
         assert 'href="/images"' in html
         assert 'href="/slides"' in html
         assert 'href="/creatives"' in html
@@ -203,14 +206,22 @@ def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
         assert "/creatives/static/app.css" in html
 
 
-def test_library_link_in_neighbour_topnavs(tmp_path, monkeypatch):
-    """Страница без ссылки — страница, которой нет: попасть на библиотеку можно
-    только из топнава соседей, адрес её никто не помнит наизусть."""
+def test_library_link_lives_in_the_brief(tmp_path, monkeypatch):
+    """Страница без ссылки — страница, которой нет: адрес библиотеки никто не
+    помнит наизусть. Но живёт ссылка не в топнаве платформы, а в брифе, рядом с
+    выбором карточки — там единственное место, где человек про эту карточку
+    думает и хочет проверить, что в ней написано.
+
+    Ссылка идёт через префикс шлюза: топнав платформы прибит к /creatives/ и
+    локально ведёт в никуда, а этот переход должен работать в обеих сборках."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
-        for path in ("/", "/webinar"):
-            html = c.get(path, headers=_HDR).text
-            assert 'href="/creatives/library"' in html, f"нет ссылки на библиотеку в {path}"
-            assert "Библиотека" in html
+        html = c.get("/", headers=_HDR).text
+        assert 'href="/creatives/library"' in html
+        assert "Библиотека знаний" in html
+        # Соседство с выбором карточки: подсказка идёт сразу за селектором.
+        assert html.index('id="productSlug"') < html.index('href="/creatives/library"')
+        assert html.index('href="/creatives/library"') < html.index('id="product"')
+        assert 'class="topnav__link">Библиотека' not in html
 
 
 def test_library_js_is_served_and_not_a_stub(tmp_path, monkeypatch):

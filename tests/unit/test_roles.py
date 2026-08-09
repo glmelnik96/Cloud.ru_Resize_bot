@@ -169,6 +169,59 @@ def test_admin_roles_list_and_grant(tmp_path, monkeypatch):
         assert r.status_code == 200 and r.json()["email"] == "u@cloud.ru"
 
 
+def test_technical_email_predicate():
+    """Что считается учёткой прогона, а не человека. Ошибка в обе стороны стоит
+    дорого: спрятать коллегу — значит не выдать ему доступ, показать полсотни
+    load-00@qa.local — значит утопить в них коллегу."""
+    from app.api.routes_admin import is_technical_email
+
+    for junk in ("", "   ", "qa-iso-1@test.local", "load-00@qa.local",
+                 "e2e@cloud.ru", "e2e-smoke@cloud.ru", "smoke@x", "no-at-sign",
+                 # Ручные пробы из списка: правилом их не отличить от людей.
+                 "t@e.ru", "T@E.ru", "gleb@cloud.ru"):
+        assert is_technical_email(junk) is True, junk
+    for human in ("g.melnikov96@yandex.ru", "Kedra.108@yandex.ru",
+                  "boss@cloud.ru", "e2gor@cloud.ru", "qa.petrov@cloud.ru"):
+        assert is_technical_email(human) is False, human
+
+
+def test_roles_list_hides_technical_users_but_never_hides_rights(tmp_path, monkeypatch):
+    """Список доступов — рабочий инструмент поиска коллеги, и прогоны его
+    забивают. Прячем их по умолчанию, но с двумя обязательствами: полный состав
+    доступен переключателем, а техническая учётка с выданными правами видна
+    всегда — невидимый носитель прав это права, которые никто не отзовёт."""
+    app = _app(tmp_path, monkeypatch, bootstrap_admin="boss@cloud.ru")
+    with TestClient(app) as c:
+        c.get("/api/me", headers=_BOSS)
+        c.get("/api/me", headers=_HDR)
+        c.get("/api/me", headers={"X-User-Id": "7", "X-User-Email": "load-00@qa.local"})
+        c.get("/api/me", headers={"X-User-Id": "8", "X-User-Email": "e2e@cloud.ru"})
+
+        shown = {r["email"] for r in c.get("/api/admin/roles", headers=_BOSS).json()}
+        assert shown == {"boss@cloud.ru", "u@cloud.ru"}
+
+        full = {r["email"] for r in
+                c.get("/api/admin/roles?technical=true", headers=_BOSS).json()}
+        assert full == shown | {"load-00@qa.local", "e2e@cloud.ru"}
+
+        c.put(
+            "/api/admin/roles",
+            json={"email": "e2e@cloud.ru", "role": "user", "kb_editor": True},
+            headers=_BOSS,
+        )
+        rows = {r["email"]: r for r in c.get("/api/admin/roles", headers=_BOSS).json()}
+        assert rows["e2e@cloud.ru"]["kb_editor"] is True
+        # Отозвали — учётка снова уходит в технические и список опять чистый.
+        c.put(
+            "/api/admin/roles",
+            json={"email": "e2e@cloud.ru", "role": "user", "kb_editor": False},
+            headers=_BOSS,
+        )
+        assert "e2e@cloud.ru" not in {
+            r["email"] for r in c.get("/api/admin/roles", headers=_BOSS).json()
+        }
+
+
 def test_admin_cannot_demote_himself(tmp_path, monkeypatch):
     """Один промах в выпадающем списке не должен бриккать администрирование:
     после самопонижения bootstrap уже не поднимет — строка-то есть."""

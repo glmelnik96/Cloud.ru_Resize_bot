@@ -15,7 +15,6 @@
       <a href="/creatives" class="topnav__link is-active">Креативы</a>
       <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
       <a href="/creatives/webinar" class="topnav__link">Вебинары</a>
-      <a href="/creatives/library" class="topnav__link">Библиотека</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -40,6 +39,7 @@
         <option value="none">Не использовать</option>
       </select>
       <p class="page-sub">Факты о продукте, на которые пайплайн опирается и за которые не выходит. Автоопределение ищет продукт по тексту брифа.</p>
+      <p class="page-sub"><a href="{{ prefix }}/library">Библиотека знаний →</a> Там лежит текст карточки: что это, что умеет, кому нужно. Это граница достоверности — сверх карточки баннеры не обещают. Если продукт описан неточно или его там нет, правится это в библиотеке, и правка действует со следующего запуска.</p>
       <label for="product">Что рекламируем</label>
       <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
       <label for="audience">Целевая аудитория</label>
@@ -177,6 +177,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260809v4"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260809v5"></script>
 </body>
 </html>

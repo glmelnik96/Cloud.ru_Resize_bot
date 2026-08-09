@@ -226,8 +226,12 @@
   // ── роли (только admin) ──────────────────────────────
   async function loadRoles() {
     let rows;
+    // Технические учётки (прогоны, e2e, нагрузка) сервер по умолчанию не
+    // отдаёт: см. is_technical_email в routes_admin.py. Переключатель нужен,
+    // чтобы фильтр не превратился в ложь о составе БД.
+    const technical = $("showTechnical") && $("showTechnical").checked;
     try {
-      rows = await jget("/api/admin/roles");
+      rows = await jget(`/api/admin/roles${technical ? "?technical=true" : ""}`);
     } catch (_) {
       // Пустой список без объяснения читается как «других пользователей нет» —
       // админ решит, что выдавать доступ некому.
@@ -261,7 +265,20 @@
           email: cb.dataset.email, role: "user", kb_editor: want,
         });
         if (r && r.ok) {
-          $("rolesStatus").textContent = "Сохранено.";
+          // «Сохранено» не отвечает на вопрос, который админ задавал галкой:
+          // получил человек доступ или потерял. Называем обоих — кого и что —
+          // и берём это из ответа сервера, а не из намерения: email там уже
+          // нормализован, а kb_editor — то, что реально легло в базу.
+          let saved = null;
+          try { saved = await r.json(); } catch (_) { /* см. фолбэк ниже */ }
+          // Без escapeHtml намеренно: текст кладём через textContent, а он
+          // разметку не исполняет — экранирование здесь дало бы «&amp;» в почте.
+          const who = saved ? saved.email : cb.dataset.email;
+          const granted = saved ? !!saved.kb_editor : want;
+          if (saved) cb.checked = granted;
+          $("rolesStatus").textContent = granted
+            ? `Доступ выдан: ${who} правит карточки библиотеки.`
+            : `Доступ отозван: ${who} больше не правит карточки библиотеки.`;
           return;
         }
         // Галку переключил браузер, сервер об этом не узнал. Без отката админ
@@ -340,6 +357,7 @@
     }
     if (me.role === "admin") {
       $("rolesPanel").classList.remove("hidden");
+      $("showTechnical").addEventListener("change", loadRoles);
       loadRoles();
     }
     await loadList();

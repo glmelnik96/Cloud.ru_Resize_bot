@@ -12,10 +12,9 @@
     <nav class="topnav">
       <a href="/images" class="topnav__link">Картинки</a>
       <a href="/slides" class="topnav__link">Слайды</a>
-      <a href="/creatives" class="topnav__link">Креативы</a>
+      <a href="/creatives" class="topnav__link is-active">Креативы</a>
       <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
       <a href="/creatives/webinar" class="topnav__link">Вебинары</a>
-      <a href="/creatives/library" class="topnav__link is-active">Библиотека</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -26,6 +25,7 @@
   <main class="wrap">
     <h1 class="page-title">Библиотека знаний</h1>
     <p class="page-sub">Факты о продуктах, из которых пайплайн строит предложения. Что здесь написано — то и обещают баннеры: правка карточки меняет следующий же запуск.</p>
+    <p class="page-sub"><a href="{{ prefix }}/">← Вернуться к генерации креативов</a></p>
 
     <div class="workspace">
     <div class="workspace__controls">
@@ -44,8 +44,11 @@
 
     <section class="panel hidden" id="rolesPanel">
       <h2>Доступы</h2>
-      <p class="page-sub">Кто может править карточки. Пользователь появляется в списке после первого входа.</p>
+      <p class="page-sub">Кто может править карточки. Пользователь появляется в списке после первого входа. Технические учётки прогонов и тестов скрыты.</p>
       <div class="task-list" id="rolesList"></div>
+      <label class="page-sub" for="showTechnical">
+        <input type="checkbox" id="showTechnical"> показывать технические учётки
+      </label>
       <div class="status" id="rolesStatus"></div>
     </section>
 
@@ -100,6 +103,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/library.js?v=20260809v7"></script>
+  <script src="{{ prefix }}/static/library.js?v=20260809v8"></script>
 </body>
 </html>
