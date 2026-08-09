@@ -144,7 +144,9 @@ async def _run_batch(
             "batch_anchors": "\n".join(f"- {a}" for a in anchors),
         },
     )
-    if experience and experience_tpl:
+    # Одного условия хватает: шаблон вытаскивается ровно тогда, когда блок
+    # непустой (см. generate_message_candidates).
+    if experience_tpl:
         user_msg += "\n\n" + render(experience_tpl, experience_block=experience)
     result = await run_agent(
         _AGENT_ID,

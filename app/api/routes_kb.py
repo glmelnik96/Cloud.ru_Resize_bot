@@ -133,14 +133,28 @@ async def update(request: Request, slug: str, body: KbProductPatch):
 
 @router.get("/experience", response_model=list[ExperienceOut])
 async def list_experience(request: Request, limit: int = 50):
-    """Отмеченные исходы — то же, что видит копирайтер, только для человека."""
+    """Лента отмеченных исходов для человека — ВСЕ продукты и ОБА исхода.
+
+    Это не то, что видит копирайтер: в промпт уходит только outcome="shipped"
+    и только по продукту текущего брифа (graph.knowledge.experience_for).
+    Забракованное живёт здесь и нигде больше — команде нужно видеть, куда уже
+    ходили и что отвергли, а модели «вот так не надо» работает как подсказка
+    повторить неудачу.
+
+    Читать может любой авторизованный, хотя сами задачи закрыты по владельцу
+    (_load_owned в routes_tasks): опыт — общий актив команды, а не личная
+    история запусков. Тела задач, файлы и брифы отсюда не видны — только
+    решения, которые команда уже приняла вслух.
+    """
     await get_current_user(request)
     Session = request.app.state.sessionmaker
     async with Session() as s:
         rows = (
             await s.execute(
                 select(models.KbRun)
-                .order_by(models.KbRun.created_at.desc(), models.KbRun.id.desc())
+                # По updated_at, а не created_at: только что переставленная
+                # отметка обязана быть сверху, иначе лента спорит сама с собой.
+                .order_by(models.KbRun.updated_at.desc(), models.KbRun.id.desc())
                 .limit(max(1, min(limit, 200)))
             )
         ).scalars().all()
@@ -153,6 +167,7 @@ async def list_experience(request: Request, limit: int = 50):
             persona_segment=r.persona_segment or "",
             comment=r.comment or "",
             created_at=r.created_at.isoformat() if r.created_at else None,
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
         )
         for r in rows
     ]

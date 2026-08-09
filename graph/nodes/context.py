@@ -9,6 +9,8 @@ keeps the "no product card yet" fallback in a single spot.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from graph import knowledge
 from graph.state import AdBrief, GraphState, ProductBrief
 
@@ -53,7 +55,35 @@ def notes_block(brief: AdBrief) -> str:
     return brief.notes.strip() or "(маркетолог ничего не добавил)"
 
 
-def experience_block(state: GraphState, *, kind: str = "text", limit: int = 5) -> str:
+# Сколько заметок просматриваем, чтобы набрать `limit` годных. Отбор по
+# непустому полю идёт ПОСЛЕ выборки, и без запаса пять свежих пустышек
+# похоронили бы весь опыт продукта: рецепт запуска собирается best-effort
+# (_collect_recipe в app/services/creatives.py на любой ошибке чтения
+# чекпоинта отдаёт {}), поэтому строки с пустым слоганом и метафорой в
+# kb_runs — норма, а не патология. Потолок нужен, чтобы блок не начал
+# перебирать весь снапшот, когда у продукта накопились сотни пустых отметок.
+_SCAN_LIMIT = 50
+
+
+def _one_line(s: str, cap: int = 200) -> str:
+    """Схлопнуть в одну строку и обрезать по длине.
+
+    Комментарий человека приезжает из <textarea> и сплошь и рядом написан
+    буллетами («Взяли, но:», перевод строки, «- слишком длинно»). Вставленный
+    дословно, он разваливает список блока: перенос читается моделью как ещё
+    один отгруженный слоган, а секция велит от таких уходить — и модель начнёт
+    обходить кусок чужого комментария. Обрезка держит объём: пять отметок по
+    2000 символов (потолок OutcomeIn.comment) перевесили бы сам бриф.
+    Слоган и якорь идут от LLM, но человек правит их в HITL — тот же вход."""
+    return " ".join(s.split())[:cap]
+
+
+def experience_block(
+    state: GraphState,
+    *,
+    kind: Literal["text", "metaphor"] = "text",
+    limit: int = 5,
+) -> str:
     """Слой «опыт»: что по этому продукту уже ушло в работу.
 
     kind="text" — русские слоганы с якорями (копирайтер);
@@ -62,13 +92,20 @@ def experience_block(state: GraphState, *, kind: str = "text", limit: int = 5) -
     остаётся ровно таким, каким был до слоя опыта (решение спеки). Именно
     поэтому здесь нет fallback-строки, в отличие от notes_block — там пустая
     секция ломала бы структуру user-сообщения, а тут секции просто не будет."""
+    # Опечатка в kind тихо дала бы текстовую ветку — русские слоганы внутри
+    # английского промпта картинки, и заметить это можно только глазами.
+    if kind not in ("text", "metaphor"):
+        raise ValueError(f"unknown experience block kind: {kind!r}")
     slug = (state.get("kb_match") or {}).get("slug")
-    notes = knowledge.experience_for(slug, limit=limit)
+    notes = knowledge.experience_for(slug, limit=_SCAN_LIMIT)
     if kind == "metaphor":
-        return "\n".join(f"- {n.metaphor}" for n in notes if n.metaphor)
-    return "\n".join(
-        f"- «{n.slogan}» — {n.anchor or 'якорь не записан'}"
-        + (f"; комментарий: {n.comment}" if n.comment else "")
-        for n in notes
-        if n.slogan
-    )
+        picked = [n for n in notes if n.metaphor][:limit]
+        return "\n".join(f"- {_one_line(n.metaphor)}" for n in picked)
+    lines = []
+    for n in [n for n in notes if n.slogan][:limit]:
+        line = f"- «{_one_line(n.slogan)}» — {_one_line(n.anchor) or 'якорь не записан'}"
+        comment = _one_line(n.comment)
+        if comment:
+            line += f"; комментарий: {comment}"
+        lines.append(line)
+    return "\n".join(lines)

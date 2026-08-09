@@ -4,6 +4,7 @@ Decision (HITL) and SSE routes are added in Phase 3+.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -24,6 +25,8 @@ from app.db import models
 from app.kb.experience import record_outcome, refresh_experience
 from app.kb.store import latest_rows
 from app.services.creatives import _PARKED_STATUSES, CapacityError, DecisionConflict
+
+log = logging.getLogger("app3.tasks")
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -376,5 +379,18 @@ async def set_outcome(uid: str, body: OutcomeIn, request: Request):
     # Рефреш безусловный: record_outcome возвращает False, когда человек
     # передумал и исход переписан. Под `if recorded` смена мнения не доехала бы
     # до графа, и забракованный текст продолжил бы идти в промпт как принятый.
-    await refresh_experience(request.app.state.sessionmaker)
+    #
+    # И безопасный: record_outcome уже сделал commit, отметка в kb_runs есть и
+    # видна на странице библиотеки. 500 отсюда сказал бы человеку «Не удалось
+    # записать» про запись, которая прошла, — он либо считает отметку
+    # потерянной, либо кликает снова и получает recorded=false («Исход
+    # обновлён»), что спорит с только что показанной ошибкой. Снапшот
+    # самоизлечивается следующей отметкой или рестартом.
+    # В PUT /api/kb/products/{slug} refresh_catalog намеренно НЕ прикрыт: там
+    # правка и её публикация в граф — одно действие («сохранено, следующий
+    # запуск возьмёт новую версию»), и молча разойтись им нельзя.
+    try:
+        await refresh_experience(request.app.state.sessionmaker)
+    except Exception as exc:  # noqa: BLE001
+        log.error("experience_refresh_failed uid=%s: %s", uid, exc)
     return {"ok": True, "recorded": recorded, "outcome": body.outcome}

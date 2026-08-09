@@ -126,8 +126,18 @@ class KbRun(Base):
     desired_outcome: Mapped[str] = mapped_column(Text, default="")
     metaphor: Mapped[str] = mapped_column(Text, default="")
     persona_segment: Mapped[str] = mapped_column(Text, default="")
+    # Две отметки времени, потому что у строки две разные даты. created_at —
+    # когда запуск отметили ВПЕРВЫЕ; она не двигается, и по ней честно видно
+    # возраст самого запуска. updated_at — когда отметку трогали последний раз:
+    # человек имеет право передумать (record_outcome перезаписывает строку по
+    # месту), и без onupdate сегодняшняя смена мнения выглядела бы месячной —
+    # уходила бы вниз ленты и первой выпадала из окна снапшота. Сортировки
+    # («новые первыми») идут именно по updated_at.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, index=True
     )
 
 

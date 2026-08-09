@@ -79,13 +79,27 @@ _SNAPSHOT_LIMIT = 200
 
 
 async def load_experience(sessionmaker) -> tuple[ExperienceNote, ...]:
-    """Отмеченные исходы, новые первыми (порядок важен: experience_for режет
-    хвост limit'ом и должен оставлять самое свежее)."""
+    """Принятые исходы, свежие первыми (порядок важен: experience_for режет
+    хвост limit'ом и должен оставлять самое свежее).
+
+    Снапшот односторонний — только outcome="shipped". Забракованное в промпт
+    не идёт по решению спеки, а тянуть его сюда значит съедать окно: отклонений
+    в живой работе больше, чем принятого (в этом смысл инструмента), и общие
+    200 строк оставили бы копирайтеру десятки годных на десяток продуктов —
+    опыт по редко используемому продукту молча выпал бы через полгода.
+    Человеческую ленту (там видны оба исхода) обслуживает отдельный запрос в
+    app/api/routes_kb.py::list_experience.
+
+    Свежесть считаем по updated_at, а не created_at: смена мнения переписывает
+    строку по месту, и по дате первой отметки сегодняшнее решение выглядело бы
+    месячным.
+    """
     async with sessionmaker() as s:
         rows = (
             await s.execute(
                 select(models.KbRun)
-                .order_by(models.KbRun.created_at.desc(), models.KbRun.id.desc())
+                .where(models.KbRun.outcome == "shipped")
+                .order_by(models.KbRun.updated_at.desc(), models.KbRun.id.desc())
                 .limit(_SNAPSHOT_LIMIT)
             )
         ).scalars().all()

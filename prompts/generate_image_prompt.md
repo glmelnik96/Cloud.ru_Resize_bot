@@ -120,6 +120,7 @@ METAPHORS ALREADY SHIPPED FOR THIS PRODUCT:
 {{experience_block}}
 
 Do not reuse these metaphors or trivial variations of them. They show the visual territory the team has already covered — go somewhere else.
+Still return ONLY valid JSON matching the schema above.
 ```
 
 ## Model notes
@@ -144,7 +145,9 @@ Do not reuse these metaphors or trivial variations of them. They show the visual
   которую команда уже прошла). Источник — таблица kb_runs, инжект через
   graph.knowledge.set_experience. Отдельной секцией, а не в user-шаблоне:
   при пустой библиотеке промпт обязан остаться прежним (решение спеки
-  2026-08-07). Забракованные исходы (rejected) в промпт не идут.
+  2026-08-07). Забракованные исходы (rejected) в промпт не идут. Addendum
+  дописывается ПОСЛЕ схемы ответа, поэтому заканчивается напоминанием про
+  JSON — как в creative_ads_explorer.md.
 - v0.7.0 (2026-08-07) — контракт-lite метафоры (этап 1 «Язык», синтез с
   Bannerzila, семантика их MetaphorSpec): обязательные intended_inference
   (целевое заключение зрителя) и anti_reading (вероятное ложное прочтение —

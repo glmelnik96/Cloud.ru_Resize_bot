@@ -908,3 +908,29 @@ def test_outcome_rejects_unknown_value(tmp_path, monkeypatch):
         _seed_task(db, "done02", "done", me["id"])
         r = c.post("/api/tasks/done02/outcome", json={"outcome": "maybe"}, headers=_HDR)
         assert r.status_code == 422
+
+
+def test_outcome_survives_broken_experience_refresh(tmp_path, monkeypatch):
+    """Отметка уже закоммичена, когда очередь доходит до рефреша
+    снапшота. 500 отсюда — это «Не удалось записать» про запись, которая
+    прошла и уже видна на странице библиотеки: человек либо считает отметку
+    потерянной, либо жмёт ещё раз и получает «Исход обновлён» сразу после
+    ошибки."""
+    import app.api.routes_tasks as routes_tasks
+
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+
+    async def _boom(_sessionmaker):
+        raise RuntimeError("db blinked")
+
+    monkeypatch.setattr(routes_tasks, "refresh_experience", _boom)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "done03", "done", me["id"], params={"recipe": {"slogan": "S"}})
+        r = c.post(
+            "/api/tasks/done03/outcome", json={"outcome": "shipped"}, headers=_HDR
+        )
+        assert r.status_code == 200 and r.json()["recorded"] is True
+        rows = _kb_runs(db)
+        assert len(rows) == 1 and rows[0]["outcome"] == "shipped"

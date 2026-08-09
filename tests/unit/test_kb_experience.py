@@ -106,13 +106,55 @@ async def test_load_experience_is_newest_first_and_maps_fields(Session):
         Session, session_id="r1", outcome="shipped", comment="первый", recipe=_RECIPE
     )
     await record_outcome(
-        Session, session_id="r2", outcome="rejected", comment="второй", recipe=_RECIPE
+        Session, session_id="r2", outcome="shipped", comment="второй", recipe=_RECIPE
+    )
+    # Забракованное в снапшот не идёт вовсе: в промпт его всё равно не пускает
+    # experience_for, а окно из 200 строк оно съедало бы наравне с принятым —
+    # отклонений в живой работе больше, чем принятого.
+    await record_outcome(
+        Session, session_id="r3", outcome="rejected", comment="третий", recipe=_RECIPE
     )
     notes = await load_experience(Session)
     assert [n.comment for n in notes] == ["второй", "первый"]
     assert notes[0].slug == "managed-rag"
     assert notes[0].slogan == "GPU без очереди"
     assert notes[0].metaphor == "a bridge across a canyon"
+
+
+async def test_changed_mind_becomes_the_freshest_note(Session):
+    """Смена мнения переписывает строку по месту, поэтому created_at остаётся
+    временем ПЕРВОЙ отметки. Сортируй снапшот по нему — и сегодняшнее решение
+    по месячному запуску уйдёт вниз окна и вылетит из него первым.
+
+    Проверяем и метку, и порядок: одной метки мало (её можно чинить,
+    не поправив сортировку), одного порядка мало (он совпадает случайно,
+    когда переотмечен и так самый свежий запуск).
+    """
+    import asyncio
+
+    from app.kb.experience import load_experience
+
+    await record_outcome(
+        Session, session_id="r1", outcome="shipped", comment="старый", recipe=_RECIPE
+    )
+    await record_outcome(
+        Session, session_id="r2", outcome="shipped", comment="новый", recipe=_RECIPE
+    )
+    # Пауза, а не расчёт на резолюцию часов: три записи подряд могут лечь в одну
+    # метку времени, и тест стал бы флаки вместо доказательства.
+    await asyncio.sleep(0.05)
+    await record_outcome(
+        Session, session_id="r1", outcome="shipped", comment="передумал", recipe=_RECIPE
+    )
+
+    async with Session() as s:
+        row = (
+            await s.execute(select(models.KbRun).where(models.KbRun.session_id == "r1"))
+        ).scalars().one()
+    assert row.updated_at > row.created_at, "onupdate не сработал на правке по месту"
+
+    notes = await load_experience(Session)
+    assert [n.comment for n in notes] == ["передумал", "новый"]
 
 
 async def test_refresh_experience_injects_into_graph(Session):

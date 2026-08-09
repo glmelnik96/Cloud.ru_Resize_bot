@@ -212,7 +212,11 @@ class ExperienceOut(BaseModel):
     anchor: str = ""
     persona_segment: str = ""
     comment: str = ""
+    # Обе даты: created_at — когда запуск отметили ВПЕРВЫЕ, updated_at — когда
+    # отметку последний раз трогали (человек передумал). Лента отсортирована по
+    # второй, её и показываем — иначе дата на экране спорит с порядком строк.
     created_at: str | None = None
+    updated_at: str | None = None
 
 
 class RoleIn(BaseModel):

@@ -269,7 +269,18 @@
   }
 
   // ── отмеченный опыт ──────────────────────────────────
-  const OUTCOME_RU = { shipped: "пошло в работу", rejected: "забраковано" };
+  // Забракованное подписано «не идёт в промпт» и набрано приглушённо: в общей
+  // ленте вперемешку с принятым оно читается как «модели сказали, что так не
+  // надо», а решение ровно обратное — в промпт уходит только «пошло в работу».
+  const OUTCOME_RU = {
+    shipped: "пошло в работу",
+    rejected: "забраковано · не идёт в промпт",
+  };
+  function fmtDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+  }
 
   async function loadExperience() {
     let rows;
@@ -284,13 +295,24 @@
     }
     $("experienceList").innerHTML = rows.length
       ? rows
-          .map(
-            (r) =>
-              `<div class="task-item"><b>${escapeHtml(OUTCOME_RU[r.outcome] || r.outcome)}</b>` +
+          .map((r) => {
+            const label = escapeHtml(OUTCOME_RU[r.outcome] || r.outcome);
+            const head =
+              r.outcome === "shipped"
+                ? `<b>${label}</b>`
+                : `<span class="page-sub">${label}</span>`;
+            // Дата — та, по которой лента отсортирована (updated_at: человек
+            // мог передумать). Без неё вчерашняя отметка неотличима от
+            // прошлогодней, а порядок строк ничего не объясняет.
+            const when = fmtDate(r.updated_at || r.created_at);
+            return (
+              `<div class="task-item">${head}` +
               ` · ${escapeHtml(r.slug || "без продукта")} · «${escapeHtml(r.slogan)}»` +
+              (when ? ` <span class="page-sub">· ${escapeHtml(when)}</span>` : "") +
               (r.comment ? `<div class="page-sub">${escapeHtml(r.comment)}</div>` : "") +
               `</div>`
-          )
+            );
+          })
           .join("")
       : `<p class="page-sub">Пока никто не отмечал исходы. Отметка ставится на экране результата.</p>`;
   }

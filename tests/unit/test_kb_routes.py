@@ -276,3 +276,90 @@ def test_experience_feed_is_readable_by_everyone(tmp_path, monkeypatch):
         r = c.get("/api/kb/experience", headers=_HDR)
         assert r.status_code == 200 and r.json() == []
         assert c.get("/api/kb/experience").status_code == 401
+
+
+def _seed_runs(tmp_path, marks):
+    """Записать отметки исхода в БД приложения ДО его старта.
+
+    Тот же приём, что в test_archived_product_hidden_unless_requested: своим
+    прогоном готовим состояние, которое приложение должно увидеть на старте,
+    а не после первого запроса.
+    """
+    import asyncio
+
+    from app.db.database import init_db, make_engine, make_sessionmaker
+    from app.kb.experience import record_outcome
+
+    async def _do():
+        engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'kbw.db'}")
+        await init_db(engine)
+        sm = make_sessionmaker(engine)
+        for session_id, slug, outcome, slogan, comment in marks:
+            await record_outcome(
+                sm,
+                session_id=session_id,
+                outcome=outcome,
+                comment=comment,
+                recipe={
+                    "kb_source": {"slug": slug},
+                    "slogan": slogan,
+                    "anchor": f"боль: {slug}",
+                    "persona_segment": "ML-инженеры",
+                },
+            )
+        await engine.dispose()
+
+    asyncio.run(_do())
+
+
+def test_experience_reaches_graph_on_startup(tmp_path, monkeypatch):
+    """Инжект опыта в lifespan: без него слой пуст после каждого рестарта
+    сервиса и наполняется заново только следующей отметкой — сервис при этом
+    «работает», просто копирайтер молча не видит библиотеку опыта."""
+    from graph import knowledge
+
+    _seed_runs(tmp_path, [("old-run", "managed-rag", "shipped", "GPU без очереди", "")])
+    # Снапшот мог остаться от соседнего теста — иначе проверка вакуумная.
+    knowledge.set_experience(())
+
+    with TestClient(_admin_app(tmp_path, monkeypatch)):
+        notes = knowledge.experience_for("managed-rag")
+    assert [n.slogan for n in notes] == ["GPU без очереди"]
+
+
+def test_experience_feed_shows_every_outcome_newest_first(tmp_path, monkeypatch):
+    _seed_runs(
+        tmp_path,
+        [
+            ("r1", "managed-rag", "shipped", "Первый слоган", "взяли"),
+            ("r2", "evolution-ml", "rejected", "Второй слоган", "мимо"),
+            ("r3", "managed-rag", "shipped", "Третий слоган", ""),
+        ],
+    )
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        rows = c.get("/api/kb/experience", headers=_HDR).json()
+        assert [r["slogan"] for r in rows] == [
+            "Третий слоган", "Второй слоган", "Первый слоган",
+        ], "лента должна идти новыми вперёд"
+
+        # Забракованное скрыто ТОЛЬКО от промпта: человеку оно нужно ровно
+        # затем, чтобы видеть, что команда уже отвергла.
+        rejected = [r for r in rows if r["outcome"] == "rejected"]
+        assert len(rejected) == 1
+        assert rejected[0] == {
+            "slug": "evolution-ml",
+            "outcome": "rejected",
+            "slogan": "Второй слоган",
+            "anchor": "боль: evolution-ml",
+            "persona_segment": "ML-инженеры",
+            "comment": "мимо",
+            "created_at": rejected[0]["created_at"],
+            "updated_at": rejected[0]["updated_at"],
+        }
+        # Даты нужны глазами: без них вчерашняя отметка неотличима от прошлогодней.
+        assert rejected[0]["created_at"] and rejected[0]["updated_at"]
+
+        # limit клампится с обеих сторон: 0 не должен означать «отдать всё»,
+        # а 1000 — вытащить всю растущую таблицу в один ответ.
+        assert len(c.get("/api/kb/experience?limit=0", headers=_HDR).json()) == 1
+        assert len(c.get("/api/kb/experience?limit=1000", headers=_HDR).json()) == 3
