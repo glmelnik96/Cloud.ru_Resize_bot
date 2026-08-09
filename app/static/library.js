@@ -305,6 +305,10 @@
     const d = new Date(iso);
     return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
   }
+  // Пустое поле не рисуем строкой «якорь: —»: в опыте половина полей пустая по
+  // природе (метафора есть только у сценария render), и прочерки читались бы
+  // как потерянные данные.
+  const kv = (k, v) => (v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "");
 
   async function loadExperience() {
     let rows;
@@ -329,17 +333,68 @@
             // мог передумать). Без неё вчерашняя отметка неотличима от
             // прошлогодней, а порядок строк ничего не объясняет.
             const when = fmtDate(r.updated_at || r.created_at);
+            // Что из строки реально доезжает до генерации, видно только в коде
+            // (experience_block: слоган+якорь+комментарий копирайтеру, метафора
+            // — в промпт картинки, и только по shipped и тому же продукту).
+            // Подписываем прямо в развороте: без этого человек правит опыт
+            // наугад и не понимает, почему удаление что-то изменило.
+            // Удаление меняет то, из чего строятся предложения, — право то же,
+            // что на правку карточки, и проверяется оно на сервере.
+            const canDelete = me.can_edit_kb;
+            const goesToPrompt = r.outcome === "shipped";
+            const rows =
+              kv("якорь персоны", r.anchor) +
+              kv("что человек получит", r.desired_outcome) +
+              kv("образ картинки", r.metaphor) +
+              kv("сегмент ЦА", r.persona_segment) +
+              kv("комментарий", r.comment) +
+              kv("отмечено впервые", fmtDate(r.created_at)) +
+              `<p class="page-sub">${goesToPrompt
+                ? "Уходит в промпты по этому продукту: слоган с якорем и комментарий — копирайтеру, образ — в список уже снятых метафор."
+                : "В промпты не уходит: копирайтер видит только «пошло в работу»."
+              }</p>` +
+              (canDelete
+                ? `<div class="btn-row"><button class="btn btn--danger" data-del-exp="${r.id}"` +
+                  ` data-what="${escapeHtml(r.slogan || r.slug || "")}">Удалить отметку</button></div>`
+                : "");
             return (
               `<div class="task-item">${head}` +
               ` · ${escapeHtml(r.slug || "без продукта")} · «${escapeHtml(r.slogan)}»` +
               (when ? ` <span class="page-sub">· ${escapeHtml(when)}</span>` : "") +
               (r.comment ? `<div class="page-sub">${escapeHtml(r.comment)}</div>` : "") +
+              `<details class="cand-why"><summary>Что записано в опыт</summary>${rows}</details>` +
               `</div>`
             );
           })
           .join("")
       : `<p class="page-sub">Пока никто не отмечал исходы. Отметка ставится на экране результата.</p>`;
   }
+
+  // Делегирование, а не слушатель на кнопку: лента перерисовывается целиком
+  // после каждого удаления, и навешенные обработчики умирали бы вместе с ней.
+  $("experienceList").addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-del-exp]");
+    if (!btn) return;
+    const what = btn.dataset.what || "";
+    // Удаление отметки необратимо и меняет будущие промпты — спрашиваем, но
+    // называем в вопросе сам текст, а не «эту запись»: лента однотипная, и
+    // подтвердить не глядя здесь слишком легко.
+    if (!window.confirm(`Удалить отметку «${what}»? Она перестанет влиять на промпты, вернуть её можно только новой отметкой исхода.`)) return;
+    btn.disabled = true;
+    const r = await jsend(`/api/kb/experience/${btn.dataset.delExp}`, "DELETE");
+    if (r && r.ok) {
+      await loadExperience();
+      return;
+    }
+    btn.disabled = false;
+    // 404 здесь не ошибка человека: строку уже удалил кто-то другой, и
+    // правильная реакция — показать актуальную ленту, а не красный текст.
+    if (r && r.status === 404) { await loadExperience(); return; }
+    btn.insertAdjacentHTML(
+      "afterend",
+      `<span class="err"> Не удалилось: ${escapeHtml(errText(r ? r.status : 0))}</span>`
+    );
+  });
 
   // ── старт ────────────────────────────────────────────
   (async function init() {

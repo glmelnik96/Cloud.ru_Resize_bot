@@ -347,10 +347,13 @@ def test_experience_feed_shows_every_outcome_newest_first(tmp_path, monkeypatch)
         rejected = [r for r in rows if r["outcome"] == "rejected"]
         assert len(rejected) == 1
         assert rejected[0] == {
+            "id": rejected[0]["id"],
             "slug": "evolution-ml",
             "outcome": "rejected",
             "slogan": "Второй слоган",
             "anchor": "боль: evolution-ml",
+            "desired_outcome": "",
+            "metaphor": "",
             "persona_segment": "ML-инженеры",
             "comment": "мимо",
             "created_at": rejected[0]["created_at"],
@@ -363,3 +366,45 @@ def test_experience_feed_shows_every_outcome_newest_first(tmp_path, monkeypatch)
         # а 1000 — вытащить всю растущую таблицу в один ответ.
         assert len(c.get("/api/kb/experience?limit=0", headers=_HDR).json()) == 1
         assert len(c.get("/api/kb/experience?limit=1000", headers=_HDR).json()) == 3
+
+
+def test_experience_delete_requires_role_and_leaves_the_prompt(tmp_path, monkeypatch):
+    """Удаление отметки — правка того, из чего строятся будущие предложения.
+
+    Отсюда два требования. Право — как на правку карточки: читатель ленты не
+    должен уметь вычистить общий опыт команды. И снапшот в графе обязан
+    обновиться сразу: он живёт копией таблицы, и без рефреша удалённая отметка
+    продолжила бы уходить копирайтеру до ближайшего рестарта — то есть
+    удаление выглядело бы выполненным, ничего не изменив.
+    """
+    from graph import knowledge
+
+    _seed_runs(
+        tmp_path,
+        [
+            ("r1", "managed-rag", "shipped", "Остаётся", ""),
+            ("r2", "managed-rag", "shipped", "Удаляем", "ошиблись кнопкой"),
+        ],
+    )
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        rows = {r["slogan"]: r for r in c.get("/api/kb/experience", headers=_HDR).json()}
+        victim = rows["Удаляем"]["id"]
+        assert {n.slogan for n in knowledge.experience_for("managed-rag")} == {
+            "Остаётся", "Удаляем",
+        }
+
+        # _HDR — обычный пользователь: он ленту читает, но не чистит.
+        assert c.delete(f"/api/kb/experience/{victim}", headers=_HDR).status_code == 403
+        assert len(c.get("/api/kb/experience", headers=_HDR).json()) == 2
+
+        r = c.delete(f"/api/kb/experience/{victim}", headers=_BOSS)
+        assert r.status_code == 200 and r.json()["deleted"] == victim
+        assert [x["slogan"] for x in c.get("/api/kb/experience", headers=_HDR).json()] == [
+            "Остаётся"
+        ]
+        # Главное: из промпта отметка ушла тем же действием, без рестарта.
+        assert [n.slogan for n in knowledge.experience_for("managed-rag")] == ["Остаётся"]
+
+        # Второе удаление той же строки — не ошибка человека, а устаревший
+        # список: 404 отличим от 403 и даёт фронту повод перечитать ленту.
+        assert c.delete(f"/api/kb/experience/{victim}", headers=_BOSS).status_code == 404

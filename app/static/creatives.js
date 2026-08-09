@@ -191,6 +191,7 @@
       const id = c.id || "";
       const head = `<div class="cand-head"><span class="cand-rank">#${rank}</span>` +
         `<span class="cand-slogan">${escapeHtml(c.slogan || "")}</span>` +
+        (i === 0 ? `<span class="cand-badge">главный</span>` : "") +
         (score ? `<span class="cand-score">${score}</span>` : "") + `</div>`;
       // Флажки линта (блок 3): информируют, не гейтят — решает человек.
       const flags = (Array.isArray(c.lint_flags) && c.lint_flags.length)
@@ -203,15 +204,20 @@
           kv("якорь персоны", c.anchor) + kv("что человек получит", c.desired_outcome) +
           kv("почему зайдёт ЦА", c.reason) + `</details>`
         : "";
+      // «Ведёт эта / Взять эту» не отвечало на вопрос «ведёт куда»: баннер
+      // получат все двенадцать, и человек не понимал, что вообще выбирает.
+      // Называем последствие — главный идёт первым баннером.
       const pick = id
         ? `<button class="btn cand-pick${i === 0 ? " is-winner" : ""}" data-pick="${escapeHtml(id)}">` +
-          `${i === 0 ? "Ведёт эта" : "Взять эту"}</button>`
+          `${i === 0 ? PICK_ON : PICK_OFF}</button>`
         : "";
-      return `<div class="cand-card">${head}` +
+      return `<div class="cand-card${i === 0 ? " is-winner" : ""}">${head}` +
         kv("cta", c.cta) + kv("hook", c.hook_angle) +
         kv("идея", c.body) + why + flags + pick + `</div>`;
     }).join("");
   }
+  const PICK_ON = "Главный — это баннер №1";
+  const PICK_OFF = "Сделать главным";
 
   // Делегированный выбор победителя: перекрашиваем кнопки, ничего не шлём —
   // решение уходит одним запросом по «Принять».
@@ -222,7 +228,23 @@
     $("candidates").querySelectorAll(".cand-pick").forEach((b) => {
       const on = b.dataset.pick === winnerId;
       b.classList.toggle("is-winner", on);
-      b.textContent = on ? "Ведёт эта" : "Взять эту";
+      b.textContent = on ? PICK_ON : PICK_OFF;
+      // Рамка и бейдж переезжают на выбранную карточку целиком: кнопка одна
+      // среди двенадцати одинаковых, и одной её подсветки человек не находил.
+      const card = b.closest(".cand-card");
+      card.classList.toggle("is-winner", on);
+      const badge = card.querySelector(".cand-badge");
+      if (on && !badge) {
+        // Строго перед оценкой, а не в конец шапки: при вставке в конец бейдж
+        // и оценка менялись бы местами относительно первой отрисовки.
+        const head = card.querySelector(".cand-head");
+        const score = head.querySelector(".cand-score");
+        const html = `<span class="cand-badge">главный</span>`;
+        if (score) score.insertAdjacentHTML("beforebegin", html);
+        else head.insertAdjacentHTML("beforeend", html);
+      } else if (!on && badge) {
+        badge.remove();
+      }
     });
   });
   const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";

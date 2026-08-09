@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v5">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v6">
 </head>
 <body>
   <header class="topbar">
@@ -135,13 +135,14 @@
     <section class="panel hidden" id="textPanel">
       <h2>03 · Тексты — 12 предложений под аудиторию</h2>
       <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
-      <div id="candidates" class="candidates"></div>
+      <p class="page-sub">Баннер получат все двенадцать — у каждого свой текст и своя картинка. Главный отличается тремя вещами: он идёт баннером №1, только его образ можно переделать комментарием на следующем шаге, и именно он попадёт в отмеченный опыт.</p>
       <div class="btn-row">
         <button class="btn btn--accent" data-act="approve">Принять</button>
         <button class="btn" data-act="regenerate">Перегенерить все</button>
         <button class="btn btn--danger" data-act="cancel">Отменить</button>
       </div>
       <div class="status" id="textStatus"></div>
+      <div id="candidates" class="candidates"></div>
     </section>
 
     <!-- 5. results -->
@@ -177,6 +178,6 @@
   </main>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260809v5"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260809v6"></script>
 </body>
 </html>

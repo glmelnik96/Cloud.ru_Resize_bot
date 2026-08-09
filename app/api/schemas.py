@@ -211,10 +211,20 @@ class OutcomeIn(BaseModel):
 class ExperienceOut(BaseModel):
     """Отмеченный исход для страницы библиотеки — слой опыта глазами человека."""
 
+    # Ключ строки: по нему её удаляют. session_id для этого не годится — он
+    # опознаёт запуск в графе, и светить его в адресе значит отдать наружу
+    # ключ чекпоинта.
+    id: int
     slug: str
     outcome: str
     slogan: str = ""
     anchor: str = ""
+    # desired_outcome и metaphor лента не показывала, а в промпты они уходят
+    # (metaphor — списком «эти образы уже сняты», anchor+slogan+comment —
+    # строкой копирайтеру). Пока их не видно, решение об удалении принимается
+    # вслепую: строка на экране беднее той, что влияет на генерацию.
+    desired_outcome: str = ""
+    metaphor: str = ""
     persona_segment: str = ""
     comment: str = ""
     # Обе даты: created_at — когда запуск отметили ВПЕРВЫЕ, updated_at — когда

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +22,7 @@ from app.api.schemas import (
 from app.auth.deps import get_current_user
 from app.auth.roles import require_kb_edit
 from app.db import models
+from app.kb.experience import refresh_experience
 from app.kb.store import (
     KbConflict,
     KbNotFound,
@@ -30,6 +33,7 @@ from app.kb.store import (
     update_product,
 )
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/kb", tags=["kb"])
 
 
@@ -160,10 +164,13 @@ async def list_experience(request: Request, limit: int = 50):
         ).scalars().all()
     return [
         ExperienceOut(
+            id=r.id,
             slug=r.slug or "",
             outcome=r.outcome,
             slogan=r.slogan or "",
             anchor=r.anchor or "",
+            desired_outcome=r.desired_outcome or "",
+            metaphor=r.metaphor or "",
             persona_segment=r.persona_segment or "",
             comment=r.comment or "",
             created_at=r.created_at.isoformat() if r.created_at else None,
@@ -171,6 +178,42 @@ async def list_experience(request: Request, limit: int = 50):
         )
         for r in rows
     ]
+
+
+@router.delete("/experience/{run_id}")
+async def delete_experience(request: Request, run_id: int):
+    """Убрать отметку из опыта совсем.
+
+    Отметка исхода — единственная запись, которая правит будущие промпты, и
+    ошибиться в ней легко: нажали «пошло в кампанию» не на том баннере, отметили
+    тестовый прогон, продукт переименовали. Смена решения через повторную
+    отметку такие случаи не лечит — она переписывает исход, но строка остаётся
+    и, если стоит «shipped», продолжает уходить копирайтеру как образец.
+
+    Право то же, что на правку карточки (kb_editor/admin), и по той же причине:
+    это правка того, из чего пайплайн строит предложения, а не уборка своей
+    личной истории — лента общая для команды.
+    """
+    await require_kb_edit(request)
+    Session = request.app.state.sessionmaker
+    async with Session() as s:
+        row = await s.get(models.KbRun, run_id)
+        if row is None:
+            # Двое чистили ленту одновременно — для человека это «уже удалено»,
+            # а не поломка: список у него просто устарел.
+            raise HTTPException(status_code=404, detail="experience not found")
+        await s.delete(row)
+        await s.commit()
+    # Снапшот в графе — копия таблицы, и без рефреша удалённая отметка дожила бы
+    # в промптах до рестарта. Ошибку рефреша не превращаем в 500 (строки уже
+    # нет, и «не удалось удалить» про удавшееся удаление хуже): тем же приёмом,
+    # что и отметка исхода в routes_tasks, — залогировать и жить дальше,
+    # снапшот самоизлечится следующей отметкой или рестартом.
+    try:
+        await refresh_experience(Session)
+    except Exception as exc:  # noqa: BLE001
+        log.error("experience_refresh_failed after delete id=%s: %s", run_id, exc)
+    return {"ok": True, "deleted": run_id}
 
 
 @router.get("/products/{slug}/history", response_model=list[KbVersionOut])
