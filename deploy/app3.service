@@ -8,6 +8,13 @@ User=admin
 # Platform deploy clones into /opt/app3 (per COORDINATION 2026-06-21).
 WorkingDirectory=/opt/app3
 EnvironmentFile=-/opt/app3/.env
+# Обязательные ключи в /opt/app3/.env (полный список — app/config.py):
+#   CLOUDRU_API_KEY      — без него граф не сделает ни одного вызова;
+#   APP3_BOOTSTRAP_ADMIN — email первого админа библиотеки знаний, ровно тот,
+#                          который шлюз кладёт в X-User-Id. Без него user_roles
+#                          остаётся пустой: панель ролей и правка карточек
+#                          недоступны НИКОМУ, и в логах об этом ни строчки.
+#                          Нужен один раз — дальше админ раздаёт роли из UI.
 # venv setup: python -m venv .venv && .venv/bin/pip install -e '.[web]'
 # (core deps + [web] group: FastAPI, SQLAlchemy, SQLite langgraph checkpointer).
 # No Redis. Single worker: the SSE EventBus is in-process (app/tasks/events.py).

@@ -45,6 +45,11 @@ fi
 export APP3_DEV_USER="${APP3_DEV_USER:-gleb@cloud.ru}"  # fake the gateway user
 export APP3_PREFIX=""                                    # assets/API at root
 export HERO_GEN_BACKEND="none"                           # manual hero upload only
+# Без bootstrap-админа таблица user_roles остаётся пустой, и локально НЕКОМУ
+# открыть панель ролей и правку карточек библиотеки — причём молча, без ошибки
+# в логах. Роль выдаётся по совпадению email, а локально email = APP3_DEV_USER,
+# поэтому дефолт привязан к нему: сменил dev-юзера — админ переехал с ним.
+export APP3_BOOTSTRAP_ADMIN="${APP3_BOOTSTRAP_ADMIN:-$APP3_DEV_USER}"
 
-echo "App3 local smoke: http://127.0.0.1:8013/  (dev user: $APP3_DEV_USER)"
+echo "App3 local smoke: http://127.0.0.1:8013/  (dev user: $APP3_DEV_USER, админ библиотеки: $APP3_BOOTSTRAP_ADMIN)"
 exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 8013 --reload
