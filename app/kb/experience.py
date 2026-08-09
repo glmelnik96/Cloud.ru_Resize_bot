@@ -1,8 +1,8 @@
 """Слой «опыт» библиотеки знаний: kb_runs → блок фактов в промптах.
 
 Симметрично слою фактов (app/kb/store.py): app читает БД и инжектит снапшот в
-graph.knowledge — граф не импортирует app. Здесь только запись исхода; чтение
-и инжект — Task 13.
+graph.knowledge — граф не импортирует app. Здесь и запись исхода
+(record_outcome), и чтение снапшота с инжектом в граф (refresh_experience).
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import models
+from graph import knowledge
+from graph.knowledge import ExperienceNote
 
 
 async def record_outcome(
@@ -69,3 +71,41 @@ async def record_outcome(
             await s.commit()
             return False
         return True
+
+
+# Сколько последних исходов держим в снапшоте. Больше не нужно: в промпт
+# уходит максимум 5 по одному продукту, а таблица растёт бесконечно.
+_SNAPSHOT_LIMIT = 200
+
+
+async def load_experience(sessionmaker) -> tuple[ExperienceNote, ...]:
+    """Отмеченные исходы, новые первыми (порядок важен: experience_for режет
+    хвост limit'ом и должен оставлять самое свежее)."""
+    async with sessionmaker() as s:
+        rows = (
+            await s.execute(
+                select(models.KbRun)
+                .order_by(models.KbRun.created_at.desc(), models.KbRun.id.desc())
+                .limit(_SNAPSHOT_LIMIT)
+            )
+        ).scalars().all()
+    return tuple(
+        ExperienceNote(
+            slug=r.slug or "",
+            outcome=r.outcome,
+            slogan=r.slogan or "",
+            anchor=r.anchor or "",
+            desired_outcome=r.desired_outcome or "",
+            metaphor=r.metaphor or "",
+            persona_segment=r.persona_segment or "",
+            comment=r.comment or "",
+        )
+        for r in rows
+    )
+
+
+async def refresh_experience(sessionmaker) -> int:
+    """Инжект снапшота в граф (граф не импортирует app — толкаем отсюда)."""
+    notes = await load_experience(sessionmaker)
+    knowledge.set_experience(notes)
+    return len(notes)

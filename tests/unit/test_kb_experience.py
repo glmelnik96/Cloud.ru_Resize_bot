@@ -97,3 +97,34 @@ async def test_record_outcome_survives_concurrent_first_marks(tmp_path):
         assert len(rows) == 1
     finally:
         await engine.dispose()
+
+
+async def test_load_experience_is_newest_first_and_maps_fields(Session):
+    from app.kb.experience import load_experience
+
+    await record_outcome(
+        Session, session_id="r1", outcome="shipped", comment="первый", recipe=_RECIPE
+    )
+    await record_outcome(
+        Session, session_id="r2", outcome="rejected", comment="второй", recipe=_RECIPE
+    )
+    notes = await load_experience(Session)
+    assert [n.comment for n in notes] == ["второй", "первый"]
+    assert notes[0].slug == "managed-rag"
+    assert notes[0].slogan == "GPU без очереди"
+    assert notes[0].metaphor == "a bridge across a canyon"
+
+
+async def test_refresh_experience_injects_into_graph(Session):
+    from app.kb.experience import refresh_experience
+    from graph import knowledge
+
+    await record_outcome(
+        Session, session_id="r1", outcome="shipped", comment="", recipe=_RECIPE
+    )
+    try:
+        n = await refresh_experience(Session)
+        assert n == 1
+        assert knowledge.experience_for("managed-rag")[0].slogan == "GPU без очереди"
+    finally:
+        knowledge.set_experience(())

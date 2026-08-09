@@ -37,7 +37,7 @@ import structlog
 
 from graph.agent_runner import run_agent
 from graph.nodes import ranked_candidates
-from graph.nodes.context import get_product
+from graph.nodes.context import experience_block, get_product
 from graph.prompts import extract_section as _extract_section
 from graph.prompts import load_skill
 from graph.prompts import render as _render
@@ -147,11 +147,13 @@ async def generate_image_prompt(state: GraphState) -> dict:
     styles = [s if s in _VALID_STYLES else "photo" for s in scenarios]
 
     system_msg, user_tpl = _load_sections()
+    experience = experience_block(state, kind="metaphor")
 
     results = await asyncio.gather(
         *(
             _build_one(
-                system_msg, user_tpl, brief, persona, product, cand, style, session_id
+                system_msg, user_tpl, brief, persona, product, cand, style,
+                session_id, experience=experience,
             )
             for cand, style in zip(candidates, styles, strict=False)
         )
@@ -187,6 +189,7 @@ async def _regenerate_winner(
 
     prev_meta = (state.get("metaphor_meta") or [{}])[0]
     system_msg, user_tpl = _load_sections()
+    experience = experience_block(state, kind="metaphor")
 
     prompt, meta = await _build_one(
         system_msg,
@@ -199,6 +202,7 @@ async def _regenerate_winner(
         session_id,
         prev_metaphor=prev_meta.get("metaphor", ""),
         feedback_comment=comment,
+        experience=experience,
     )
 
     prompts = list(state.get("image_prompts") or [])
@@ -233,6 +237,7 @@ async def _build_one(
     *,
     prev_metaphor: str = "",
     feedback_comment: str = "",
+    experience: str = "",
 ) -> tuple[str, dict]:
     user_msg = _render(
         user_tpl,
@@ -253,6 +258,14 @@ async def _build_one(
             "metaphor_kind": _METAPHOR_KIND[style],
         },
     )
+    # Опыт идёт ПЕРЕД комментарием маркетолога: комментарий — самое свежее
+    # указание, и он должен остаться последним в сообщении. load_skill
+    # кэширован (lru_cache), так что 12 параллельных вызовов файл не перечитают.
+    if experience:
+        addendum = _extract_section(
+            load_skill(_SKILL_NAME).body, "## Experience addendum"
+        )
+        user_msg += "\n\n" + _render(addendum, experience_block=experience)
     if feedback_comment:
         prev_line = f"Previous metaphor: {prev_metaphor}\n" if prev_metaphor else ""
         user_msg += (

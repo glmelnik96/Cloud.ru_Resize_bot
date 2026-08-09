@@ -203,6 +203,18 @@ class OutcomeIn(BaseModel):
     comment: str = Field(default="", max_length=2000)
 
 
+class ExperienceOut(BaseModel):
+    """Отмеченный исход для страницы библиотеки — слой опыта глазами человека."""
+
+    slug: str
+    outcome: str
+    slogan: str = ""
+    anchor: str = ""
+    persona_segment: str = ""
+    comment: str = ""
+    created_at: str | None = None
+
+
 class RoleIn(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     # PUT заменяет состояние целиком: дефолт превратил бы забытое поле в тихое

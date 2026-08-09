@@ -125,3 +125,36 @@ async def test_empty_personas_is_an_error(calls):
     state["personas"] = []
     with pytest.raises(ValueError, match="state.personas is empty"):
         await mod.generate_message_candidates(state)
+
+
+async def test_experience_addendum_appears_only_when_layer_has_notes(calls):
+    from graph import knowledge
+    from graph.knowledge import ExperienceNote
+
+    state = _state()
+    state["kb_match"] = {"slug": "managed-rag", "name": "RAG", "version": 1}
+
+    await mod.generate_message_candidates(state)
+    assert not [kw for kw in calls if "experience_block" in kw], (
+        "пустая библиотека не должна менять промпт"
+    )
+
+    calls.clear()
+    try:
+        knowledge.set_experience(
+            (
+                ExperienceNote(
+                    slug="managed-rag",
+                    outcome="shipped",
+                    slogan="GPU без очереди",
+                    anchor="боль: очередь на GPU",
+                ),
+            )
+        )
+        await mod.generate_message_candidates(state)
+    finally:
+        knowledge.set_experience(())
+
+    rendered = [kw["experience_block"] for kw in calls if "experience_block" in kw]
+    assert len(rendered) == 2, "addendum дописывается к каждому из двух заходов"
+    assert "GPU без очереди" in rendered[0]

@@ -1,6 +1,6 @@
 ---
 name: creative-ads-explorer
-version: 0.8.0
+version: 0.9.0
 source_upstream: https://github.com/DKeken/codex-skills-alternative/tree/main/skills/creative-ads-explorer
 target_models:
   primary: zai-org/GLM-4.7
@@ -101,6 +101,19 @@ TONE HINTS: {{tone_hints_or_none}}
 }
 ```
 
+## Experience addendum
+
+Дописывается к user-сообщению ТОЛЬКО когда по этому продукту есть отмеченные
+исходы (kb_runs, outcome=shipped). Пустая библиотека — секции нет вовсе.
+
+```
+ОПЫТ ПРЕДЫДУЩИХ ЗАПУСКОВ ПО ЭТОМУ ПРОДУКТУ (что команда уже взяла в работу):
+{{experience_block}}
+
+Это не образец для копирования: не повторяй эти слоганы дословно и не пересказывай их синонимами. Раздел говорит, куда команда уже смотрела, — заходи с других якорей.
+Ответ по-прежнему — ТОЛЬКО валидный JSON по схеме выше.
+```
+
 ## Model-specific notes
 
 ### GLM-4.7
@@ -125,6 +138,12 @@ TONE HINTS: {{tone_hints_or_none}}
 
 ## Changelog
 
+- v0.9.0 (2026-08-08) — слой «опыт»: новая секция «## Experience addendum»
+  (последние 5 принятых исходов по этому же продукту — слоган, якорь,
+  комментарий человека). Источник — таблица kb_runs, инжект через
+  graph.knowledge.set_experience. Отдельной секцией, а не в user-шаблоне:
+  при пустой библиотеке промпт обязан остаться прежним (решение спеки
+  2026-08-07). Забракованные исходы (rejected) в промпт не идут.
 - v0.8.0 (2026-08-07) — контракт-lite оффера (этап 1 «Язык», синтез с Bannerzila,
   семантика их OfferSpec.pain/benefit): обязательные поля anchor (дословный якорь
   персоны с меткой боль:/мотивация:/возражение:) и desired_outcome (результат,

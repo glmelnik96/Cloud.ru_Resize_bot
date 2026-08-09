@@ -1,6 +1,6 @@
 ---
 name: generate-image-prompt
-version: 0.7.0
+version: 0.8.0
 source_upstream: original (Resize_bot M3.3, derived from Cloud.ru 2.0 brand book)
 target_models:
   primary: glm-4.7
@@ -110,6 +110,18 @@ Return ONLY valid JSON:
 }
 ```
 
+## Experience addendum
+
+Appended to the user message ONLY when this product has shipped runs recorded
+(kb_runs, outcome=shipped). Empty library — the section is not appended at all.
+
+```
+METAPHORS ALREADY SHIPPED FOR THIS PRODUCT:
+{{experience_block}}
+
+Do not reuse these metaphors or trivial variations of them. They show the visual territory the team has already covered — go somewhere else.
+```
+
 ## Model notes
 
 ### GLM-4.7
@@ -127,6 +139,12 @@ Return ONLY valid JSON:
 
 ## Changelog
 
+- v0.8.0 (2026-08-08) — слой «опыт»: новая секция «## Experience addendum»
+  (последние 5 принятых метафор по этому же продукту — визуальная территория,
+  которую команда уже прошла). Источник — таблица kb_runs, инжект через
+  graph.knowledge.set_experience. Отдельной секцией, а не в user-шаблоне:
+  при пустой библиотеке промпт обязан остаться прежним (решение спеки
+  2026-08-07). Забракованные исходы (rejected) в промпт не идут.
 - v0.7.0 (2026-08-07) — контракт-lite метафоры (этап 1 «Язык», синтез с
   Bannerzila, семантика их MetaphorSpec): обязательные intended_inference
   (целевое заключение зрителя) и anti_reading (вероятное ложное прочтение —

@@ -21,7 +21,7 @@ from app.api.uploads import read_image_upload
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db import models
-from app.kb.experience import record_outcome
+from app.kb.experience import record_outcome, refresh_experience
 from app.kb.store import latest_rows
 from app.services.creatives import _PARKED_STATUSES, CapacityError, DecisionConflict
 
@@ -373,4 +373,8 @@ async def set_outcome(uid: str, body: OutcomeIn, request: Request):
         comment=body.comment,
         recipe=_task_recipe(task),
     )
+    # Рефреш безусловный: record_outcome возвращает False, когда человек
+    # передумал и исход переписан. Под `if recorded` смена мнения не доехала бы
+    # до графа, и забракованный текст продолжил бы идти в промпт как принятый.
+    await refresh_experience(request.app.state.sessionmaker)
     return {"ok": True, "recorded": recorded, "outcome": body.outcome}

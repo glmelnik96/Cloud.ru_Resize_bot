@@ -9,6 +9,7 @@ keeps the "no product card yet" fallback in a single spot.
 
 from __future__ import annotations
 
+from graph import knowledge
 from graph.state import AdBrief, GraphState, ProductBrief
 
 NONE = "(не указано)"
@@ -50,3 +51,24 @@ def must_honour_block(product: ProductBrief | None) -> str:
 def notes_block(brief: AdBrief) -> str:
     """The free-form field verbatim — never summarized, that is the point."""
     return brief.notes.strip() or "(маркетолог ничего не добавил)"
+
+
+def experience_block(state: GraphState, *, kind: str = "text", limit: int = 5) -> str:
+    """Слой «опыт»: что по этому продукту уже ушло в работу.
+
+    kind="text" — русские слоганы с якорями (копирайтер);
+    kind="metaphor" — английские метафоры (промпт картинки — он на английском).
+    Пусто, когда отметок нет: секция тогда не подмешивается вовсе и промпт
+    остаётся ровно таким, каким был до слоя опыта (решение спеки). Именно
+    поэтому здесь нет fallback-строки, в отличие от notes_block — там пустая
+    секция ломала бы структуру user-сообщения, а тут секции просто не будет."""
+    slug = (state.get("kb_match") or {}).get("slug")
+    notes = knowledge.experience_for(slug, limit=limit)
+    if kind == "metaphor":
+        return "\n".join(f"- {n.metaphor}" for n in notes if n.metaphor)
+    return "\n".join(
+        f"- «{n.slogan}» — {n.anchor or 'якорь не записан'}"
+        + (f"; комментарий: {n.comment}" if n.comment else "")
+        for n in notes
+        if n.slogan
+    )

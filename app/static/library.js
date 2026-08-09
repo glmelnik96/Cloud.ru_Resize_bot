@@ -268,6 +268,33 @@
     });
   }
 
+  // ── отмеченный опыт ──────────────────────────────────
+  const OUTCOME_RU = { shipped: "пошло в работу", rejected: "забраковано" };
+
+  async function loadExperience() {
+    let rows;
+    try {
+      rows = await jget("/api/kb/experience");
+    } catch (_) {
+      // Молча оставить панель пустой — значит соврать: пустой список читается
+      // как «никто ничего не отмечал», хотя отметки есть и уходят в промпт.
+      $("experienceList").innerHTML =
+        `<span class="err">Не удалось загрузить отмеченный опыт.</span>`;
+      return;
+    }
+    $("experienceList").innerHTML = rows.length
+      ? rows
+          .map(
+            (r) =>
+              `<div class="task-item"><b>${escapeHtml(OUTCOME_RU[r.outcome] || r.outcome)}</b>` +
+              ` · ${escapeHtml(r.slug || "без продукта")} · «${escapeHtml(r.slogan)}»` +
+              (r.comment ? `<div class="page-sub">${escapeHtml(r.comment)}</div>` : "") +
+              `</div>`
+          )
+          .join("")
+      : `<p class="page-sub">Пока никто не отмечал исходы. Отметка ставится на экране результата.</p>`;
+  }
+
   // ── старт ────────────────────────────────────────────
   (async function init() {
     let meFailed = false;
@@ -287,6 +314,7 @@
       loadRoles();
     }
     await loadList();
+    await loadExperience();
     // После loadList: удачная загрузка списка гасит #listStatus, и сообщение,
     // поставленное до неё, исчезло бы вместе с красным следом прошлой ошибки.
     if (meFailed) {

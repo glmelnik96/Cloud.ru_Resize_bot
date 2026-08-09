@@ -824,6 +824,8 @@ def test_decide_image_rejects_unknown_action(tmp_path, monkeypatch):
 
 
 def test_outcome_records_and_second_call_updates(tmp_path, monkeypatch):
+    from graph import knowledge
+
     db = tmp_path / "r.db"
     app = _app(tmp_path, monkeypatch, graph_ok=True)
     with TestClient(app) as c:
@@ -838,9 +840,18 @@ def test_outcome_records_and_second_call_updates(tmp_path, monkeypatch):
             headers=_HDR,
         )
         assert r.status_code == 200 and r.json()["recorded"] is True
+        # Отметка обязана доехать до графа сразу: слой опыта читают промпты,
+        # и ждать рестарта ради одной галки никто не станет.
+        assert [n.slogan for n in knowledge.experience_for("rag")] == ["S"]
+
         again = c.post("/api/tasks/done01/outcome", json={"outcome": "rejected"}, headers=_HDR)
         assert again.status_code == 200 and again.json()["recorded"] is False
         assert again.json()["outcome"] == "rejected"
+        # Смена мнения возвращает recorded=false («строка обновлена»), поэтому
+        # рефреш графа не имеет права висеть под `if recorded`: иначе в снапшоте
+        # осталась бы прежняя отметка и забракованный текст продолжил бы уходить
+        # копирайтеру как принятый.
+        assert knowledge.experience_for("rag") == ()
         # Ради этого коммит и существует: снимок решений запуска должен доехать
         # из params задачи в слой опыта, а не просто вернуть 200.
         rows = _kb_runs(db)

@@ -163,3 +163,45 @@ def glossary(exclude: str | None = None) -> str:
 
 def _contains_phrase(haystack: str, needle: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+
+
+@dataclass(frozen=True)
+class ExperienceNote:
+    """Один отмеченный человеком исход запуска — слой «опыт» библиотеки.
+
+    Факты (ProductDoc) говорят, ЧТО правда про продукт; опыт говорит, что из
+    этой правды уже заходило команде, а что забраковали. Второе без первого
+    бессмысленно, поэтому заметка всегда привязана к slug карточки."""
+
+    slug: str
+    outcome: str  # shipped | rejected
+    slogan: str = ""
+    anchor: str = ""
+    desired_outcome: str = ""
+    metaphor: str = ""
+    persona_segment: str = ""
+    comment: str = ""
+
+
+# App-layer injection point (симметрично _catalog_override): app кладёт сюда
+# снапшот kb_runs после каждой отметки исхода. Пустой кортеж = опыта нет.
+_experience: tuple[ExperienceNote, ...] = ()
+
+
+def set_experience(notes: tuple[ExperienceNote, ...]) -> None:
+    global _experience
+    _experience = tuple(notes)
+
+
+def experience_for(slug: str | None, *, limit: int = 5) -> tuple[ExperienceNote, ...]:
+    """Последние ПРИНЯТЫЕ заметки по этому продукту (новые первыми).
+
+    Без slug возвращаем пусто: опыт по чужому продукту уводит копирайтера в
+    формулировки, которые к текущему брифу отношения не имеют. Забракованное
+    не отдаём вовсе — оно хранится для человека, а модели «вот так не надо»
+    работает как подсказка повторить неудачу."""
+    if not slug:
+        return ()
+    return tuple(
+        n for n in _experience if n.slug == slug and n.outcome == "shipped"
+    )[:limit]

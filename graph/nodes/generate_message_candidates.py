@@ -33,6 +33,7 @@ import structlog
 from graph.agent_runner import run_agent
 from graph.nodes.context import (
     NONE,
+    experience_block,
     get_product,
     must_honour_block,
     notes_block,
@@ -73,6 +74,14 @@ async def generate_message_candidates(state: GraphState) -> dict:
     system_tpl = extract_section(skill.body, "## System message")
     user_tpl = extract_section(skill.body, "## User message template")
 
+    # Секция опыта живёт ОТДЕЛЬНО от user-шаблона: при пустой библиотеке
+    # промпт обязан остаться байт-в-байт прежним, а пустой заголовок внутри
+    # шаблона учил бы модель, что раздел необязателен.
+    experience = experience_block(state)
+    experience_tpl = (
+        extract_section(skill.body, "## Experience addendum") if experience else ""
+    )
+
     anchors = _anchor_slices(persona)
     batches = await asyncio.gather(
         *(
@@ -84,6 +93,8 @@ async def generate_message_candidates(state: GraphState) -> dict:
                 product,
                 directive=directive,
                 anchors=slice_,
+                experience=experience,
+                experience_tpl=experience_tpl,
                 session_id=session_id,
             )
             for directive, slice_ in zip(_BATCH_DIRECTIVES, anchors)
@@ -110,6 +121,8 @@ async def _run_batch(
     *,
     directive: str,
     anchors: list[str],
+    experience: str,
+    experience_tpl: str,
     session_id: str | None,
 ) -> list:
     system_msg = render(system_tpl, batch_directive=directive)
@@ -131,6 +144,8 @@ async def _run_batch(
             "batch_anchors": "\n".join(f"- {a}" for a in anchors),
         },
     )
+    if experience and experience_tpl:
+        user_msg += "\n\n" + render(experience_tpl, experience_block=experience)
     result = await run_agent(
         _AGENT_ID,
         messages=[

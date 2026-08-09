@@ -269,3 +269,10 @@ def test_edit_reaches_graph_catalog_without_restart(tmp_path, monkeypatch):
         # lifespan инжектил снапшот в глобальный модуль графа — снимаем,
         # чтобы соседние тесты видели файловый каталог.
         knowledge.set_catalog(None)
+
+
+def test_experience_feed_is_readable_by_everyone(tmp_path, monkeypatch):
+    with TestClient(_admin_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/api/kb/experience", headers=_HDR)
+        assert r.status_code == 200 and r.json() == []
+        assert c.get("/api/kb/experience").status_code == 401

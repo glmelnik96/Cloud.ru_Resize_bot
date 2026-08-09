@@ -279,3 +279,35 @@ async def test_metaphor_comment_regenerates_only_winner(_stub_agent):
     user_msg = calls[0]["messages"][1]["content"]
     assert "покажи очередь, которая исчезает" in user_msg
     assert "old-m0" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_experience_addendum_reaches_llm_only_when_layer_has_notes(_stub_agent):
+    from graph import knowledge
+    from graph.knowledge import ExperienceNote
+
+    state = _good_state()
+    state["kb_match"] = {"slug": "managed-rag", "name": "RAG", "version": 1}
+
+    calls = _stub_agent(_METAPHOR)
+    await mod.generate_image_prompt(state)  # type: ignore[arg-type]
+    assert "ALREADY SHIPPED" not in calls[0]["messages"][1]["content"]
+
+    calls.clear()
+    try:
+        knowledge.set_experience(
+            (
+                ExperienceNote(
+                    slug="managed-rag",
+                    outcome="shipped",
+                    metaphor="a bridge across a canyon",
+                ),
+            )
+        )
+        await mod.generate_image_prompt(state)  # type: ignore[arg-type]
+    finally:
+        knowledge.set_experience(())
+
+    user_msg = calls[0]["messages"][1]["content"]
+    assert "ALREADY SHIPPED" in user_msg
+    assert "a bridge across a canyon" in user_msg
