@@ -108,8 +108,10 @@
     $("cardBlock2").value = p.block2 || "";
     $("cardBlock3").value = p.block3 || "";
     // Архив — не удаление: вернуть карточку должно быть так же просто, как
-    // убрать, иначе возврат остаётся операцией для SQL-консоли.
+    // убрать, иначе возврат остаётся операцией для SQL-консоли. Красной
+    // (.btn--danger) кнопка остаётся только пока она выключает карточку.
     $("archiveBtn").textContent = p.archived ? "Вернуть из архива" : "В архив";
+    $("archiveBtn").classList.toggle("btn--danger", !p.archived);
     $("cardStatus").textContent = "";
     $("cardPanel").classList.remove("hidden");
     $("emptyState").classList.add("hidden");
