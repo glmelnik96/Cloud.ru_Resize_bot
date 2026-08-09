@@ -3,7 +3,7 @@
   "use strict";
   const P = window.APP_PREFIX || "";
   const $ = (id) => document.getElementById(id);
-  const esc = (s) =>
+  const escapeHtml = (s) =>
     String(s == null ? "" : s).replace(/[&<>"']/g, (ch) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[ch]));
@@ -20,20 +20,42 @@
     return r.json();
   }
 
+  // Сеть рвётся посреди запроса (рестарт VM, обрыв wifi) — тогда fetch кидает,
+  // а не отдаёт ответ. Отдаём null, как post() в creatives.js: вызывающий сам
+  // решает, в каком статусе показать «нет связи». Без этого «Сохраняю…» висело
+  // бы вечно, а галка ролей расходилась бы с сервером молча.
   async function jsend(url, method, body) {
-    return fetch(`${P}${url}`, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      return await fetch(`${P}${url}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (_) { return null; }
   }
 
-  function errText(status) {
+  // 409 на этих роутах значит разное: занятый slug при создании против гонки
+  // редакторов при правке. Общего текста у них нет, поэтому его приносит
+  // вызывающий — как в creatives.js, где errText остаётся картой статусов.
+  const CONFLICT_EDIT = "карточку в этот момент правил кто-то ещё — обновите страницу";
+  function errText(status, conflict) {
+    if (!status) return "Нет соединения с сервером — проверь сеть и попробуй ещё раз.";
     if (status === 403) return "нет прав на правку";
     if (status === 404) return "карточка не найдена";
-    if (status === 409) return "такой slug уже есть";
+    if (status === 409) return conflict || "кто-то опередил — обновите страницу";
     if (status === 422) return "проверьте поля — что-то не прошло валидацию";
-    return `ошибка ${status}`;
+    return `Ошибка ${status}`;
+  }
+
+  // Защита от двойного клика (приём setBusy из creatives.js): второй PUT по
+  // «Сохранить» — это вторая версия карточки, а не повтор безобидного чтения.
+  function setBusy(busy) {
+    ["saveBtn", "archiveBtn", "newBtn"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.disabled = busy;
+      el.classList.toggle("is-busy", busy);
+    });
   }
 
   // ── список продуктов ─────────────────────────────────
@@ -41,21 +63,32 @@
     const q = $("showArchived").checked ? "?include_archived=true" : "";
     try {
       items = await jget(`/api/kb/products${q}`);
-    } catch (e) {
+    } catch (_) {
       $("listStatus").innerHTML = `<span class="err">Не удалось загрузить каталог.</span>`;
       return;
     }
+    // Статус относился к прошлой загрузке: без сброса одна неудача светилась бы
+    // красным через все последующие удачные перезагрузки списка.
+    $("listStatus").textContent = "";
     $("kbList").innerHTML = items
       .map(
         (p) =>
-          `<button class="task-item" data-slug="${esc(p.slug)}">` +
-          `<b>${esc(p.name)}</b> <span class="page-sub">v${p.version}` +
+          `<button class="task-item" data-slug="${escapeHtml(p.slug)}">` +
+          `<b>${escapeHtml(p.name)}</b> <span class="page-sub">v${p.version}` +
           `${p.archived ? " · архив" : ""}</span></button>`
       )
       .join("");
     $("kbList").querySelectorAll("[data-slug]").forEach((b) => {
       b.addEventListener("click", () => openCard(b.dataset.slug));
     });
+    // Открытая карточка могла выпасть из свежего списка (сняли «показывать
+    // архивные», убрали в архив). Оставить current — значит держать на экране
+    // панель карточки, которой в этом каталоге уже нет, и врать её версией.
+    if (current && !items.some((p) => p.slug === current)) {
+      current = null;
+      $("cardPanel").classList.add("hidden");
+      $("emptyState").classList.remove("hidden");
+    }
   }
 
   // ── карточка ─────────────────────────────────────────
@@ -74,6 +107,9 @@
     $("cardBlock1").value = p.block1 || "";
     $("cardBlock2").value = p.block2 || "";
     $("cardBlock3").value = p.block3 || "";
+    // Архив — не удаление: вернуть карточку должно быть так же просто, как
+    // убрать, иначе возврат остаётся операцией для SQL-консоли.
+    $("archiveBtn").textContent = p.archived ? "Вернуть из архива" : "В архив";
     $("cardStatus").textContent = "";
     $("cardPanel").classList.remove("hidden");
     $("emptyState").classList.add("hidden");
@@ -88,15 +124,20 @@
       $("cardHistory").innerHTML = rows
         .map(
           (v) =>
-            `<div class="page-sub">v${v.version} · ${esc(v.updated_at || "")}` +
-            ` · ${esc(v.updated_by || "seed")}${v.archived ? " · архив" : ""}</div>`
+            `<div class="page-sub">v${v.version} · ${escapeHtml(v.updated_at || "")}` +
+            ` · ${escapeHtml(v.updated_by || "seed")}${v.archived ? " · архив" : ""}</div>`
         )
         .join("");
-    } catch (e) {
+    } catch (_) {
       $("cardHistory").innerHTML = `<span class="err">История недоступна.</span>`;
     }
   }
 
+  // Форма всегда шлёт все шесть полей и не несёт номер прочитанной версии.
+  // Это осознанно: версионный хэндшейк — это expected_version в контракте API,
+  // правка за рамками этой страницы. Цена гонки двух редакторов здесь не
+  // «данные пропали», а «надо заметить и восстановить»: каждое сохранение
+  // кладёт новую строку, прежняя целиком лежит в истории и видна в #historyBox.
   function payload() {
     return {
       name: $("cardName").value.trim(),
@@ -110,28 +151,53 @@
 
   $("saveBtn").addEventListener("click", async () => {
     if (!current) return;
+    const slug = current;
+    setBusy(true);
     $("cardStatus").textContent = "Сохраняю…";
-    const r = await jsend(`/api/kb/products/${current}`, "PUT", payload());
-    if (!r.ok) {
-      $("cardStatus").innerHTML = `<span class="err">Не сохранилось: ${esc(errText(r.status))}</span>`;
+    const r = await jsend(`/api/kb/products/${slug}`, "PUT", payload());
+    setBusy(false);
+    if (!r || !r.ok) {
+      $("cardStatus").innerHTML =
+        `<span class="err">Не сохранилось: ` +
+        `${escapeHtml(errText(r ? r.status : 0, CONFLICT_EDIT))}</span>`;
       return;
     }
     const p = await r.json();
-    // Правка уже уехала в граф — говорим об этом прямо, это не косметика.
-    $("cardStatus").textContent = `Сохранено, версия ${p.version}. Следующий запуск возьмёт её.`;
     await loadList();
-    openCard(current);
+    if (current) openCard(current);
+    // Правка уже уехала в граф — говорим об этом прямо, это не косметика.
+    // Статус ставим после перерисовки: openCard чистит его.
+    $("cardStatus").textContent = `Сохранено, версия ${p.version}. Следующий запуск возьмёт её.`;
   });
 
   $("archiveBtn").addEventListener("click", async () => {
     if (!current) return;
-    const r = await jsend(`/api/kb/products/${current}`, "PUT", { archived: true });
-    if (!r.ok) {
-      $("cardStatus").innerHTML = `<span class="err">Не вышло: ${esc(errText(r.status))}</span>`;
+    const p = items.find((x) => x.slug === current);
+    if (!p) return;
+    const toArchive = !p.archived;
+    // Архив выключает карточку для ВСЕХ будущих запусков пайплайна — это не
+    // косметика списка, поэтому переспрашиваем. Возврат ничего не выключает,
+    // его не переспрашиваем.
+    if (toArchive && !window.confirm(
+      "Убрать карточку в архив? Пайплайн перестанет брать из неё факты — " +
+      "она выпадет из всех будущих запусков."
+    )) return;
+    setBusy(true);
+    const r = await jsend(`/api/kb/products/${current}`, "PUT", { archived: toArchive });
+    setBusy(false);
+    if (!r || !r.ok) {
+      $("cardStatus").innerHTML =
+        `<span class="err">Не вышло: ` +
+        `${escapeHtml(errText(r ? r.status : 0, CONFLICT_EDIT))}</span>`;
       return;
     }
-    $("cardStatus").textContent = "Карточка в архиве. Пайплайн её больше не увидит.";
     await loadList();
+    // Перерисовываем карточку: иначе cardMeta продолжает показывать версию до
+    // архивирования и молчит про «в архиве».
+    if (current) openCard(current);
+    $("listStatus").textContent = toArchive
+      ? "Карточка в архиве. Пайплайн её больше не увидит."
+      : "Карточка вернулась из архива — следующий запуск снова её увидит.";
   });
 
   $("newBtn").addEventListener("click", async () => {
@@ -139,13 +205,17 @@
     if (!slug) return;
     const name = (prompt("Название продукта") || "").trim();
     if (!name) return;
+    setBusy(true);
     const r = await jsend("/api/kb/products", "POST", { slug, name });
-    if (!r.ok) {
-      $("listStatus").innerHTML = `<span class="err">Не создалось: ${esc(errText(r.status))}</span>`;
+    setBusy(false);
+    if (!r || !r.ok) {
+      $("listStatus").innerHTML =
+        `<span class="err">Не создалось: ` +
+        `${escapeHtml(errText(r ? r.status : 0, "такой slug уже есть"))}</span>`;
       return;
     }
-    $("listStatus").textContent = "Карточка создана — заполните блоки.";
     await loadList();
+    $("listStatus").textContent = "Карточка создана — заполните блоки.";
     openCard(slug);
   });
 
@@ -156,37 +226,53 @@
     let rows;
     try {
       rows = await jget("/api/admin/roles");
-    } catch (e) {
+    } catch (_) {
+      // Пустой список без объяснения читается как «других пользователей нет» —
+      // админ решит, что выдавать доступ некому.
+      $("rolesList").innerHTML = "";
+      $("rolesStatus").innerHTML =
+        `<span class="err">Не удалось загрузить список доступов.</span>`;
       return;
     }
+    $("rolesStatus").textContent = "";
     $("rolesList").innerHTML = rows
       .map(
         (r) =>
-          `<div class="task-item"><b>${esc(r.email)}</b> ` +
-          `<span class="page-sub">${esc(r.role)}</span> ` +
-          `<label class="page-sub"><input type="checkbox" data-email="${esc(r.email)}"` +
+          `<div class="task-item"><b>${escapeHtml(r.email)}</b> ` +
+          `<span class="page-sub">${escapeHtml(r.role)}</span> ` +
+          `<label class="page-sub"><input type="checkbox" data-email="${escapeHtml(r.email)}"` +
           `${r.kb_editor ? " checked" : ""}${r.role === "admin" ? " disabled" : ""}>` +
           ` правит библиотеку</label></div>`
       )
       .join("");
     $("rolesList").querySelectorAll("[data-email]").forEach((cb) => {
       cb.addEventListener("change", async () => {
+        const want = cb.checked;
         const r = await jsend("/api/admin/roles", "PUT", {
-          email: cb.dataset.email, role: "user", kb_editor: cb.checked,
+          email: cb.dataset.email, role: "user", kb_editor: want,
         });
-        $("rolesStatus").textContent = r.ok
-          ? "Сохранено."
-          : `Не сохранилось: ${errText(r.status)}`;
+        if (r && r.ok) {
+          $("rolesStatus").textContent = "Сохранено.";
+          return;
+        }
+        // Галку переключил браузер, сервер об этом не узнал. Без отката админ
+        // уходит уверенным, что выдал право править библиотеку, которого не
+        // выдал — и узнает об этом от редактора, получившего 403.
+        cb.checked = !want;
+        $("rolesStatus").innerHTML =
+          `<span class="err">Не сохранилось: ` +
+          `${escapeHtml(errText(r ? r.status : 0))}</span>`;
       });
     });
   }
 
   // ── старт ────────────────────────────────────────────
   (async function init() {
+    let meFailed = false;
     try {
       me = await jget("/api/me");
-    } catch (e) {
-      $("listStatus").innerHTML = `<span class="err">Не удалось определить пользователя.</span>`;
+    } catch (_) {
+      meFailed = true;
     }
     if (me.can_edit_kb) {
       FIELDS.forEach((id) => { $(id).disabled = false; });
@@ -198,6 +284,12 @@
       $("rolesPanel").classList.remove("hidden");
       loadRoles();
     }
-    loadList();
+    await loadList();
+    // После loadList: удачная загрузка списка гасит #listStatus, и сообщение,
+    // поставленное до неё, исчезло бы вместе с красным следом прошлой ошибки.
+    if (meFailed) {
+      $("listStatus").innerHTML =
+        `<span class="err">Не удалось определить пользователя.</span>`;
+    }
   })();
 })();

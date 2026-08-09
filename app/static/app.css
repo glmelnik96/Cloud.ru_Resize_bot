@@ -299,11 +299,15 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
    .task-item — кликабельная строка-кнопка в .task-list: та же тихая подложка
    и плотность, что у .task-row, но во всю ширину и по левому краю (это список,
    а не контрол). Служебные подписи внутри строки идут встык с названием —
-   собственные отступы .page-sub и label здесь снимаем. */
-.task-item{display:block;width:100%;text-align:left;cursor:pointer;border:0;
+   собственные отступы .page-sub и label здесь снимаем.
+   Тем же классом размечены строки доступов — но это <div>, кликабелен там
+   только чекбокс внутри. Курсор-палец и подсветку строки поэтому оставляем
+   кнопкам: иначе строка обещает клик, которого не будет. */
+.task-item{display:block;width:100%;text-align:left;border:0;
   background:var(--surface-inset);color:var(--text);border-radius:var(--radius-card);
   padding:12px 16px;font:inherit;font-size:14px;transition:background .12s;}
-.task-item:hover{background:var(--surface-active);}
+button.task-item{cursor:pointer;}
+button.task-item:hover{background:var(--surface-active);}
 .task-item .page-sub{display:inline;margin:0;}
 .task-item label{display:inline;margin:0 0 0 10px;}
 /* Блоки фактов — длинный markdown: поле открывается сразу читаемым, а не

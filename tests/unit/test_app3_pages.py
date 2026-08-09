@@ -169,3 +169,87 @@ def test_webinar_page_renders(tmp_path, monkeypatch):
 def test_webinar_page_requires_auth(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         assert c.get("/webinar").status_code == 401
+
+
+# ── библиотека знаний: страница, ссылки, ассеты ─────────────────────
+# Проверки уровня страницы: рендер, топнав, отдача статики. Ролевая граница
+# библиотеки живёт на сервере и покрыта поведенчески в tests/unit/test_kb_routes.
+
+
+def test_library_page_requires_auth(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        assert c.get("/library").status_code == 401
+
+
+def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
+    """Страница отдаётся авторизованному и несёт канон-топбар с is-active на
+    «Библиотеке»: без него страница выпадает из единой оболочки платформы, а
+    человек не понимает, где он находится."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/library", headers=_HDR)
+        assert r.status_code == 200
+        html = r.text
+        assert "Библиотека знаний" in html
+        assert 'class="topnav__link is-active">Библиотека' in html
+        assert 'href="/images"' in html
+        assert 'href="/slides"' in html
+        assert 'href="/creatives"' in html
+        assert "Cloud.ru <span>Design</span>" in html
+        assert 'action="/logout"' in html
+        assert "gleb@cloud.ru" in html
+        # Ассеты и API идут через префикс шлюза — иначе на проде 404 на всё.
+        assert 'window.APP_PREFIX = "/creatives";' in html
+        assert "/creatives/static/library.js" in html
+        assert "/creatives/static/app.css" in html
+
+
+def test_library_link_in_neighbour_topnavs(tmp_path, monkeypatch):
+    """Страница без ссылки — страница, которой нет: попасть на библиотеку можно
+    только из топнава соседей, адрес её никто не помнит наизусть."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        for path in ("/", "/webinar"):
+            html = c.get(path, headers=_HDR).text
+            assert 'href="/creatives/library"' in html, f"нет ссылки на библиотеку в {path}"
+            assert "Библиотека" in html
+
+
+def test_library_js_is_served_and_not_a_stub(tmp_path, monkeypatch):
+    """Текстовый smoke по отдаваемому library.js: файл на месте и не выродился
+    в заглушку — в нём остались ролевые ветки, вызовы API и защиты правки.
+
+    Это НЕ проверка срабатывания гардов: JS здесь не исполняется, и отличить
+    `if (me.can_edit_kb)` от `if (true)` тест не в состоянии. Настоящая граница
+    прав — серверная, она покрыта поведенчески в test_kb_routes.py
+    (test_write_requires_role). Здесь ловится только исчезновение кода."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/static/library.js")
+        assert r.status_code == 200
+        js = r.text
+        assert "can_edit_kb" in js  # ветка правки карточек
+        assert "rolesPanel" in js  # ветка админской панели доступов
+        assert "/api/kb/products" in js  # чтение и запись каталога
+        assert "/api/admin/roles" in js  # раздача доступов
+        assert "history" in js  # история версий карточки
+        assert "disabled = false" in js  # редактору поля отпираются
+        assert "editRow" in js
+        assert "createRow" in js
+        assert "historyBox" in js
+        # Архивирование выключает карточку для всех будущих запусков — молча
+        # такое не делают, и вернуть карточку должно быть можно из UI.
+        assert "window.confirm" in js
+        assert "Вернуть из архива" in js
+        # Оборванная сеть не должна оставлять «Сохраняю…» навсегда: jsend
+        # ловит отказ fetch и отдаёт null, errText это называет вслух.
+        assert "catch (_) { return null; }" in js
+        assert "Нет соединения с сервером" in js
+
+
+def test_app_css_carries_library_classes(tmp_path, monkeypatch):
+    """Список продуктов и блоки карточки держатся на .task-item/.kb-block —
+    без них строки списка рендерятся системными кнопками, а блоки схлопываются
+    в однострочные поля."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        r = c.get("/static/app.css")
+        assert r.status_code == 200
+        assert ".task-item" in r.text
+        assert ".kb-block" in r.text
