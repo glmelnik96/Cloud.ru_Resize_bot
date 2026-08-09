@@ -375,7 +375,20 @@ async def test_pending_rehydrates_from_checkpoint(tmp_path):
     assert img_payload["metaphor"] == "мост через каньон"
     assert img_payload["intended_inference"] == "путь становится коротким"
     assert img_payload["anti_reading"] == "не стройка"
+    # Генератора у этого сервиса нет (Null) — значит и кнопки быть не должно.
+    assert img_payload["can_generate"] is False
     assert await svc.pending("tX", "done") is None
+
+
+@pytest.mark.asyncio
+async def test_pending_can_generate_reflects_backend(tmp_path):
+    """/pending и SSE обязаны сойтись по can_generate: экран после F5 — тот же."""
+    Session = await _sessionmaker(tmp_path)
+    svc = _service(
+        Session, _ResumableGraph(), tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen()
+    )
+    payload = await svc.pending("tX", "awaiting_image")
+    assert payload["can_generate"] is True
 
 
 @pytest.mark.asyncio

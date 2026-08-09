@@ -299,6 +299,10 @@
     if (status === 429) return "Сервер занят — попробуй ещё раз через пару минут.";
     if (status === 409) return "Задача уже в другом состоянии — обнови страницу.";
     if (status === 501) return "Генерация недоступна — загрузи картинку.";
+    // 422 на этих роутах приезжает от валидации тела: пустой или слишком
+    // длинный комментарий, чужой action. Без ветки пользователь видел голое
+    // «Ошибка 422» и не понимал, что поправить надо у себя в поле.
+    if (status === 422) return "Проверь поля — комментарий пустой или слишком длинный.";
     return `Ошибка ${status}`;
   }
 
@@ -416,6 +420,7 @@
     if (r && r.ok) {
       const d = await r.json();
       $("outcomeStatus").textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
+      markOutcomeInHistory(taskUid, outcome, $("outcomeComment").value.trim());
       return;
     }
     $("outcomeStatus").innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
@@ -511,6 +516,12 @@
   const imagesByUid = {};
   const briefByUid = {};
   const cardsByUid = {};
+  // Исход запуска (shipped/rejected + комментарий) из /api/tasks. Нужен здесь,
+  // потому что исход почти никогда не известен в момент финиша: баннер уносят
+  // согласовывать, а вкладку закрывают. Без отметки из истории опыт наполнялся
+  // бы только теми запусками, которые кто-то досидел до конца.
+  const outcomeByUid = {};
+  const OUTCOME_LABEL = { shipped: "Пошёл в кампанию", rejected: "Отклонили" };
   const BRIEF_LABELS = {
     product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
     notes: "Свободное поле", source_url: "Ссылка на страницу",
@@ -528,11 +539,17 @@
     const label = STATUS_LABEL[t.status] || t.status;
     const title = escapeHtml(t.prompt || "(без названия)");
     const imgs = Array.isArray(t.images) ? t.images : [];
-    const expandable = imgs.length > 0;
+    // Готовый запуск разворачивается даже без картинок: через сутки ретенции
+    // файлы подчищены, а отметить исход всё ещё нужно.
+    const expandable = imgs.length > 0 || t.status === "done";
     if (expandable) {
       imagesByUid[t.task_uid] = imgs;
       briefByUid[t.task_uid] = t.brief || {};
       cardsByUid[t.task_uid] = Array.isArray(t.cards) ? t.cards : [];
+      // Отметку принимает только готовый запуск (POST /outcome иначе даёт 409).
+      outcomeByUid[t.task_uid] = t.status === "done"
+        ? { outcome: t.outcome || "", comment: t.outcome_comment || "" }
+        : null;
     }
     let action = "";
     if (t.status === "done" && t.result_url) {
@@ -540,6 +557,9 @@
     } else if (t.status === "failed" && t.error) {
       action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
     }
+    const mark = t.outcome
+      ? `<span class="task-badge is-outcome-${t.outcome}">${OUTCOME_LABEL[t.outcome] || t.outcome}</span>`
+      : "";
     const cls = expandable ? "task-row is-expandable" : "task-row";
     const uidAttr = expandable ? ` data-uid="${escapeHtml(t.task_uid)}"` : "";
     const grid = expandable
@@ -548,9 +568,28 @@
     return (
       `<div class="${cls}"${uidAttr}>` +
       `<span class="task-title">${title}</span>` +
-      `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>` +
+      `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>${mark}` +
       `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span>` +
       `</div>` + grid
+    );
+  }
+  // Тот же вопрос, что и на экране результата, только для прошлого запуска.
+  // Кнопка уже сделанного выбора подсвечена — чтобы «передумал» отличалось от
+  // «ещё не отмечал», и человек не гадал, записалось ли что-то в прошлый раз.
+  function outcomeHtml(uid) {
+    const cur = outcomeByUid[uid] || { outcome: "", comment: "" };
+    const btn = (val, cls, text) =>
+      `<button class="btn ${cls}${cur.outcome === val ? " is-picked" : ""}" ` +
+      `data-hist-outcome="${val}">${text}</button>`;
+    return (
+      `<div class="task-outcome" data-outcome-uid="${escapeHtml(uid)}">` +
+      `<span class="page-sub">Что стало с этим баннером? Ответ попадёт в опыт.</span>` +
+      `<textarea class="oc-comment" placeholder="Почему взяли или почему нет">` +
+      `${escapeHtml(cur.comment)}</textarea>` +
+      `<div class="btn-row">` +
+      btn("shipped", "btn--accent", "Пошёл в кампанию") +
+      btn("rejected", "", "Отклонили") +
+      `</div><div class="status oc-status"></div></div>`
     );
   }
   // Каждому баннеру — его карточка (Block 3): slogan/cta/hook/reason/body,
@@ -579,7 +618,11 @@
       `title="Скачать баннер ${i + 1}">↓</a>${capHtml(cards[i], i)}</figure>`
     ).join("");
     const capsCls = cards.length ? " has-caps" : "";
-    grid.innerHTML = briefHtml(briefByUid[uid]) + `<div class="task-thumbs${capsCls}">${thumbs}</div>`;
+    const outcome = outcomeByUid[uid] ? outcomeHtml(uid) : "";
+    grid.innerHTML =
+      briefHtml(briefByUid[uid]) +
+      (thumbs ? `<div class="task-thumbs${capsCls}">${thumbs}</div>` : "") +
+      outcome;
   }
   function toggleGrid(row) {
     const uid = row.getAttribute("data-uid");
@@ -604,11 +647,51 @@
   // lightbox; an expandable row header toggles its grid.
   $("tasksList").addEventListener("click", (ev) => {
     if (ev.target.closest("a")) return; // ZIP + per-thumb download links
+    const oc = ev.target.closest("[data-hist-outcome]");
+    if (oc) { sendHistOutcome(oc); return; }
     const thumb = ev.target.closest(".task-thumb");
     if (thumb) { openLightbox(thumb.dataset.uid, +thumb.dataset.idx); return; }
     const row = ev.target.closest(".task-row.is-expandable");
     if (row) toggleGrid(row);
   });
+
+  // Отметка исхода из истории. Список НЕ перерисовываем: перерисовка схлопнула
+  // бы развёрнутую строку прямо под курсором — правим только тронутый блок.
+  async function sendHistOutcome(btn) {
+    const box = btn.closest(".task-outcome");
+    const uid = box.getAttribute("data-outcome-uid");
+    const outcome = btn.getAttribute("data-hist-outcome");
+    const comment = box.querySelector(".oc-comment").value.trim();
+    const status = box.querySelector(".oc-status");
+    setBusy(box, true);
+    const r = await post(`${P}/api/tasks/${uid}/outcome`, { outcome, comment });
+    setBusy(box, false);
+    if (!(r && r.ok)) {
+      status.innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
+      return;
+    }
+    const d = await r.json();
+    status.textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
+    box.querySelectorAll("[data-hist-outcome]").forEach((b) => {
+      b.classList.toggle("is-picked", b.getAttribute("data-hist-outcome") === outcome);
+    });
+    markOutcomeInHistory(uid, outcome, comment);
+  }
+
+  // Бейдж в шапке строки + кэш, из которого строится развёрнутый блок. Вызывают
+  // оба места отметки, поэтому строки в списке может ещё не быть.
+  function markOutcomeInHistory(uid, outcome, comment) {
+    outcomeByUid[uid] = { outcome, comment };
+    const meta = $("tasksList").querySelector(`.task-row[data-uid="${uid}"] .task-meta`);
+    if (!meta) return;
+    let badge = meta.querySelector(".task-badge[class*='is-outcome-']");
+    if (!badge) {
+      badge = document.createElement("span");
+      meta.insertBefore(badge, meta.querySelector(".task-date"));
+    }
+    badge.className = `task-badge is-outcome-${outcome}`;
+    badge.textContent = OUTCOME_LABEL[outcome] || outcome;
+  }
 
   // ── lightbox gallery ───────────────────────────────────
   // Page through a task's banners full-size without leaving the page.

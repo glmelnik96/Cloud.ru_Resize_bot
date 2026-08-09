@@ -861,6 +861,31 @@ def test_outcome_records_and_second_call_updates(tmp_path, monkeypatch):
         assert rows[0]["outcome"] == "rejected"
 
 
+def test_task_list_carries_outcome_mark(tmp_path, monkeypatch):
+    """История отдаёт отметку исхода: исход узнают через день, когда вкладка с
+    результатом закрыта, и отметить его можно только из списка задач."""
+    db = tmp_path / "r.db"
+    app = _app(tmp_path, monkeypatch, graph_ok=True)
+    with TestClient(app) as c:
+        me = c.get("/api/me", headers=_HDR).json()
+        _seed_task(db, "mark1", "done", me["id"])
+        _seed_task(db, "mark2", "done", me["id"])
+        by_uid = {t["task_uid"]: t for t in c.get("/api/tasks", headers=_HDR).json()}
+        assert by_uid["mark1"]["outcome"] == "" and by_uid["mark1"]["outcome_comment"] == ""
+
+        c.post(
+            "/api/tasks/mark1/outcome",
+            json={"outcome": "rejected", "comment": "длинно"},
+            headers=_HDR,
+        )
+        by_uid = {t["task_uid"]: t for t in c.get("/api/tasks", headers=_HDR).json()}
+        assert by_uid["mark1"]["outcome"] == "rejected"
+        assert by_uid["mark1"]["outcome_comment"] == "длинно"
+        # Отметка одного запуска не растекается на соседние строки списка.
+        assert by_uid["mark2"]["outcome"] == ""
+        assert c.get("/api/tasks/mark1", headers=_HDR).json()["outcome"] == "rejected"
+
+
 def test_outcome_rejects_foreign_task(tmp_path, monkeypatch):
     """Опыт по чужому продукту отравить нельзя: отметка возможна только на
     своей задаче, чужая неотличима от несуществующей."""

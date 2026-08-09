@@ -238,14 +238,21 @@
     }
     $("rolesStatus").textContent = "";
     $("rolesList").innerHTML = rows
-      .map(
-        (r) =>
+      .map((r) => {
+        // У админа право править библиотеку есть всегда (can_edit_kb = admin ||
+        // kb_editor), отдельный флаг ему просто не выставляют. Рисовать пустую
+        // галку значило врать: список утверждал бы, что админ карточки не
+        // правит, — и админ шёл выдавать себе доступ, которого у него и так нет
+        // способа лишиться. Галку показываем полной и запертой.
+        const checked = r.kb_editor || r.role === "admin";
+        return (
           `<div class="task-item"><b>${escapeHtml(r.email)}</b> ` +
           `<span class="page-sub">${escapeHtml(r.role)}</span> ` +
           `<label class="page-sub"><input type="checkbox" data-email="${escapeHtml(r.email)}"` +
-          `${r.kb_editor ? " checked" : ""}${r.role === "admin" ? " disabled" : ""}>` +
+          `${checked ? " checked" : ""}${r.role === "admin" ? " disabled" : ""}>` +
           ` правит библиотеку</label></div>`
-      )
+        );
+      })
       .join("");
     $("rolesList").querySelectorAll("[data-email]").forEach((cb) => {
       cb.addEventListener("change", async () => {

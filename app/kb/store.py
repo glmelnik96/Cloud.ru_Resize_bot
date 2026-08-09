@@ -118,6 +118,11 @@ async def update_product(sessionmaker, *, slug: str, fields: dict, updated_by: s
         data = {k: getattr(prev, k) for k in _EDITABLE}
         data["aliases"] = list(prev.aliases or [])
         data.update({k: v for k, v in fields.items() if k in _EDITABLE and v is not None})
+        # Тот же дефолт, что и в create_product. Стереть все алиасы из формы —
+        # это не «отключить распознавание»: load_product_docs всё равно подставит
+        # имя, и в графе продукт продолжит находиться. Сохранённый пустой список
+        # врал бы редактору — карточка показывала бы, что синонимов нет вовсе.
+        data["aliases"] = list(data["aliases"]) or [data["name"]]
         s.add(
             models.KbProduct(
                 slug=slug, version=prev.version + 1, updated_by=updated_by, **data

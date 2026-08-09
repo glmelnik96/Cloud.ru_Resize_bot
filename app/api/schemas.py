@@ -52,6 +52,11 @@ class TaskOut(BaseModel):
     cards: List[Dict[str, Any]] = Field(default_factory=list)
     # «Как сделан этот баннер»: победитель, персона, карточка знаний, метафора.
     recipe: dict[str, Any] = Field(default_factory=dict)
+    # Отметка исхода из kb_runs (shipped/rejected), пусто — ещё не отмечали.
+    # Нужна истории: исход часто известен не в момент финиша, а через день,
+    # когда вкладка с результатом давно закрыта.
+    outcome: str = ""
+    outcome_comment: str = ""
 
 
 class PersonaIn(BaseModel):

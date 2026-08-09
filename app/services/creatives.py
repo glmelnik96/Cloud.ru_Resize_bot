@@ -391,7 +391,11 @@ class CreativesService:
                 "metaphor": meta.get("metaphor", ""),
                 "intended_inference": meta.get("intended_inference", ""),
                 "anti_reading": meta.get("anti_reading", ""),
-                "can_generate": True,
+                # Тот же источник, что и в _park: захардкоженный True рисовал
+                # кнопку «Сгенерировать» после F5 даже там, где бэкенда генерации
+                # нет вовсе (HERO_GEN_BACKEND=none) — жать её значило получить
+                # 501 вместо картинки.
+                "can_generate": self.hero_generator.available,
             }
         return None
 

@@ -94,7 +94,11 @@ def _task_recipe(t: models.Task) -> dict:
     return {k: recipe[k] for k in _RECIPE_KEYS if k in recipe}
 
 
-def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
+def _task_out(
+    t: models.Task,
+    results_dir: Path | None = None,
+    run: models.KbRun | None = None,
+) -> TaskOut:
     return TaskOut(
         task_uid=t.task_uid,
         workflow=t.workflow,
@@ -107,7 +111,23 @@ def _task_out(t: models.Task, results_dir: Path | None = None) -> TaskOut:
         brief=_task_brief(t),
         cards=_task_cards(t),
         recipe=_task_recipe(t),
+        outcome=run.outcome if run else "",
+        outcome_comment=(run.comment or "") if run else "",
     )
+
+
+async def _outcomes_by_uid(session, uids: list[str]) -> dict[str, models.KbRun]:
+    """Отметки исхода для списка запусков — одним запросом, а не по строке.
+
+    Пустой список отсекаем сразу — запрос по нему всё равно ничего не вернёт."""
+    if not uids:
+        return {}
+    rows = (
+        await session.execute(
+            select(models.KbRun).where(models.KbRun.session_id.in_(uids))
+        )
+    ).scalars().all()
+    return {r.session_id: r for r in rows}
 
 
 def _results_dir(request: Request) -> Path | None:
@@ -147,7 +167,9 @@ async def list_tasks(request: Request):
             .limit(100)
         )
         results_dir = _results_dir(request)
-        return [_task_out(t, results_dir) for t in res.scalars().all()]
+        tasks = list(res.scalars().all())
+        runs = await _outcomes_by_uid(s, [t.task_uid for t in tasks if t.status == "done"])
+        return [_task_out(t, results_dir, runs.get(t.task_uid)) for t in tasks]
 
 
 @router.get("/tasks/{uid}")
@@ -159,7 +181,8 @@ async def get_task(uid: str, request: Request):
         task = res.scalar_one_or_none()
         if task is None or task.user_id != user.id:
             raise HTTPException(404, "task not found")
-        return _task_out(task, _results_dir(request))
+        runs = await _outcomes_by_uid(s, [uid] if task.status == "done" else [])
+        return _task_out(task, _results_dir(request), runs.get(uid))
 
 
 async def _load_owned(request: Request, uid: str, user) -> models.Task:

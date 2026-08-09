@@ -129,6 +129,21 @@ async def test_update_product_appends_version_and_keeps_untouched_fields(Session
     assert fresh.updated_by == "admin@test"
 
 
+async def test_update_product_empty_aliases_fall_back_to_name(Session):
+    """Стёртые в форме алиасы не сохраняются пустым списком: карточка иначе
+    показывала бы «синонимов нет», хотя граф всё равно ищет по имени."""
+    await seed_from_files(Session)
+    row = (await latest_rows(Session))[0]
+    await update_product(
+        Session,
+        slug=row.slug,
+        fields={"name": "Переименованный", "aliases": []},
+        updated_by="admin@test",
+    )
+    fresh = {r.slug: r for r in await latest_rows(Session)}[row.slug]
+    assert fresh.aliases == ["Переименованный"]
+
+
 async def test_update_product_unknown_slug_raises(Session):
     await seed_from_files(Session)
     with pytest.raises(KbNotFound):
