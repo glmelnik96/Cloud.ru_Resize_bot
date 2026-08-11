@@ -158,3 +158,80 @@ async def test_experience_addendum_appears_only_when_layer_has_notes(calls):
     rendered = [kw["experience_block"] for kw in calls if "experience_block" in kw]
     assert len(rendered) == 2, "addendum дописывается к каждому из двух заходов"
     assert "GPU без очереди" in rendered[0]
+
+
+# ----- один бракованный кандидат не уносит прогон ----------------------------
+#
+# 2026-08-10, прод: модель дважды подряд вернула слоган в 43 символа при лимите
+# 42, бюджет ретраев кончился — и падал ВЕСЬ прогон, уже после того как человек
+# подтвердил персону. Одиннадцать годных кандидатов из двенадцати выбрасывались
+# вместе с двенадцатым.
+
+
+def _raw_batch(n_valid: int, *, broken: str | None = None) -> str:
+    import json
+
+    items = [
+        {
+            "slogan": f"Слоган номер {i}",
+            "body": f"тело {i}",
+            "cta": "Попробовать",
+            "hook_angle": "rational",
+            "anchor": f"боль: якорь {i}",
+            "desired_outcome": f"результат для человека {i}",
+        }
+        for i in range(n_valid)
+    ]
+    if broken is not None:
+        items.append({**items[0], "slogan": broken})
+    return json.dumps({"candidates": items}, ensure_ascii=False)
+
+
+def _schema_error(raw: str) -> Exception:
+    from pydantic import ValidationError
+
+    from graph.agent_runner import AgentSchemaError
+    from graph.state import CandidateSet as _CS
+
+    try:
+        _CS.model_validate_json(raw)
+    except ValidationError as exc:
+        return AgentSchemaError("generate_message_candidates", raw, exc)
+    raise AssertionError("raw неожиданно оказался валидным")
+
+
+async def test_one_broken_candidate_does_not_kill_the_batch(calls, monkeypatch):
+    """Заход отдаёт 11 годных вместо ничего — прогон живёт дальше."""
+    raw = _raw_batch(11, broken="Слоган, который заведомо длиннее сорока двух символов")
+    n = {"i": 0}
+
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            raise _schema_error(raw)
+        return _batch("ok")
+
+    monkeypatch.setattr(mod, "run_agent", fake_run_agent)
+    out = await mod.generate_message_candidates(_state())
+    slogans = [c["slogan"] for c in out["candidates"]]
+    assert len(out["candidates"]) == 23
+    assert not [s for s in slogans if len(s) > 42], "бракованный кандидат просочился"
+
+
+async def test_run_stops_only_when_too_few_candidates_survive(calls, monkeypatch):
+    """Ниже двенадцати идти некуда: критик-ЦА обязан выбрать ровно 12, поэтому
+    молча отдать восемь — значит уронить следующий узел вместо этого.
+
+    Падаем `HumanFacingError`: причина здесь известна целиком, и человеку про
+    неё можно сказать словами, а не «непредвиденный сбой (ValueError)».
+    """
+    from graph.errors import HumanFacingError
+
+    async def fake_run_agent(agent_id, *, messages, schema, session_id=None):
+        raise _schema_error(_raw_batch(4))
+
+    monkeypatch.setattr(mod, "run_agent", fake_run_agent)
+    with pytest.raises(HumanFacingError) as exc:
+        await mod.generate_message_candidates(_state())
+    assert "вариант" in str(exc.value)
+    assert "заново" in str(exc.value).lower()

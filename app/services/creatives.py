@@ -27,6 +27,7 @@ from sqlalchemy import func, select, update
 from app import usage
 from app.db import models
 from app.services.hero_gen import HeroGenerator, HeroGenUnavailable, NullHeroGenerator
+from app.tasks.errors import QUEUE_FULL, human_error
 from app.tasks.events import EventBus
 from app.tasks.manager import TaskManager
 from app.tasks.status import WebStatusReporter
@@ -199,9 +200,9 @@ class CreativesService:
             )
 
         if not await self.manager.submit(user_id, runner):
-            await reporter.error("queue full")
+            await reporter.error(QUEUE_FULL)
             await self._finish(
-                task_uid, "failed", error="queue full", reason="queue_full"
+                task_uid, "failed", error=QUEUE_FULL, reason="queue_full"
             )
             raise CapacityError("queue full")
         return task_uid
@@ -343,7 +344,11 @@ class CreativesService:
                         "image_prompt": prompts[0],
                         "image_style": scenarios[0],
                         "can_generate": self.hero_generator.available,
-                        "gen_error": str(failures[0]) if failures else "no heroes",
+                        "gen_error": (
+                            human_error(failures[0])
+                            if failures
+                            else "Фоновое изображение не получено."
+                        ),
                     },
                 )
                 return
@@ -431,9 +436,12 @@ class CreativesService:
                 )
             raise
         except Exception as exc:  # noqa: BLE001
+            # Технический текст остаётся в логе; на экран уходит фраза, по
+            # которой человек понимает, что делать дальше.
             log.exception("segment_failed", task_uid=task_uid)
-            await reporter.error(f"{type(exc).__name__}: {exc}")
-            await self._finish(task_uid, "failed", error=str(exc), reason="error")
+            msg = human_error(exc)
+            await reporter.error(msg)
+            await self._finish(task_uid, "failed", error=msg, reason="error")
             return
 
         interrupts = final.get("__interrupt__")

@@ -171,7 +171,9 @@
       renderMetaphor(d);
       if (d.can_generate) show($("genBtn")); else hide($("genBtn"));
       let msg = "";
-      if (d.gen_error) msg = `Генерация не удалась: ${d.gen_error}. Загрузи картинку.`;
+      // gen_error приходит уже человеческой фразой (app/tasks/errors.py),
+      // поэтому обрамлять её ещё раз не нужно — только добавить второй выход.
+      if (d.gen_error) msg = `${d.gen_error} Либо загрузи свою картинку.`;
       else if (!d.can_generate) msg = "Автогенерация hero на сервере недоступна — загрузи свою картинку.";
       $("imageStatus").textContent = msg;
       setBusy($("imagePanel"), false);

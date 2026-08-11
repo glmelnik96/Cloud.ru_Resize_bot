@@ -29,6 +29,7 @@ from sqlalchemy import func, select
 
 from app import usage
 from app.db import models
+from app.tasks.errors import QUEUE_FULL
 from app.tasks.events import EventBus
 from app.tasks.manager import TaskManager
 from app.tasks.status import WebStatusReporter
@@ -319,9 +320,9 @@ class WebinarService:
                 self.manager.clear_task_tmp(user_id, task_uid)
 
         if not await self.manager.submit(user_id, runner):
-            await reporter.error("queue full")
+            await reporter.error(QUEUE_FULL)
             await self._finish(
-                task_uid, "failed", error="queue full", reason="queue_full"
+                task_uid, "failed", error=QUEUE_FULL, reason="queue_full"
             )
             raise CapacityError("queue full")
         return task_uid

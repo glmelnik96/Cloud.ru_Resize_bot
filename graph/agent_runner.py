@@ -4,7 +4,9 @@ Replaces direct `client.call_structured()` calls in nodes. Configuration comes
 from the agent's YAML card (`agents/<id>.yaml`).
 
 Retry semantics:
-- Pydantic ValidationError → feedback message + retry (within retry_with_feedback budget).
+- Pydantic ValidationError → feedback message + retry (within retry_with_feedback
+  budget); budget exhausted → `AgentSchemaError` carrying the raw answer, so the
+  caller can salvage the valid part instead of losing the whole run.
 - Post-hook `fail` violations → feedback message + retry (within same budget).
 - Post-hook `warn` violations → logged, never block.
 - If budget exhausted with `fail` violations → result is still returned but
@@ -34,6 +36,22 @@ from llm.cloudru import (  # noqa: PLC2701  intentional cross-module use
 log = structlog.get_logger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+
+class AgentSchemaError(ValueError):
+    """Модель не попала в схему за все отведённые попытки.
+
+    Несёт сырой текст последней попытки, чтобы вызывающий узел мог спасти
+    годную часть ответа. Без этого прогон умирал целиком из-за одного
+    бракованного элемента списка (прод 2026-08-10): pydantic сообщал, ЧТО
+    сломалось, но текст ответа оставался внутри `run_agent`.
+    """
+
+    def __init__(self, agent: str, raw: str, error: ValidationError):
+        super().__init__(f"агент {agent}: ответ не прошёл схему")
+        self.agent = agent
+        self.raw = raw
+        self.error = error
 
 _MODEL_MAP: dict[str, ModelName] = {
     "glm-4.7": ModelName.GLM,
@@ -95,7 +113,7 @@ async def run_agent(
                     }
                 )
                 continue
-            raise
+            raise AgentSchemaError(agent_id, raw, exc) from exc
 
         # 2. Post-hooks
         violations: list[Violation] = run_hooks(result, card.post_hooks)

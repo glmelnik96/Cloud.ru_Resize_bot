@@ -4,7 +4,8 @@ For each ranked proposition i:
   - take its generated hero (state.generated_heroes[i]) and its scenario
     (render|photo, read from the hero entry's ``style``),
   - look up the matching 300x600 template (banner_300x600_<scenario>),
-  - compose hero + slogan + subtitle(body) + cta,
+  - compose hero + slogan + subtitle + cta, где subtitle — расшифровка термина
+    из карточки продукта (см. `_subtitle_for`), а НЕ черновик копирайтера,
   - save a PNG and append {format=<NN_scenario>, path} to rendered_files.
 
 Each banner gets a UNIQUE ``format`` label (index + scenario) so render_all's
@@ -23,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -30,11 +32,17 @@ import structlog
 from PIL import Image
 
 from graph.nodes import ranked_candidates
-from graph.state import GeneratedImage, GraphState, MessageCandidate
+from graph.nodes.context import get_product
+from graph.state import GeneratedImage, GraphState, MessageCandidate, ProductBrief
 from infra.composer import compose
 from infra.template_manifest import load_manifest
 
 log = structlog.get_logger(__name__)
+
+# Термин отделён от расшифровки тире или двоеточием: промпт просит «—», модели
+# пишут кто во что горазд. Разделитель ищем с пробелом вокруг, иначе дефис
+# внутри самого термина («S3-совместимое») разрежет его пополам.
+_TERM_SEP_RE = re.compile(r"\s+[—–:-]\s+")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Default to the Docker bot's /data/renders; App3 overrides via RENDERS_DIR.
@@ -47,6 +55,32 @@ _DEFAULT_SCENARIO = "photo"
 def _scenario_for(raw: str | None) -> str:
     s = (raw or "").strip().lower()
     return s if s in _VALID_SCENARIOS else _DEFAULT_SCENARIO
+
+
+def _subtitle_for(product: ProductBrief | None, slogan: str) -> str:
+    """Строка под заголовком — расшифровка термина из карточки продукта.
+
+    В макете (Figma 3460:1404) это «GenAI — генеративный искусственный
+    интеллект»: пояснение к слову из заголовка, а не вторая рекламная фраза.
+    Ровно этот формат собирает `understand_product` в `vocabulary`.
+
+    Берём тот термин, который человек уже прочитал в заголовке — иначе
+    подзаголовок объясняет не то, обо что читатель споткнулся. Не нашли — первый
+    термин словаря: он собран под этот же продукт и всё равно по делу. Нет
+    словаря или карточки — пустая строка: выдумывать расшифровку нельзя, а
+    пустой слот композер просто не рисует.
+    """
+    if product is None:
+        return ""
+    terms = [t.strip() for t in product.vocabulary if t and t.strip()]
+    if not terms:
+        return ""
+    low = slogan.lower()
+    for term in terms:
+        head = _TERM_SEP_RE.split(term, maxsplit=1)[0].strip()
+        if head and head.lower() in low:
+            return term
+    return terms[0]
 
 
 def _hero_ext(data: bytes) -> str:
@@ -71,6 +105,7 @@ async def fill_templates_per_format(state: GraphState) -> dict:
     candidates = ranked_candidates(state)
     heroes = state.get("generated_heroes") or []
     image_raw = state.get("image")
+    product = get_product(state)
 
     _RENDER_DIR.mkdir(parents=True, exist_ok=True)
     manifest = load_manifest(_MANIFEST_PATH)
@@ -110,7 +145,7 @@ async def fill_templates_per_format(state: GraphState) -> dict:
                 hero_bytes,
                 {
                     "slogan": cand.slogan,
-                    "subtitle": cand.body,
+                    "subtitle": _subtitle_for(product, cand.slogan),
                     "cta": cand.cta,
                 },
                 session_id,

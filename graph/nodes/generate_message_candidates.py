@@ -27,10 +27,13 @@ Output:
 from __future__ import annotations
 
 import asyncio
+import json
 
 import structlog
+from pydantic import ValidationError
 
-from graph.agent_runner import run_agent
+from graph.agent_runner import AgentSchemaError, run_agent
+from graph.errors import HumanFacingError
 from graph.nodes.context import (
     NONE,
     experience_block,
@@ -40,12 +43,17 @@ from graph.nodes.context import (
     product_block,
 )
 from graph.prompts import extract_section, load_skill, render
-from graph.state import AdBrief, CandidateSet, GraphState, Persona
+from graph.state import AdBrief, CandidateSet, DraftCandidate, GraphState, Persona
 
 log = structlog.get_logger(__name__)
 
 _AGENT_ID = "generate_message_candidates"
 _SKILL_NAME = "creative_ads_explorer"
+
+# Ниже этого числа спасать нечего: критик-ЦА (`select_by_persona`) обязан
+# выбрать ровно 12 штук, и отдать ему восемь — значит уронить следующий узел
+# вместо этого, но уже без внятной причины.
+_MIN_CANDIDATES = 12
 
 _BATCH_DIRECTIVES = (
     (
@@ -102,6 +110,13 @@ async def generate_message_candidates(state: GraphState) -> dict:
     )
 
     candidates = [c.model_dump() for batch in batches for c in batch]
+    if len(candidates) < _MIN_CANDIDATES:
+        # Здесь узел знает и причину, и что делать дальше, поэтому пишет фразу
+        # сам: перевод по имени класса сказал бы только «непредвиденный сбой».
+        raise HumanFacingError(
+            f"Модель вернула слишком мало пригодных вариантов текста "
+            f"({len(candidates)} из {_MIN_CANDIDATES}). Запусти генерацию заново."
+        )
     log.info(
         "generate_candidates_ok",
         session_id=session_id,
@@ -148,16 +163,48 @@ async def _run_batch(
     # непустой (см. generate_message_candidates).
     if experience_tpl:
         user_msg += "\n\n" + render(experience_tpl, experience_block=experience)
-    result = await run_agent(
-        _AGENT_ID,
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ],
-        schema=CandidateSet,
-        session_id=session_id,
-    )
+    try:
+        result = await run_agent(
+            _AGENT_ID,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            schema=CandidateSet,
+            session_id=session_id,
+        )
+    except AgentSchemaError as exc:
+        return _salvage(exc, session_id)
     return result.candidates
+
+
+def _salvage(exc: AgentSchemaError, session_id: str | None) -> list[DraftCandidate]:
+    """Достать из забракованного ответа тех кандидатов, что сами по себе целы.
+
+    Схема требует ровно 12 штук, поэтому один слоган длиннее лимита обнуляет
+    весь заход — а с ним и прогон, в который человек уже вложил подтверждение
+    персоны (прод 2026-08-10). Проверяем кандидатов поштучно: годные идут
+    дальше, бракованные остаются здесь.
+    """
+    try:
+        payload = json.loads(exc.raw)
+        items = payload["candidates"]
+    except (ValueError, KeyError, TypeError):
+        log.warning("candidates_salvage_failed", session_id=session_id)
+        return []
+    kept: list[DraftCandidate] = []
+    for item in items:
+        try:
+            kept.append(DraftCandidate.model_validate(item))
+        except ValidationError:  # noqa: PERF203  разбор поштучный и есть суть
+            continue
+    log.warning(
+        "candidates_salvaged",
+        session_id=session_id,
+        kept=len(kept),
+        dropped=len(items) - len(kept),
+    )
+    return kept
 
 
 def _anchor_slices(persona: Persona) -> tuple[list[str], list[str]]:
