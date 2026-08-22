@@ -30,23 +30,33 @@ class WebStatusReporter:
             {"kind": "queued", "queue_pos": queue_pos, "eta_sec": self.eta_sec},
         )
 
-    async def start(self, first_step: str) -> None:
+    async def start(self, first_step: str, *, stage: int | None = None) -> None:
         now = time.monotonic()
         self._run_started = now
         self._step_started = now
         self._sub = first_step
         await self.bus.publish(
             self.task_uid,
-            {"kind": "start", "step": first_step, "eta_sec": self.eta_sec, "ts": time.time()},
+            {
+                "kind": "start", "step": first_step, "stage": stage,
+                "eta_sec": self.eta_sec, "ts": time.time(),
+            },
         )
 
-    async def step(self, name: str) -> None:
+    async def step(self, name: str, *, stage: int | None = None) -> None:
+        """`stage` — номер остановки маршрута (1..5), по которому браузер метит
+        полосу прогресса. Число, а не подпись: подпись шага — текст для
+        человека, её правка не должна гасить подсветку. None означает «шаг
+        остановку не меняет» — браузер оставляет ту, что уже подсвечена."""
         now = time.monotonic()
         if self._step_started is not None and self._sub:
             self._step_times.append((self._sub, now - self._step_started))
         self._sub = name
         self._step_started = now
-        await self.bus.publish(self.task_uid, {"kind": "step", "step": name, "ts": time.time()})
+        await self.bus.publish(
+            self.task_uid,
+            {"kind": "step", "step": name, "stage": stage, "ts": time.time()},
+        )
 
     # ── App3 interactive HITL ────────────────────────────────────
     async def awaiting(self, *, phase: str, data: dict[str, Any]) -> None:

@@ -4,17 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Библиотека знаний — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v6">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
+  {# Живая сетка — общий модуль портала, забран как есть. #}
+  <script src="{{ prefix }}/static/grid.js?v=20260822v12" defer></script>
 </head>
-<body>
+{# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
+   is-landing не копируем — это класс лендинга. #}
+<body class="v11 is-tool is-auth">
+  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Копия эталона из App1 (gateway/templates/base.html),
+     включая data-t на каждом пункте: без него шторка не умеет прокручивать надпись.
+     Ссылки абсолютные от корня домена — переход между разделами это полная
+     перезагрузка, и относительные адреса увели бы в /creatives/images. #}
   <header class="topbar">
     <a class="brand" href="/">Cloud.ru <span>Design</span></a>
     <nav class="topnav">
-      <a href="/images" class="topnav__link">Картинки</a>
-      <a href="/slides" class="topnav__link">Слайды</a>
-      <a href="/creatives" class="topnav__link is-active">Креативы</a>
-      <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
-      <a href="/creatives/webinar" class="topnav__link">Вебинары</a>
+      <a href="/images" class="topnav__link" data-t="Картинки">Картинки</a>
+      <a href="/slides" class="topnav__link" data-t="Слайды">Слайды</a>
+      <a href="/creatives" class="topnav__link is-active" data-t="Креативы">Креативы</a>
+      <a href="/present" class="topnav__link" data-t="Трансляции">Трансляции</a>
+      <a href="/creatives/webinar" class="topnav__link" data-t="Вебинары">Вебинары</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -22,87 +30,148 @@
     </div>
   </header>
 
-  <main class="wrap">
-    <h1 class="page-title">Библиотека знаний</h1>
-    <p class="page-sub">Факты о продуктах, из которых пайплайн строит предложения. Что здесь написано — то и обещают баннеры: правка карточки меняет следующий же запуск.</p>
-    <p class="page-sub"><a href="{{ prefix }}/">← Вернуться к генерации креативов</a></p>
+  <main>
+    <section class="tool">
+      {# Заголовок вынесен из рельса на всю ширину: это единственный
+         крупный кегль страницы, и в колонке 264 он ломался бы переносами.
+         Он же даёт странице третью типографическую ступень — без неё
+         экран был полем одинаковых 11px. #}
+      <h1>Библиотека знаний</h1>
+      <div class="tool__grid">
 
-    <div class="workspace">
-    <div class="workspace__controls">
+      {# Рельс — выбор и управление: каталог, доступы, создание карточки.
+         Черновик карточки в рельс не помещается и живёт в раме ленты. #}
+      <aside class="rail">
+        <div class="rail__block">
+          {# Подпись и список — один блок с зазором в половину ячейки; целая
+             ячейка отделяет его от галки и кнопки. Та же арифметика, что у
+             формы брифа: 12 внутри блока, 24 между блоками. #}
+          <div class="field-block">
+            <p class="field-label">Продукты</p>
+            <div class="scen-grid" id="kbList"></div>
+          </div>
+          <label class="check-row" for="showArchived">
+            <input type="checkbox" id="showArchived">
+            <span>Показывать архивные</span>
+          </label>
+          <div class="btn-row hidden" id="createRow">
+            <button type="button" class="t-btn t-btn--key" id="newBtn">Новая карточка</button>
+          </div>
+          <div class="status" id="listStatus"></div>
+        </div>
 
-    <section class="panel">
-      <h2>Продукты</h2>
-      <div class="task-list" id="kbList"></div>
-      <label class="page-sub" for="showArchived">
-        <input type="checkbox" id="showArchived"> показывать архивные
-      </label>
-      <div class="btn-row hidden" id="createRow">
-        <button class="btn btn--accent" id="newBtn">Новая карточка</button>
-      </div>
-      <div class="status" id="listStatus"></div>
+        <div class="rail__block hidden" id="rolesPanel">
+          <div class="field-block">
+            <p class="field-label">Доступы</p>
+            <p class="muted">Пользователь появляется в списке после первого входа.</p>
+            <div class="exp-list" id="rolesList"></div>
+          </div>
+          <label class="check-row" for="showTechnical">
+            <input type="checkbox" id="showTechnical">
+            <span>Показывать технические учётки</span>
+          </label>
+          <div class="status" id="rolesStatus"></div>
+        </div>
+
+        {# Объяснение убрано под раскрытие: постоянный текст в рельсе съедал бы
+           высоту, а нужен он один раз — при первом заходе. #}
+        <details class="tool-details">
+          <summary>Как это работает</summary>
+          <div class="tool-details__body">
+            <p class="muted">Карточка — граница достоверности: сверх неё баннеры не обещают.</p>
+            <p class="muted">Три блока: что это, что умеет, кому нужно. Из третьего растёт персона.</p>
+            <p class="muted">Правка действует со следующего запуска.</p>
+            <p class="muted"><a href="{{ prefix }}/">Вернуться к генерации креативов</a></p>
+          </div>
+        </details>
+      </aside>
+
+      {# Лента — единственная рама на странице. Внутри неё чертёж и содержимое
+         колонкой: черновик карточки и отмеченный опыт. #}
+      <section class="feed" id="feed">
+        <div class="lp-grid lp-grid--page"><canvas class="lp-grid__canvas"></canvas></div>
+
+        {# Заголовок рамы называет открытую карточку: рама на странице одна, и
+           без имени продукта в ней черновик читался бы как ничей. #}
+        <header class="feed__head">
+          <p class="feed__title" id="cardTitle">Карточка продукта</p>
+          <span class="feed__count" id="feedCount">0</span>
+        </header>
+
+        <div class="feed__body" id="feedBody">
+          <p class="feed__empty" id="emptyState">Выберите продукт слева</p>
+
+          {# gen-form рядом с lib-card не декорация: геометрия полей (48/96,
+             подпись 12 + зазор 12) описана в блоке формы, и без класса черновик
+             остался бы браузерными контролами со скруглениями. #}
+          <section class="lib-card gen-form hidden" id="cardPanel">
+            <p class="lib-card__meta" id="cardMeta"></p>
+
+            <label class="field-group" for="cardName">
+              <span class="field-label">Название</span>
+              <input type="text" id="cardName" disabled>
+            </label>
+            <label class="field-group" for="cardAliases">
+              <span class="field-label">Синонимы — по одному в строке</span>
+              <textarea id="cardAliases" disabled></textarea>
+            </label>
+            <label class="field-group" for="cardTagline">
+              <span class="field-label">Тэглайн</span>
+              <textarea id="cardTagline" disabled></textarea>
+            </label>
+            <label class="field-group" for="cardBlock1">
+              <span class="field-label">Блок 1 — что это</span>
+              <textarea id="cardBlock1" class="kb-block" disabled></textarea>
+            </label>
+            <label class="field-group" for="cardBlock2">
+              <span class="field-label">Блок 2 — возможности и сценарии</span>
+              <textarea id="cardBlock2" class="kb-block" disabled></textarea>
+            </label>
+            <label class="field-group" for="cardBlock3">
+              <span class="field-label">Блок 3 — аудитории</span>
+              <textarea id="cardBlock3" class="kb-block" disabled></textarea>
+            </label>
+
+            <div class="btn-row hidden" id="editRow">
+              <button type="button" class="t-btn t-btn--key" id="saveBtn">Сохранить как новую версию</button>
+              <button type="button" class="t-btn" id="archiveBtn">В архив</button>
+            </div>
+            <div class="status" id="cardStatus"></div>
+            <details class="tool-details hidden" id="historyBox">
+              <summary>История версий</summary>
+              <div class="tool-details__body" id="cardHistory"></div>
+            </details>
+          </section>
+
+          <section class="field-block">
+            <p class="field-label">Отмеченный опыт</p>
+            <p class="muted">В генерацию уходит только «пошло в работу» и только по тому же продукту.</p>
+            <div class="exp-list" id="experienceList"></div>
+          </section>
+        </div>
+      </section>
+
+      </div><!-- /.tool__grid -->
     </section>
 
-    <section class="panel hidden" id="rolesPanel">
-      <h2>Доступы</h2>
-      <p class="page-sub">Кто может править карточки. Пользователь появляется в списке после первого входа. Технические учётки прогонов и тестов скрыты.</p>
-      <div class="task-list" id="rolesList"></div>
-      <label class="page-sub" for="showTechnical">
-        <input type="checkbox" id="showTechnical"> показывать технические учётки
-      </label>
-      <div class="status" id="rolesStatus"></div>
-    </section>
-
-    </div><!-- /.workspace__controls -->
-    <div class="workspace__output">
-
-    <div class="empty" id="emptyState">
-      <h2>Как читать эту страницу</h2>
-      <p>Каждая карточка — три блока фактов о продукте: что это, что умеет и кому нужно. Пайплайн берёт из них границу достоверности: обещать сверх карточки нельзя.</p>
-      <ul>
-        <li><b>Блок 1</b> — что это и какую задачу решает.</li>
-        <li><b>Блок 2</b> — возможности, сценарии, доказательства.</li>
-        <li><b>Блок 3</b> — аудитории и что каждой важно; отсюда растёт персона.</li>
-      </ul>
-      <p>Выберите продукт слева, чтобы посмотреть текст и историю правок.</p>
-    </div>
-
-    <section class="panel hidden" id="cardPanel">
-      <h2 id="cardTitle">Карточка</h2>
-      <p class="page-sub" id="cardMeta"></p>
-      <label for="cardName">Название</label>
-      <input type="text" id="cardName" disabled>
-      <label for="cardAliases">Синонимы <span class="page-sub">(по одному в строке — по ним пайплайн узнаёт продукт в брифе)</span></label>
-      <textarea id="cardAliases" disabled></textarea>
-      <label for="cardTagline">Тэглайн</label>
-      <textarea id="cardTagline" disabled></textarea>
-      <label for="cardBlock1">Блок 1. Что это</label>
-      <textarea id="cardBlock1" class="kb-block" disabled></textarea>
-      <label for="cardBlock2">Блок 2. Возможности и сценарии</label>
-      <textarea id="cardBlock2" class="kb-block" disabled></textarea>
-      <label for="cardBlock3">Блок 3. Аудитории</label>
-      <textarea id="cardBlock3" class="kb-block" disabled></textarea>
-      <div class="btn-row hidden" id="editRow">
-        <button class="btn btn--accent" id="saveBtn">Сохранить как новую версию</button>
-        <button class="btn btn--danger" id="archiveBtn">В архив</button>
-      </div>
-      <div class="status" id="cardStatus"></div>
-      <details class="cand-why hidden" id="historyBox">
-        <summary>История версий</summary>
-        <div id="cardHistory"></div>
-      </details>
-    </section>
-
-    <section class="panel" id="experiencePanel">
-      <h2>Отмеченный опыт</h2>
-      <p class="page-sub">Что команда взяла в работу, а что забраковала. В промпт копирайтера уходит только «пошло в работу» — и только по тому же продукту. «Забраковано» видно здесь, команде: в генерацию оно не идёт.</p>
-      <div class="task-list" id="experienceList"></div>
-    </section>
-
-    </div><!-- /.workspace__output -->
-    </div><!-- /.workspace -->
+    <footer class="lp-foot">
+      <a href="{{ prefix }}/">Генерация креативов</a>
+      <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
+    </footer>
   </main>
 
+  <script>
+    // Чертёж заперт в раму ленты: сцена — сама лента, притирка — к колонке
+    // содержимого, иначе фаза линий случайная и блоки не садятся на них.
+    document.addEventListener("DOMContentLoaded", function () {
+      window.lpGrid({
+        grid: document.querySelector(".lp-grid--page"),
+        stage: document.getElementById("feed"),
+        alignTo: document.getElementById("feedBody"),
+      });
+    });
+  </script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/library.js?v=20260809v9"></script>
+  <script src="{{ prefix }}/static/library.js?v=20260822v12"></script>
 </body>
 </html>

@@ -70,12 +70,21 @@
     // Статус относился к прошлой загрузке: без сброса одна неудача светилась бы
     // красным через все последующие удачные перезагрузки списка.
     $("listStatus").textContent = "";
+    $("feedCount").textContent = items.length;
+    // Строка-переключатель портала: в покое видно только название с версией,
+    // slug приезжает к той строке, на которую смотрят. Выбранное метим планкой
+    // ключа (is-active) — инверсия занята ховером.
     $("kbList").innerHTML = items
       .map(
         (p) =>
-          `<button class="task-item" data-slug="${escapeHtml(p.slug)}">` +
-          `<b>${escapeHtml(p.name)}</b> <span class="page-sub">v${p.version}` +
-          `${p.archived ? " · архив" : ""}</span></button>`
+          `<button class="scen-card${p.slug === current ? " is-active" : ""}"` +
+          ` data-slug="${escapeHtml(p.slug)}">` +
+          `<span class="scen-card__head">` +
+          `<span class="scen-card__title">${escapeHtml(p.name)}</span>` +
+          `<span class="scen-card__tag">v${p.version}${p.archived ? " · архив" : ""}</span>` +
+          `</span>` +
+          `<span class="scen-card__desc">${escapeHtml(p.slug)}</span>` +
+          `</button>`
       )
       .join("");
     $("kbList").querySelectorAll("[data-slug]").forEach((b) => {
@@ -88,6 +97,9 @@
       current = null;
       $("cardPanel").classList.add("hidden");
       $("emptyState").classList.remove("hidden");
+      // Заголовок рамы называл открытую карточку — без сброса рама продолжала
+      // бы носить имя продукта, которого на экране уже нет.
+      $("cardTitle").textContent = "Карточка продукта";
     }
   }
 
@@ -101,6 +113,12 @@
       `${p.slug} · версия ${p.version}` +
       (p.updated_by ? ` · правил ${p.updated_by}` : "") +
       (p.archived ? " · в архиве" : "");
+    // Планка выбранного живёт в разметке списка, а список тут не
+    // перерисовывается — двигаем её вручную, иначе метка осталась бы на
+    // прошлой строке.
+    $("kbList").querySelectorAll(".scen-card").forEach((b) => {
+      b.classList.toggle("is-active", b.dataset.slug === slug);
+    });
     $("cardName").value = p.name;
     $("cardAliases").value = (p.aliases || []).join("\n");
     $("cardTagline").value = p.tagline || "";
@@ -108,10 +126,10 @@
     $("cardBlock2").value = p.block2 || "";
     $("cardBlock3").value = p.block3 || "";
     // Архив — не удаление: вернуть карточку должно быть так же просто, как
-    // убрать, иначе возврат остаётся операцией для SQL-консоли. Красной
-    // (.btn--danger) кнопка остаётся только пока она выключает карточку.
+    // убрать, иначе возврат остаётся операцией для SQL-консоли. Цветом это
+    // больше не размечено — в палитре v11 красного нет, и разницу между
+    // «убрать» и «вернуть» несёт надпись плюс подтверждение.
     $("archiveBtn").textContent = p.archived ? "Вернуть из архива" : "В архив";
-    $("archiveBtn").classList.toggle("btn--danger", !p.archived);
     $("cardStatus").textContent = "";
     $("cardPanel").classList.remove("hidden");
     $("emptyState").classList.add("hidden");
@@ -123,10 +141,12 @@
   async function loadHistory(slug) {
     try {
       const rows = await jget(`/api/kb/products/${slug}/history`);
+      // Номер версии — служебный слой (моно-капс в <b>), кто и когда — обычный
+      // текст: два регистра не смешиваются даже внутри одной строки.
       $("cardHistory").innerHTML = rows
         .map(
           (v) =>
-            `<div class="page-sub">v${v.version} · ${escapeHtml(v.updated_at || "")}` +
+            `<div class="kv"><b>v${v.version}</b> ${escapeHtml(v.updated_at || "")}` +
             ` · ${escapeHtml(v.updated_by || "seed")}${v.archived ? " · архив" : ""}</div>`
         )
         .join("");
@@ -249,12 +269,15 @@
         // правит, — и админ шёл выдавать себе доступ, которого у него и так нет
         // способа лишиться. Галку показываем полной и запертой.
         const checked = r.kb_editor || r.role === "admin";
+        // Строка доступа не кликабельна целиком — кликабельна только галка,
+        // поэтому это .exp-item (строка с хайрлайном), а не .scen-card.
         return (
-          `<div class="task-item"><b>${escapeHtml(r.email)}</b> ` +
-          `<span class="page-sub">${escapeHtml(r.role)}</span> ` +
-          `<label class="page-sub"><input type="checkbox" data-email="${escapeHtml(r.email)}"` +
+          `<div class="exp-item"><div class="exp-item__head">` +
+          `<span class="exp-item__title">${escapeHtml(r.email)}</span>` +
+          `<span class="exp-item__tag">${escapeHtml(r.role)}</span></div>` +
+          `<label class="check-row"><input type="checkbox" data-email="${escapeHtml(r.email)}"` +
           `${checked ? " checked" : ""}${r.role === "admin" ? " disabled" : ""}>` +
-          ` правит библиотеку</label></div>`
+          `<span>Правит библиотеку</span></label></div>`
         );
       })
       .join("");
@@ -308,7 +331,7 @@
   // Пустое поле не рисуем строкой «якорь: —»: в опыте половина полей пустая по
   // природе (метафора есть только у сценария render), и прочерки читались бы
   // как потерянные данные.
-  const kv = (k, v) => (v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "");
+  const kv = (k, v) => (v ? `<div class="kv"><b>${k}</b> ${escapeHtml(v)}</div>` : "");
 
   async function loadExperience() {
     let rows;
@@ -325,10 +348,6 @@
       ? rows
           .map((r) => {
             const label = escapeHtml(OUTCOME_RU[r.outcome] || r.outcome);
-            const head =
-              r.outcome === "shipped"
-                ? `<b>${label}</b>`
-                : `<span class="page-sub">${label}</span>`;
             // Дата — та, по которой лента отсортирована (updated_at: человек
             // мог передумать). Без неё вчерашняя отметка неотличима от
             // прошлогодней, а порядок строк ничего не объясняет.
@@ -349,25 +368,32 @@
               kv("сегмент ЦА", r.persona_segment) +
               kv("комментарий", r.comment) +
               kv("отмечено впервые", fmtDate(r.created_at)) +
-              `<p class="page-sub">${goesToPrompt
+              `<p class="muted">${goesToPrompt
                 ? "Уходит в промпты по этому продукту: слоган с якорем и комментарий — копирайтеру, образ — в список уже снятых метафор."
                 : "В промпты не уходит: копирайтер видит только «пошло в работу»."
               }</p>` +
               (canDelete
-                ? `<div class="btn-row"><button class="btn btn--danger" data-del-exp="${r.id}"` +
+                ? `<div class="btn-row"><button class="t-btn" data-del-exp="${r.id}"` +
                   ` data-what="${escapeHtml(r.slogan || r.slug || "")}">Удалить отметку</button></div>`
                 : "");
+            // Метка исхода — служебный слой справа, слоган — содержимое слева.
+            // «Забраковано» тише не цветом ошибки (красного в палитре нет), а
+            // приглушённым тоном той же моно-капс метки.
             return (
-              `<div class="task-item">${head}` +
-              ` · ${escapeHtml(r.slug || "без продукта")} · «${escapeHtml(r.slogan)}»` +
-              (when ? ` <span class="page-sub">· ${escapeHtml(when)}</span>` : "") +
-              (r.comment ? `<div class="page-sub">${escapeHtml(r.comment)}</div>` : "") +
-              `<details class="cand-why"><summary>Что записано в опыт</summary>${rows}</details>` +
+              `<div class="exp-item"><div class="exp-item__head">` +
+              `<span class="exp-item__title">«${escapeHtml(r.slogan)}»</span>` +
+              `<span class="exp-item__tag${r.outcome === "shipped" ? "" : " exp-item__tag--rejected"}">` +
+              `${label}</span></div>` +
+              `<div class="kv"><b>${escapeHtml(r.slug || "без продукта")}</b>` +
+              (when ? ` ${escapeHtml(when)}` : "") + `</div>` +
+              (r.comment ? `<p class="muted">${escapeHtml(r.comment)}</p>` : "") +
+              `<details class="tool-details"><summary>Что записано в опыт</summary>` +
+              `<div class="tool-details__body">${rows}</div></details>` +
               `</div>`
             );
           })
           .join("")
-      : `<p class="page-sub">Пока никто не отмечал исходы. Отметка ставится на экране результата.</p>`;
+      : `<p class="feed__empty">Исходов пока никто не отмечал</p>`;
   }
 
   // Делегирование, а не слушатель на кнопку: лента перерисовывается целиком

@@ -1284,6 +1284,37 @@ async def test_hero_generation_publishes_incremental_progress(tmp_path):
     steps = [e["step"] for e in events if e.get("kind") == "step"]
     assert any("1/3" in s for s in steps)
     assert any("3/3" in s for s in steps)
+    # Полоса маршрута в браузере подсвечивает остановку по числу, а не по
+    # русской подписи шага: подпись — текст для человека, и её правка не должна
+    # молча ломать подсветку. Генерация hero — четвёртая остановка.
+    assert [e.get("stage") for e in events if e.get("kind") == "step"] == [4, 4, 4]
+
+
+@pytest.mark.asyncio
+async def test_step_events_carry_route_stage(tmp_path):
+    """Каждое событие шага несёт номер остановки маршрута (1..5). Без него
+    браузер вынужден сопоставлять русские подписи, и переименование шага на
+    сервере тихо гасит подсветку в ленте."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(Session, _FakeGraph({"kind": "text_approve", "candidates": []}), bus=bus)
+
+    q = bus.subscribe("st1")
+    async with Session() as s:
+        s.add(models.Task(task_uid="st1", user_id=1, workflow="creatives", status="queued"))
+        await s.commit()
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="st1", label="creatives", eta_sec=None)
+    await svc._run_segment("st1", "1", {}, reporter)
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    by_step = {e["step"]: e.get("stage") for e in events if e.get("kind") == "step"}
+    # _FakeGraph отдаёт understand_product (остановка 2) и
+    # generate_message_candidates (остановка 3).
+    assert by_step == {"Изучаю продукт": 2, "Генерирую 24 предложения": 3}
 
 
 @pytest.mark.asyncio

@@ -1,27 +1,21 @@
-/* App3 / webinar — variant + texts + one hero, manually fitted in a reference
-   frame (рамка + сетка + линия головы), then a LangGraph-free compose loop.
-   The fit is a Transform(scale, x, y) in reference-frame units, sent verbatim
-   to the server (infra.hero_fit.bake_frame reproduces it exactly). */
+/* App3 / вебинарные ресайзы — v11.
+   Каркас тот же, что у «Креативов»: рельс собирает задачу, лента показывает
+   форматы плитками, лайтбокс работает в двух режимах — просмотр формата и
+   подгонка кадра. Подгонка вынесена в лайтбокс не для красоты: холст 360
+   в рельс шириной 264 не влезает.
+
+   Движок подгонки не тронут — это Transform(scale, x, y) в единицах опорной
+   рамки, который уходит на сервер как есть (infra.hero_fit.bake_frame
+   воспроизводит его точь-в-точь). */
 (function () {
   "use strict";
   const P = window.APP_PREFIX || "";
   const $ = (id) => document.getElementById(id);
-  const show = (el) => { el.classList.remove("hidden"); updateEmpty(); };
-  const hide = (el) => { el.classList.add("hidden"); updateEmpty(); };
-
-  const OUTPUT_PANELS = ["progressPanel", "resultsPanel", "tasksPanel"];
-  function updateEmpty() {
-    const empty = $("emptyState");
-    if (!empty) return;
-    const hasContent = OUTPUT_PANELS.some((id) => {
-      const p = $(id);
-      return p && !p.classList.contains("hidden");
-    });
-    empty.classList.toggle("hidden", hasContent);
-  }
+  const show = (el) => el && el.classList.remove("hidden");
+  const hide = (el) => el && el.classList.add("hidden");
 
   const ALPHA_THRESHOLD = 32;
-  const HEAD_LINE_FRAC = 0.06; // where the top of a speaker's head should sit
+  const HEAD_LINE_FRAC = 0.06; // где должна стоять макушка спикера
   const SLOT_LABELS = {
     title: "Заголовок", subtitle: "Подзаголовок",
     name: "Имя спикера", position: "Должность",
@@ -32,36 +26,189 @@
     name: "Михаил Безобразов", position: "архитектор решений",
     date: "08 сентября", time: "11:00",
   };
+  const STATUS_LABEL = {
+    queued: "В очереди", running: "В работе",
+    done: "Готово", failed: "Ошибка", cancelled: "Отменено",
+  };
 
   let META = null;         // { speaker:{frame,box,mode,anchor_v,slots,formats}, visual:{…} }
   let variant = "speaker";
-  let hero = null;         // HTMLImageElement (uploaded)
-  let heroBlob = null;     // File/Blob to POST
-  let alphaBox = null;     // {x0,y0,x1,y1} in hero px (threshold 32)
-  const T = { scale: 1, x: 0, y: 0 }; // Transform in ref-frame units
+  let hero = null;         // HTMLImageElement (загруженный)
+  let heroBlob = null;     // File/Blob для POST
+  let alphaBox = null;     // {x0,y0,x1,y1} в пикселях исходника (порог 32)
+  const T = { scale: 1, x: 0, y: 0 }; // Transform в единицах опорной рамки
 
   let taskUid = null, es = null;
-  let submitting = false;  // in-flight POST guard (blocks double-submit)
+  // Занятость: от нажатия «Собрать» до done/ошибки. Одна задача на страницу —
+  // лента показывает прогресс в одной плитке, и вторая сборка её бы перебила.
+  let busy = false;
   const LS_KEY = "app3_webinar_task";
   const ACTIVE = ["queued", "running"];
   const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
   const clearActive = () => { try { localStorage.removeItem(LS_KEY); } catch (_) {} };
 
-  // Per-task result PNGs (out of the DOM until a row is expanded), shared by the
-  // just-finished grid and the recent-tasks grids so the lightbox can page them.
-  const imagesByUid = {};
-  const fileNameOf = (u) => String(u).split("/").pop();
+  // Состояние ленты. tasks — сырой список сервера (свежие первыми), views —
+  // плоский список форматов для листания в лайтбоксе.
+  let tasks = [];
+  let views = [];
+  const stateEls = new Map();   // uid → {wrap, line, acts, bar, actsKey}
+  let liveStep = "";            // текст шага активной задачи (из SSE)
+  const byUid = (uid) => tasks.find((t) => t.task_uid === uid) || null;
+
+  const feedGrid = $("feedGrid");
+  const feedCount = $("feedCount");
+  const feedEmpty = $("feedEmpty");
+  const feedFoot = $("feedFoot");
 
   const canvas = $("fitCanvas");
   const ctx = canvas.getContext("2d");
+  const thumb = $("fitThumb");
+  const thumbCtx = thumb.getContext("2d");
 
-  // ── meta + variant ─────────────────────────────────────
+  // ── мелкие конструкторы DOM ────────────────────────────
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function tBtn(label, fn, cls) {
+    const b = el("button", "t-btn" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    b.addEventListener("click", fn);
+    return b;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  const fileNameOf = (u) => String(u).split("/").pop();
+  // Имя файла формата уже несёт название ресайза (vk_1200x600.png) — оно
+  // информативнее порядкового «Формат 7», ради которого пришлось бы держать
+  // отдельный справочник на клиенте.
+  const captionOf = (u) => fileNameOf(u).replace(/\.[a-z0-9]+$/i, "");
+
+  // ── лента ──────────────────────────────────────────────
+  function stateText(t) {
+    if (t.task_uid === taskUid && liveStep) return liveStep;
+    if (t.status === "failed") return t.error ? "Ошибка: " + t.error : "Ошибка";
+    return STATUS_LABEL[t.status] || t.status;
+  }
+  const tileClass = (t) => "work work--" + t.status;
+  const actsKeyOf = (t) => t.status;
+
+  // Служебная плитка: задача, у которой форматов ещё (или уже) нет. Каркас
+  // строится один раз — события шага приходят часто, и пересборка гасила бы
+  // ссылку прямо под курсором.
+  function stateTile(t) {
+    const wrap = el("article", tileClass(t));
+    const body = el("div", "work__body");
+    const line = el("div", "work__state", stateText(t));
+    const acts = el("div", "work__acts");
+    const bar = el("div", "work__bar is-idle");
+    bar.appendChild(document.createElement("i"));
+    bar.hidden = !(t.status === "queued" || t.status === "running");
+    body.appendChild(line);
+    body.appendChild(acts);
+    body.appendChild(bar);
+    wrap.appendChild(body);
+    const cap = el("div", "work__cap", t.prompt || "(без названия)");
+    cap.title = t.prompt || "";
+    wrap.appendChild(cap);
+    stateEls.set(t.task_uid, { wrap, line, acts, bar, actsKey: "" });
+    fillActs(t);
+    return wrap;
+  }
+
+  function fillActs(t) {
+    const p = stateEls.get(t.task_uid);
+    if (!p) return;
+    p.actsKey = actsKeyOf(t);
+    p.acts.innerHTML = "";
+    // Готовая сборка без картинок — PNG подчистила ретенция, но архив ещё жив.
+    if (t.status === "done" && t.result_url) {
+      const a = el("a", "t-btn", "Скачать ZIP");
+      a.href = P + t.result_url;
+      a.setAttribute("download", "");
+      p.acts.appendChild(a);
+    }
+  }
+
+  // Плитка формата. Один ресайз — одна плитка: группировать двадцать шесть штук
+  // в «сборку» незачем, человек выбирает формат, а не прогон.
+  function imgTile(t, url, i) {
+    const caption = captionOf(url);
+    const wrap = el("article", "work work--done");
+    const body = el("div", "work__body");
+    const open = el("button", "work__open");
+    open.type = "button";
+    open.title = caption;
+    const img = el("img");
+    img.loading = "lazy";
+    img.src = P + url;
+    img.alt = caption;
+    open.appendChild(img);
+    const pos = views.length;
+    open.addEventListener("click", () => openView(pos));
+    body.appendChild(open);
+    wrap.appendChild(body);
+    const cap = el("div", "work__cap", caption);
+    cap.title = caption;
+    wrap.appendChild(cap);
+    views.push({ uid: t.task_uid, idx: i, url: url, caption: caption });
+    return wrap;
+  }
+
+  function renderFeed() {
+    feedGrid.innerHTML = "";
+    stateEls.clear();
+    views = [];
+    for (const t of tasks) {
+      const imgs = Array.isArray(t.images) ? t.images : [];
+      if (t.status === "done" && imgs.length) {
+        imgs.forEach((u, i) => feedGrid.appendChild(imgTile(t, u, i)));
+      } else {
+        feedGrid.appendChild(stateTile(t));
+      }
+    }
+    const n = feedGrid.childElementCount;
+    feedCount.textContent = n;
+    feedEmpty.hidden = n > 0;
+    // Сноска про срок хранения нужна, только когда есть что хранить.
+    feedFoot.hidden = !tasks.length;
+  }
+
+  // Точечное обновление плитки под поток событий. Пересобираем целиком только
+  // тогда, когда плитки для этой задачи в ленте нет (её ещё не было или она
+  // сменила род — из служебной стала набором форматов).
+  function syncState(uid) {
+    const t = byUid(uid);
+    if (!t) return;
+    const p = stateEls.get(uid);
+    if (!p) { renderFeed(); return; }
+    p.wrap.className = tileClass(t);
+    p.line.textContent = stateText(t);
+    p.bar.hidden = !(t.status === "queued" || t.status === "running");
+    if (p.actsKey !== actsKeyOf(t)) fillActs(t);
+  }
+
+  // Лента этой страницы — только вебинарные сборки: «Креативы» живут в своей.
+  async function loadTasks() {
+    try {
+      const r = await fetch(`${P}/api/tasks`);
+      if (!r.ok) return;
+      const list = await r.json();
+      tasks = (Array.isArray(list) ? list : []).filter((t) => t.workflow === "webinar");
+      renderFeed();
+    } catch (_) { /* сеть вернётся — вернётся и список */ }
+  }
+
+  // ── семейство форматов и вариант ───────────────────────
   async function loadMeta() {
     try {
       const r = await fetch(`${P}/api/webinar/meta`);
       if (!r.ok) return;
       META = await r.json();
-    } catch (_) { /* leave META null; submit will surface the error */ }
+    } catch (_) { /* META остаётся null; ошибку покажет отправка */ }
     renderVariant();
   }
 
@@ -71,67 +218,71 @@
     variant = btn.dataset.variant;
     document.querySelectorAll("#variantSeg .seg__btn").forEach((b) =>
       b.classList.toggle("is-active", b === btn));
-    // A speaker photo and a metaphor render are different assets — drop any hero
-    // on variant change. Without this, a speaker upload lingered in heroBlob and
-    // the metaphor build reused that cached file instead of generating from the
-    // prompt via App1.
+    // Фото спикера и рендер-метафора — разные ассеты, поэтому смена варианта
+    // сбрасывает изображение. Без этого загруженный спикер оставался в heroBlob
+    // и сборка метафоры брала его вместо генерации по описанию.
     clearHero();
     renderVariant();
   });
 
-  // Reset all hero state so the next variant starts from a clean slate.
+  // Полный сброс состояния изображения: следующий вариант начинает с чистого.
   function clearHero() {
     hero = null; heroBlob = null; alphaBox = null;
     T.scale = 1; T.x = 0; T.y = 0;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    hide($("fitStage"));
+    thumbCtx.clearRect(0, 0, thumb.width, thumb.height);
+    hide(thumb);
+    hide($("fitOpen"));
     $("fitStatus").textContent = "";
     updateStartBtn();
   }
 
   function meta() { return (META && META[variant]) || null; }
-  // Whether the hand-fit canvas applies. Speaker: yes. Visual (metaphor): no —
-  // the generated full-bleed metaphor is positioned by each format itself.
+  // Нужна ли ручная подгонка. Спикер — да. Метафора — нет: сгенерированный
+  // рендер каждый формат размещает сам.
   function fitOn() { const m = meta(); return m ? !!m.fit : variant === "speaker"; }
 
   function renderVariant() {
     const m = meta();
     const slots = (m && m.slots) || ["title", "date", "time"];
+    // Поля текстов — те же .field-group, что в брифе «Креативов»: подпись 12,
+    // зазор 12, поле 48. Иначе рельс уехал бы с модуля на этой одной секции.
     $("slotFields").innerHTML = slots.map((s) =>
-      `<label for="slot_${s}">${SLOT_LABELS[s] || s}</label>` +
-      `<input type="text" id="slot_${s}" data-slot="${s}" placeholder="${SLOT_PH[s] || ""}">`
+      `<label class="field-group" for="slot_${s}">` +
+      `<span class="field-label">${escapeHtml(SLOT_LABELS[s] || s)}</span>` +
+      `<input type="text" id="slot_${s}" data-slot="${escapeHtml(s)}"` +
+      ` placeholder="${escapeHtml(SLOT_PH[s] || "")}"></label>`
     ).join("");
     const n = m ? m.formats : "";
     $("variantHint").textContent = variant === "speaker"
       ? `Фото спикера. Соберём ${n} форматов семейства «спикер».`
-      : `Рендер-метафора (без фона). Соберём ${n} форматов семейства «метафора».`;
+      : `Рендер-метафора без фона. Соберём ${n} форматов семейства «метафора».`;
     $("fitHint").textContent = fitOn()
-      ? "Выровняй лицо: линия сверху — где должна быть макушка. Перетаскивай — двигать, колесо — масштаб."
-      : "Метафора генерируется под квадрат и впишется в каждый формат автоматически — кадрировать не нужно.";
-    $("fitPanel").querySelector("h2").textContent = fitOn()
-      ? "03 · Изображение и кадрирование"
-      : "03 · Изображение";
-    // Toggle the fit canvas to match the variant even if a hero is loaded.
-    if (hero && fitOn()) show($("fitStage")); else hide($("fitStage"));
-    // Metaphor variant: offer prompt-based generation when App1 is wired.
+      ? "Загрузите фото спикера и выровняйте лицо по кадру."
+      : "Метафора собирается под квадрат и впишется в каждый формат сама — кадрировать не нужно.";
+    // Кирпич подгонки и превью показываем, только когда есть что подгонять.
+    if (hero && fitOn()) { show($("fitOpen")); show(thumb); drawThumb(); }
+    else { hide($("fitOpen")); hide(thumb); }
+    // Метафора: генерация по описанию доступна, когда App1 подключён.
     if (canGenerate()) show($("promptRow")); else hide($("promptRow"));
     updateStartBtn();
   }
 
-  // Whether this variant can generate its hero from a prompt (App1 wired).
+  // Может ли этот вариант собрать изображение по описанию (App1 подключён).
   function canGenerate() { const m = meta(); return !!(m && m.can_generate); }
   const promptText = () => (($("metaphorPrompt") || {}).value || "").trim();
 
-  // Build is allowed when there's something to compose from: an uploaded hero,
-  // or (metaphor) a prompt to generate one.
+  // Собирать можно, когда есть из чего: загруженное изображение либо (метафора)
+  // описание, по которому его сгенерируют.
   function updateStartBtn() {
     const ok = !!heroBlob || (canGenerate() && promptText().length > 0);
-    // Never re-enable while a submit is in flight (a variant switch / prompt
-    // edit mid-POST must not let a second task be created).
-    $("startBtn").disabled = !ok || submitting;
+    // busy держится не «пока летит POST», а всю жизнь задачи: правка описания
+    // или смена варианта во время сборки иначе включили бы кнопку обратно, и
+    // одним кликом уехала бы вторая задача поверх первой.
+    $("startBtn").disabled = !ok || busy;
   }
 
-  // ── hero upload ────────────────────────────────────────
+  // ── загрузка изображения ───────────────────────────────
   $("heroFile").addEventListener("change", (ev) => {
     const f = ev.target.files[0];
     ev.target.value = "";
@@ -141,22 +292,33 @@
     img.onload = () => {
       hero = img;
       updateStartBtn();
-      if (!fitOn()) { hide($("fitStage")); return; }
+      if (!fitOn()) { hide($("fitOpen")); hide(thumb); return; }
       alphaBox = computeAlphaBox(img);
-      show($("fitStage"));
       resetTransform();
+      show($("fitOpen"));
+      show(thumb);
       drawStage();
+      drawThumb();
+      // Кадр открываем сразу: загрузка фото и есть заявка на подгонку, и лишний
+      // клик по «Кадрировать» здесь ничего не решает.
+      openLb("fitPanel");
     };
     img.onerror = () => { $("fitStatus").innerHTML = `<span class="err">Не удалось открыть изображение.</span>`; };
     img.src = URL.createObjectURL(f);
   });
 
-  // Metaphor prompt: typing a prompt is enough to build (no upload required).
+  $("fitOpen").addEventListener("click", () => {
+    if (!hero || !fitOn()) return;
+    drawStage();
+    openLb("fitPanel");
+  });
+
+  // Метафора: описания достаточно, чтобы собрать (загрузка не обязательна).
   const _promptEl = $("metaphorPrompt");
   if (_promptEl) _promptEl.addEventListener("input", updateStartBtn);
 
-  // Alpha bbox at threshold 32 (mirrors infra.hero_fit._alpha_bbox). Opaque
-  // images (JPEG speaker photos) → full-frame box.
+  // Альфа-бокс с порогом 32 (зеркалит infra.hero_fit._alpha_bbox). Непрозрачные
+  // изображения (JPEG-фото спикера) дают бокс во весь кадр.
   function computeAlphaBox(img) {
     const w = img.naturalWidth, h = img.naturalHeight;
     const off = document.createElement("canvas");
@@ -180,17 +342,17 @@
     return { x0, y0, x1: x1 + 1, y1: y1 + 1 };
   }
 
-  // Server default placement (mirrors infra.hero_fit.auto_transform) so the
-  // canvas opens on the same framing the server would pick if untouched.
+  // Размещение по умолчанию (зеркалит infra.hero_fit.auto_transform), чтобы
+  // холст открывался на том же кадре, который выбрал бы сервер без правок.
   function resetTransform() {
     const m = meta();
     if (!hero || !m) return;
     const [bx0, by0, bx1, by1] = m.box;
     const boxW = bx1 - bx0, boxH = by1 - by0;
     const b = alphaBox || { x0: 0, y0: 0, x1: hero.naturalWidth, y1: hero.naturalHeight };
-    // Guard a degenerate alpha box (zero width/height): without this objW/objH
-    // become 0 → scale Infinity → T.x/T.y NaN, which the server rejects as a
-    // 422 with no hint. Clamp to at least 1px so the transform stays finite.
+    // Страховка от вырожденного альфа-бокса (нулевая сторона): без неё objW/objH
+    // становятся 0 → scale Infinity → T.x/T.y NaN, а сервер отвечает 422 без
+    // объяснения. Прижимаем к 1px, чтобы трансформ остался конечным.
     const objW = Math.max(1, b.x1 - b.x0), objH = Math.max(1, b.y1 - b.y0);
     const sx = boxW / objW, sy = boxH / objH;
     const scale = m.mode === "contain" ? Math.min(sx, sy) : Math.max(sx, sy);
@@ -201,82 +363,87 @@
       : by0 + (boxH - objH * scale) / 2 - b.y0 * scale;
     syncZoom();
   }
-  $("fitReset").addEventListener("click", () => { resetTransform(); drawStage(); });
+  $("fitReset").addEventListener("click", () => { resetTransform(); drawStage(); drawThumb(); });
 
-  // ── canvas draw ────────────────────────────────────────
-  // Canvas shows the whole reference frame; D maps ref units → display px.
-  function dispScale() {
+  // ── отрисовка кадра ────────────────────────────────────
+  // Холст показывает всю опорную рамку; D переводит её единицы в пиксели.
+  function dispScale(cv) {
     const m = meta();
     if (!m) return 1;
     const [rw, rh] = m.frame;
-    return Math.min(canvas.width / rw, canvas.height / rh);
+    return Math.min(cv.width / rw, cv.height / rh);
   }
-  function frameOrigin(D) {
+  function frameOrigin(cv, D) {
     const m = meta();
     const [rw, rh] = m.frame;
-    return { ox: (canvas.width - rw * D) / 2, oy: (canvas.height - rh * D) / 2 };
+    return { ox: (cv.width - rw * D) / 2, oy: (cv.height - rh * D) / 2 };
   }
 
-  function drawStage() {
+  // Один и тот же кадр рисуется в два холста: большой в лайтбоксе и превью 48
+  // в рельсе. Разница только в направляющих — на превью они были бы шумом.
+  function drawInto(cv, c, guides) {
     const m = meta();
     if (!hero || !m) return;
     const [rw, rh] = m.frame;
-    const D = dispScale();
-    const { ox, oy } = frameOrigin(D);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const D = dispScale(cv);
+    const { ox, oy } = frameOrigin(cv, D);
+    c.clearRect(0, 0, cv.width, cv.height);
 
-    // checkerboard behind the frame (so transparent PNGs read as transparent)
-    drawChecker(ox, oy, rw * D, rh * D);
+    // шахматка под рамкой — чтобы прозрачный PNG читался прозрачным
+    drawChecker(c, ox, oy, rw * D, rh * D);
 
-    // the hero, placed per Transform (ref units → display)
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(ox, oy, rw * D, rh * D);
-    ctx.clip();
+    c.save();
+    c.beginPath();
+    c.rect(ox, oy, rw * D, rh * D);
+    c.clip();
     const hw = hero.naturalWidth * T.scale * D;
     const hh = hero.naturalHeight * T.scale * D;
-    ctx.drawImage(hero, ox + T.x * D, oy + T.y * D, hw, hh);
-    ctx.restore();
+    c.drawImage(hero, ox + T.x * D, oy + T.y * D, hw, hh);
+    c.restore();
 
-    drawGuides(ox, oy, rw * D, rh * D);
+    if (guides) drawGuides(c, ox, oy, rw * D, rh * D);
   }
+  function drawStage() { drawInto(canvas, ctx, true); }
+  function drawThumb() { drawInto(thumb, thumbCtx, false); }
 
-  function drawChecker(x, y, w, h) {
+  // Шахматка — единственное место, где на экране светлое: она изображает
+  // прозрачность и подчиняется общей конвенции, а не палитре портала.
+  function drawChecker(c, x, y, w, h) {
     const s = 10;
     for (let j = 0; j * s < h; j++) {
       for (let i = 0; i * s < w; i++) {
-        ctx.fillStyle = (i + j) % 2 ? "#e9edf2" : "#f7f9fb";
-        ctx.fillRect(x + i * s, y + j * s, Math.min(s, w - i * s), Math.min(s, h - j * s));
+        c.fillStyle = (i + j) % 2 ? "#1E2523" : "#0F1312";
+        c.fillRect(x + i * s, y + j * s, Math.min(s, w - i * s), Math.min(s, h - j * s));
       }
     }
   }
 
-  function drawGuides(x, y, w, h) {
-    // grid: thirds
-    ctx.strokeStyle = "rgba(40,50,70,0.18)";
-    ctx.lineWidth = 1;
+  function drawGuides(c, x, y, w, h) {
+    // трети
+    c.strokeStyle = "rgba(242,245,244,0.16)";
+    c.lineWidth = 1;
     for (let k = 1; k < 3; k++) {
       const gx = x + (w * k) / 3, gy = y + (h * k) / 3;
-      line(gx, y, gx, y + h);
-      line(x, gy, x + w, gy);
+      line(c, gx, y, gx, y + h);
+      line(c, x, gy, x + w, gy);
     }
-    // head line (speaker only)
+    // линия макушки — только у спикера
     if (variant === "speaker") {
-      ctx.strokeStyle = "rgba(38,208,124,0.9)";
-      ctx.lineWidth = 1.5;
+      c.strokeStyle = "rgba(63,182,124,0.9)";
+      c.lineWidth = 1.5;
       const hy = y + h * HEAD_LINE_FRAC;
-      line(x, hy, x + w, hy);
+      line(c, x, hy, x + w, hy);
     }
-    // frame outline
-    ctx.strokeStyle = "#26D07C";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    // контур рамки
+    c.strokeStyle = "#3FB67C";
+    c.lineWidth = 2;
+    c.strokeRect(x + 1, y + 1, w - 2, h - 2);
   }
-  function line(x0, y0, x1, y1) {
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  function line(c, x0, y0, x1, y1) {
+    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
   }
 
-  // ── interaction: drag to pan, wheel to zoom ────────────
+  // ── взаимодействие: тянуть — двигать, колесо — масштаб ──
   let dragging = false, lastX = 0, lastY = 0;
   canvas.addEventListener("pointerdown", (ev) => {
     if (!hero) return;
@@ -285,11 +452,11 @@
   });
   canvas.addEventListener("pointermove", (ev) => {
     if (!dragging) return;
-    const D = dispScale();
+    const D = dispScale(canvas);
     T.x += (ev.clientX - lastX) / D;
     T.y += (ev.clientY - lastY) / D;
     lastX = ev.clientX; lastY = ev.clientY;
-    drawStage();
+    drawStage(); drawThumb();
   });
   const endDrag = () => { dragging = false; };
   canvas.addEventListener("pointerup", endDrag);
@@ -301,62 +468,58 @@
     zoomAt(ev.offsetX, ev.offsetY, Math.exp(-ev.deltaY * 0.0015));
   }, { passive: false });
 
-  // Zoom about a display point so the pixel under the cursor stays put.
+  // Масштабируем вокруг точки экрана, чтобы пиксель под курсором остался на месте.
   function zoomAt(px, py, factor) {
-    const m = meta();
-    const D = dispScale();
-    const { ox, oy } = frameOrigin(D);
-    // ref coords under the cursor before zoom
+    const D = dispScale(canvas);
+    const { ox, oy } = frameOrigin(canvas, D);
     const rx = (px - ox) / D, ry = (py - oy) / D;
-    // hero-space point under cursor: (rx - T.x)/T.scale
     const hx = (rx - T.x) / T.scale, hy = (ry - T.y) / T.scale;
     const next = clampScale(T.scale * factor);
     T.scale = next;
     T.x = rx - hx * next;
     T.y = ry - hy * next;
     syncZoom();
-    drawStage();
+    drawStage(); drawThumb();
   }
   function clampScale(s) { return Math.max(0.02, Math.min(20, s)); }
 
-  // The slider maps to scale relative to the "reset" (auto) scale ×[0.05..5].
   $("zoom").addEventListener("input", (ev) => {
     if (!hero) return;
     const m = meta();
-    const D = dispScale();
+    if (!m) return;
     const [rw, rh] = m.frame;
-    // zoom about the frame centre
-    zoomTo(parseFloat(ev.target.value), rw / 2, rh / 2, D);
+    zoomTo(parseFloat(ev.target.value), rw / 2, rh / 2);
   });
-  function zoomTo(scale, rcx, rcy, D) {
+  function zoomTo(scale, rcx, rcy) {
     const s = clampScale(scale);
     const hx = (rcx - T.x) / T.scale, hy = (rcy - T.y) / T.scale;
     T.scale = s;
     T.x = rcx - hx * s;
     T.y = rcy - hy * s;
-    drawStage();
+    drawStage(); drawThumb();
   }
   function syncZoom() {
     const z = $("zoom");
     z.value = String(Math.max(0.05, Math.min(5, T.scale)));
   }
 
-  // ── submit ─────────────────────────────────────────────
-  $("startBtn").addEventListener("click", async () => {
-    if (submitting) return;  // ignore repeat clicks while a POST is in flight
+  // ── отправка ───────────────────────────────────────────
+  $("buildForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (busy) return;
     const prompt = promptText();
     const willGenerate = !heroBlob && canGenerate() && prompt.length > 0;
     if (!heroBlob && !willGenerate) {
       $("fitStatus").textContent = canGenerate()
-        ? "Опиши метафору или загрузи изображение."
-        : "Загрузи изображение.";
+        ? "Опишите метафору или загрузите изображение."
+        : "Загрузите изображение.";
       return;
     }
     const slots = {};
-    document.querySelectorAll("#slotFields [data-slot]").forEach((el) => {
-      slots[el.dataset.slot] = el.value.trim();
+    document.querySelectorAll("#slotFields [data-slot]").forEach((e) => {
+      slots[e.dataset.slot] = e.value.trim();
     });
-    if (!slots.title) { $("fitStatus").textContent = "Заполни заголовок."; return; }
+    if (!slots.title) { $("fitStatus").textContent = "Заполните заголовок."; return; }
 
     const fd = new FormData();
     fd.append("variant", variant);
@@ -372,8 +535,8 @@
       fd.append("prompt", prompt);
     }
 
-    submitting = true;
-    $("startBtn").disabled = true;
+    busy = true;
+    updateStartBtn();
     $("fitStatus").textContent = "Создаю задачу…";
     try {
       const r = await fetch(`${P}/api/webinar/tasks`, { method: "POST", body: fd });
@@ -382,16 +545,22 @@
       taskUid = d.task_uid;
       saveActive(taskUid);
       $("fitStatus").textContent = "";
-      $("progress").innerHTML =
-        '<span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span>';
-      hide($("resultsPanel"));
-      show($("progressPanel"));
+      closeLb();
+      // Плитка появляется сразу, до первого события: между POST и первым шагом
+      // проходит секунда-другая, и без неё лента выглядела бы не отреагировавшей.
+      tasks.unshift({
+        task_uid: taskUid, status: "queued", workflow: "webinar",
+        prompt: slots.title, images: [], created_at: new Date().toISOString(),
+      });
+      liveStep = "Запуск…";
+      renderFeed();
       subscribe();
     } catch (e) {
-      $("fitStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-    } finally {
-      submitting = false;
+      // Задача не создана — занятость снимаем сразу, иначе форма замрёт
+      // навсегда: события, которое её отпустит, уже не будет.
+      busy = false;
       updateStartBtn();
+      $("fitStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
     }
   });
 
@@ -404,14 +573,19 @@
     es.addEventListener("queued", () => setStep("В очереди…"));
     es.addEventListener("start", (e) => setStep(stepOf(e)));
     es.addEventListener("step", (e) => setStep(stepOf(e)));
-    es.addEventListener("done", (e) => onDone(JSON.parse(e.data)));
+    es.addEventListener("done", () => onDone());
+    // Штатный обрыв соединения и событие «задача упала» носят одно имя. Отличает
+    // их только наличие data: у обрыва его нет.
     es.addEventListener("error", (e) => {
       if (typeof e.data === "undefined") { onStreamDrop(); return; }
       onError(e);
     });
   }
   const stepOf = (e) => { try { return JSON.parse(e.data).step || "…"; } catch { return "…"; } };
-  function setStep(t) { const el = $("stepLabel"); if (el) el.textContent = t; show($("progressPanel")); }
+  function setStep(t) {
+    liveStep = t;
+    if (taskUid) syncState(taskUid);
+  }
 
   function onStreamDrop() {
     if (!taskUid) return;
@@ -428,200 +602,173 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const t = await r.json();
       if (ACTIVE.includes(t.status)) { subscribe(); return; }
-      if (t.status === "done") onDone({ result_url: t.result_url });
+      if (t.status === "done") onDone();
       else onError({ data: JSON.stringify({ message: (t && t.error) || "Сбой сборки." }) });
     } catch (_) { onStreamDrop(); }
   }
 
-  function onDone(d) {
+  async function onDone() {
     if (es) es.close();
     clearActive();
-    hide($("progressPanel")); show($("resultsPanel"));
-    const url = d.result_url ? `${P}${d.result_url}` : null;
-    $("resultMsg").innerHTML = url
-      ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
-      : "Готово, но файл результата не найден.";
-    $("resultGrid").innerHTML = "";
-    if (taskUid) showResultGrid(taskUid);
-    $("startBtn").disabled = false;
-    loadRecentTasks();
+    liveStep = "";
+    busy = false;
+    updateStartBtn();
+    // Перечитываем список целиком: у готовой задачи появились форматы, и
+    // служебная плитка должна смениться набором плиток-ресайзов.
+    await loadTasks();
   }
 
-  // Fetch the finished task's PNGs and render them inline under the ZIP link,
-  // exactly like the Креативы grid. Falls back silently if the detail call fails.
-  async function showResultGrid(uid) {
-    try {
-      const r = await fetch(`${P}/api/tasks/${uid}`);
-      if (!r.ok) return;
-      const t = await r.json();
-      const imgs = Array.isArray(t.images) ? t.images : [];
-      if (!imgs.length) return;
-      imagesByUid[uid] = imgs;
-      $("resultGrid").innerHTML = thumbsHtml(uid, imgs);
-    } catch (_) { /* leave just the ZIP link */ }
-  }
   function onError(e) {
     if (es) es.close();
     clearActive();
+    liveStep = "";
+    busy = false;
     let msg = "Сбой сборки.";
     try { msg = JSON.parse(e.data).message || msg; } catch {}
-    $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
-    $("startBtn").disabled = false;
-    loadRecentTasks();
+    $("fitStatus").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+    updateStartBtn();
+    loadTasks();
   }
 
   function errText(status) {
-    if (!status) return "Нет соединения с сервером — проверь сеть и попробуй ещё раз.";
-    if (status === 429) return "Сервер занят — попробуй ещё раз через пару минут.";
-    if (status === 422) return "Проверь поля формы и изображение.";
+    if (!status) return "Нет соединения с сервером — проверьте сеть и попробуйте ещё раз.";
+    if (status === 429) return "Сервер занят — попробуйте ещё раз через пару минут.";
+    if (status === 422) return "Проверьте поля формы и изображение.";
     if (status === 503) return "Сборка ресайзов временно недоступна.";
     return `Ошибка ${status}`;
   }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
 
-  // ── recent tasks (webinar only) ────────────────────────
-  const STATUS_LABEL = {
-    queued: "В очереди", running: "В работе",
-    done: "Готово", failed: "Ошибка", cancelled: "Отменено",
+  // ── лайтбокс: два режима в одной раме ──────────────────
+  const lightbox = $("lightbox");
+  const lbPanel = $("lbPanel");
+  const LB_PARTS = ["lbView", "lbSide", "fitPanel"];
+  const LB_MODE = {
+    view: { cls: "", parts: ["lbView", "lbSide"] },
+    fitPanel: { cls: " lightbox__panel--form", parts: ["fitPanel"] },
   };
-  function fmtDate(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
-  }
-  // A thumbnail grid for one task's PNGs — each thumb opens the lightbox and
-  // carries its own download link (mirrors the Креативы grid).
-  function thumbsHtml(uid, imgs) {
-    const thumbs = imgs.map((u, i) =>
-      `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
-      `<img src="${P}${u}" alt="Формат ${i + 1}" loading="lazy">` +
-      `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
-      `title="Скачать формат ${i + 1}">↓</a></figure>`
-    ).join("");
-    return `<div class="task-thumbs">${thumbs}</div>`;
-  }
-  function taskRow(t) {
-    const label = STATUS_LABEL[t.status] || t.status;
-    const title = escapeHtml(t.prompt || "(без названия)");
-    const imgs = Array.isArray(t.images) ? t.images : [];
-    const expandable = imgs.length > 0;
-    if (expandable) imagesByUid[t.task_uid] = imgs;
-    let action = "";
-    if (t.status === "done" && t.result_url)
-      action = `<a class="task-dl" href="${P}${t.result_url}" download>ZIP</a>`;
-    else if (t.status === "failed" && t.error)
-      action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
-    const cls = expandable ? "task-row is-expandable" : "task-row";
-    const uidAttr = expandable ? ` data-uid="${escapeHtml(t.task_uid)}"` : "";
-    const grid = expandable
-      ? `<div class="task-grid hidden" data-grid="${escapeHtml(t.task_uid)}"></div>`
-      : "";
-    return `<div class="${cls}"${uidAttr}><span class="task-title">${title}</span>` +
-      `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>` +
-      `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span></div>` + grid;
-  }
-  function toggleGrid(row) {
-    const uid = row.getAttribute("data-uid");
-    if (!uid) return;
-    const grid = row.parentElement.querySelector(`[data-grid="${uid}"]`);
-    if (!grid) return;
-    if (grid.classList.contains("hidden") && !grid.childElementCount)
-      grid.innerHTML = thumbsHtml(uid, imagesByUid[uid] || []);
-    grid.classList.toggle("hidden");
-    row.classList.toggle("is-open");
-  }
-  async function loadRecentTasks() {
-    try {
-      const r = await fetch(`${P}/api/tasks`);
-      if (!r.ok) return;
-      const tasks = (await r.json()).filter((t) => t.workflow === "webinar");
-      if (!tasks.length) return;
-      $("tasksList").innerHTML = tasks.map(taskRow).join("");
-      show($("tasksPanel"));
-    } catch (_) { /* leave hidden */ }
-  }
+  let lbMode = null;
 
-  // Delegated clicks: a thumbnail opens the lightbox; an expandable row toggles
-  // its grid; download links keep their default behaviour.
-  function onGalleryClick(ev) {
-    if (ev.target.closest("a")) return;
-    const thumb = ev.target.closest(".task-thumb");
-    if (thumb) { openLightbox(thumb.dataset.uid, +thumb.dataset.idx); return; }
-    const row = ev.target.closest(".task-row.is-expandable");
-    if (row) toggleGrid(row);
-  }
-  $("tasksList").addEventListener("click", onGalleryClick);
-  $("resultGrid").addEventListener("click", onGalleryClick);
-
-  // ── lightbox gallery ───────────────────────────────────
-  let lbUid = null, lbIdx = 0;
-  function ensureLightbox() {
-    let lb = $("lightbox");
-    if (lb) return lb;
-    lb = document.createElement("div");
-    lb.id = "lightbox";
-    lb.className = "lightbox hidden";
-    lb.innerHTML =
-      `<button class="lb-close" data-lb="close" aria-label="Закрыть">×</button>` +
-      `<button class="lb-nav lb-prev" data-lb="prev" aria-label="Назад">‹</button>` +
-      `<img id="lbImg" class="lb-img" alt="">` +
-      `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
-      `<div class="lb-bar"><span id="lbCount"></span>` +
-      `<a id="lbDl" class="lb-dl" download>Скачать</a></div>`;
-    document.body.appendChild(lb);
-    lb.addEventListener("click", (ev) => {
-      const act = ev.target.getAttribute("data-lb");
-      if (act === "next") lbNav(1);
-      else if (act === "prev") lbNav(-1);
-      else if (act === "close" || ev.target === lb) closeLightbox();
+  function openLb(mode) {
+    const m = LB_MODE[mode];
+    if (!m) return;
+    lbMode = mode;
+    LB_PARTS.forEach((id) => {
+      const p = $(id);
+      if (p) p.classList.toggle("hidden", m.parts.indexOf(id) < 0);
     });
-    return lb;
+    lbPanel.className = "lightbox__panel" + m.cls;
+    show(lightbox);
+    document.body.style.overflow = "hidden";
   }
-  function renderLightbox() {
-    const imgs = imagesByUid[lbUid] || [];
-    const u = imgs[lbIdx];
-    if (!u) return;
-    $("lbImg").src = `${P}${u}`;
-    $("lbImg").alt = `Формат ${lbIdx + 1}`;
-    $("lbCount").textContent = `${lbIdx + 1} / ${imgs.length}`;
-    const dl = $("lbDl"); dl.href = `${P}${u}`; dl.download = fileNameOf(u);
+  function closeLb() {
+    hide(lightbox);
+    lbMode = null;
+    document.body.style.overflow = "";
   }
-  function openLightbox(uid, idx) {
-    lbUid = uid; lbIdx = idx || 0;
-    ensureLightbox(); renderLightbox(); show($("lightbox"));
-  }
-  function closeLightbox() { const lb = $("lightbox"); if (lb) hide(lb); }
-  function lbNav(delta) {
-    const imgs = imagesByUid[lbUid] || [];
-    if (!imgs.length) return;
-    lbIdx = (lbIdx + delta + imgs.length) % imgs.length;
-    renderLightbox();
-  }
+
+  lightbox.addEventListener("click", (ev) => {
+    const act = ev.target.getAttribute && ev.target.getAttribute("data-lb");
+    if (act === "close") closeLb();
+    else if (act === "prev") viewNav(-1);
+    else if (act === "next") viewNav(1);
+  });
   document.addEventListener("keydown", (ev) => {
-    const lb = $("lightbox");
-    if (!lb || lb.classList.contains("hidden")) return;
-    if (ev.key === "Escape") closeLightbox();
-    else if (ev.key === "ArrowRight") lbNav(1);
-    else if (ev.key === "ArrowLeft") lbNav(-1);
+    if (!lbMode) return;
+    if (ev.key === "Escape") { closeLb(); return; }
+    // Стрелки листают форматы — в подгонке они значат другое (ничего) и заперты.
+    if (lbMode !== "view") return;
+    if (ev.key === "ArrowRight") viewNav(1);
+    else if (ev.key === "ArrowLeft") viewNav(-1);
   });
 
-  // ── rehydrate active webinar task ──────────────────────
+  // ── просмотр формата ───────────────────────────────────
+  let viewPos = 0;
+  function openView(pos) {
+    if (!views.length) return;
+    viewPos = (pos + views.length) % views.length;
+    renderView();
+    openLb("view");
+  }
+  function viewNav(delta) {
+    if (!views.length) return;
+    viewPos = (viewPos + delta + views.length) % views.length;
+    renderView();
+  }
+  function renderView() {
+    const v = views[viewPos];
+    if (!v) return;
+    const t = byUid(v.uid) || {};
+    $("lbImg").src = P + v.url;
+    $("lbImg").alt = v.caption;
+    $("lbCount").textContent = `${viewPos + 1} / ${views.length}`;
+    $("lbCap").textContent = v.caption;
+    buildViewActions(t, v);
+  }
+
+  function group(label) {
+    const g = el("div", "lb-group");
+    if (label) g.appendChild(el("p", "lb-group__label", label));
+    const row = el("div", "lb-group__row");
+    g.appendChild(row);
+    g._row = row;
+    return g;
+  }
+
+  function buildViewActions(t, v) {
+    const box = $("lbActions");
+    box.innerHTML = "";
+    const save = group("");
+    const dl = el("a", "t-btn t-btn--key", "Скачать формат");
+    dl.href = P + v.url;
+    dl.download = fileNameOf(v.url);
+    save._row.appendChild(dl);
+    if (t.result_url) {
+      // Один формат нужен редко: чаще забирают всё семейство целиком.
+      const zip = el("a", "t-btn", "Скачать все форматы");
+      zip.href = P + t.result_url;
+      zip.setAttribute("download", "");
+      save._row.appendChild(zip);
+    }
+    box.appendChild(save);
+  }
+
+  // ── восстановление активной сборки ─────────────────────
+  // Контракт с gateway требует поднимать активную задачу при загрузке страницы.
+  // localStorage тут только ускоряет: у него своя область на браузер, и после
+  // смены устройства или очистки хранилища задача нашлась бы «пропавшей».
+  // Поэтому есть второй источник — уже загруженная лента.
+  function findActiveUid() {
+    let uid = null;
+    try { uid = localStorage.getItem(LS_KEY); } catch (_) { uid = null; }
+    if (uid) return uid;
+    const live = tasks.find((t) => ACTIVE.includes(t.status));
+    return live ? live.task_uid : null;
+  }
+
   async function rehydrate() {
-    const uid = (() => { try { return localStorage.getItem(LS_KEY); } catch (_) { return null; } })();
+    const uid = findActiveUid();
     if (!uid) return;
     taskUid = uid;
     try {
       const r = await fetch(`${P}/api/tasks/${uid}`);
-      if (!r.ok) { clearActive(); return; }
+      if (!r.ok) { clearActive(); taskUid = null; return; }
       const t = await r.json();
-      if (ACTIVE.includes(t.status)) { saveActive(uid); setStep("Продолжаю…"); subscribe(); }
-      else { clearActive(); if (t.status === "done") onDone({ result_url: t.result_url }); }
-    } catch (_) { /* ignore */ }
+      if (ACTIVE.includes(t.status)) {
+        saveActive(uid);
+        setStep("Продолжаю…");
+        busy = true;
+        updateStartBtn();
+        subscribe();
+      } else {
+        clearActive();
+        taskUid = null;
+      }
+    } catch (_) { /* сеть вернётся — вернётся и подписка */ }
   }
 
-  loadMeta();
-  rehydrate();
-  loadRecentTasks();
+  (async function boot() {
+    await loadMeta();
+    await loadTasks();
+    await rehydrate();
+  })();
 })();

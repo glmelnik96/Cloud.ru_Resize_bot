@@ -4,17 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Вебинары — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v6">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
+  {# Живая сетка — общий модуль портала, забран как есть. #}
+  <script src="{{ prefix }}/static/grid.js?v=20260822v12" defer></script>
 </head>
-<body>
+{# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
+   is-landing не копируем — это класс лендинга. #}
+<body class="v11 is-tool is-auth">
+  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Копия эталона из App1 (gateway/templates/base.html),
+     включая data-t на каждом пункте: без него шторка не умеет прокручивать надпись.
+     Ссылки абсолютные от корня домена — переход между разделами это полная
+     перезагрузка, и относительные адреса увели бы в /creatives/images. #}
   <header class="topbar">
     <a class="brand" href="/">Cloud.ru <span>Design</span></a>
     <nav class="topnav">
-      <a href="/images" class="topnav__link">Картинки</a>
-      <a href="/slides" class="topnav__link">Слайды</a>
-      <a href="/creatives" class="topnav__link">Креативы</a>
-      <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
-      <a href="/creatives/webinar" class="topnav__link is-active">Вебинары</a>
+      <a href="/images" class="topnav__link" data-t="Картинки">Картинки</a>
+      <a href="/slides" class="topnav__link" data-t="Слайды">Слайды</a>
+      <a href="/creatives" class="topnav__link" data-t="Креативы">Креативы</a>
+      <a href="/present" class="topnav__link" data-t="Трансляции">Трансляции</a>
+      <a href="/creatives/webinar" class="topnav__link is-active" data-t="Вебинары">Вебинары</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -22,92 +30,146 @@
     </div>
   </header>
 
-  <main class="wrap">
-    <h1 class="page-title">Ресайзы под вебинар</h1>
-    <p class="page-sub">Один макет → все форматы одного семейства. Заполни тексты, загрузи изображение и подгони его в рамке — сервер соберёт PNG по каждому формату и упакует в ZIP.</p>
+  <main>
+    <section class="tool">
+      {# Заголовок вынесен из рельса на всю ширину: это единственный
+         крупный кегль страницы, и в колонке 264 он ломался бы переносами.
+         Он же даёт странице третью типографическую ступень — без неё
+         экран был полем одинаковых 11px. #}
+      <h1>Ресайзы под вебинар</h1>
+      <div class="tool__grid">
 
-    <div class="workspace">
-    <div class="workspace__controls">
+      {# Рельс — сборка: тип, тексты, изображение. Кадрирование сюда не влезает
+         (холст 360 против рельса 264) и открывается лайтбоксом. #}
+      <aside class="rail">
+        <form class="gen-form" id="buildForm">
+          <div class="field-block">
+            <span class="field-label">Тип</span>
+            <div class="seg" id="variantSeg" role="tablist">
+              <button type="button" class="seg__btn is-active" data-variant="speaker" role="tab">Спикер</button>
+              <button type="button" class="seg__btn" data-variant="visual" role="tab">Метафора</button>
+            </div>
+            <p class="muted" id="variantHint"></p>
+          </div>
 
-    <!-- 01 · вариант -->
-    <section class="panel" id="variantPanel">
-      <h2>01 · Тип</h2>
-      <div class="seg" id="variantSeg" role="tablist">
-        <button class="seg__btn is-active" data-variant="speaker" role="tab">Спикер (фото)</button>
-        <button class="seg__btn" data-variant="visual" role="tab">Метафора (рендер)</button>
-      </div>
-      <p class="page-sub" id="variantHint"></p>
+          {# Поля текстов приходят с сервера вместе с семейством: у спикера их
+             больше, чем у метафоры. Рисует их скрипт — тем же .field-group. #}
+          <div class="stack" id="slotFields"></div>
+
+          <div class="field-block hidden" id="promptRow">
+            <label class="field-group" for="metaphorPrompt">
+              <span class="field-label">Идея метафоры</span>
+              <textarea id="metaphorPrompt" placeholder="облачная инфраструктура как парящий над облаками сервер"></textarea>
+            </label>
+            <p class="muted">Рендер соберётся без фона. Либо загрузите своё изображение.</p>
+          </div>
+
+          <div class="field-block">
+            <span class="field-label">Изображение</span>
+            <div class="btn-row">
+              <label class="t-btn" for="heroFile">Загрузить</label>
+              <input type="file" id="heroFile" accept="image/*" class="hidden">
+              <button type="button" class="t-btn hidden" id="fitOpen">Кадрировать</button>
+            </div>
+            {# Превью 48 — единственное подтверждение, что в сборку уйдёт именно
+               этот кадр: холст подгонки живёт в лайтбоксе и с рельса не виден. #}
+            <canvas class="fit-thumb hidden" id="fitThumb" width="96" height="96"></canvas>
+            <p class="muted" id="fitHint"></p>
+          </div>
+
+          <button type="submit" id="startBtn" disabled>Собрать ресайзы</button>
+          <div class="status" id="fitStatus"></div>
+        </form>
+
+        <details class="tool-details">
+          <summary>Как это работает</summary>
+          <div class="tool-details__body">
+            <p class="muted">Один макет — все форматы семейства из одного изображения и текстов.</p>
+            <p class="muted">Спикер — загруженное фото, метафора — рендер по описанию.</p>
+            <p class="muted">Кадрирование сажает объект в композицию каждого формата.</p>
+            <p class="muted"><a href="{{ prefix }}/">Генерация креативов</a></p>
+          </div>
+        </details>
+      </aside>
+
+      {# Лента — единственная рама на странице. Плитка = формат: у задачи их
+         столько, сколько в семействе, и каждый открывается лайтбоксом. #}
+      <section class="feed" id="feed">
+        <div class="lp-grid lp-grid--page"><canvas class="lp-grid__canvas"></canvas></div>
+
+        <header class="feed__head">
+          <p class="feed__title">Ресайзы</p>
+          <span class="feed__count" id="feedCount">0</span>
+        </header>
+
+        <div class="feed__grid" id="feedGrid"></div>
+        <p class="feed__empty" id="feedEmpty">Ресайзов пока нет</p>
+        <p class="feed__foot" id="feedFoot" hidden>История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
+      </section>
+
+      </div><!-- /.tool__grid -->
     </section>
 
-    <!-- 02 · тексты -->
-    <section class="panel" id="textsPanel">
-      <h2>02 · Тексты</h2>
-      <div id="slotFields"></div>
-    </section>
-
-    <!-- 03 · изображение + подгонка -->
-    <section class="panel" id="fitPanel">
-      <h2>03 · Изображение и кадрирование</h2>
-      <div id="promptRow" class="hidden">
-        <label for="metaphorPrompt">Идея метафоры</label>
-        <textarea id="metaphorPrompt" placeholder="облачная инфраструктура как парящий над облаками сервер"></textarea>
-        <p class="page-sub">Опиши образ — сервер сгенерирует рендер-метафору без фона и впишет её в каждый формат. Либо загрузи своё изображение ниже.</p>
-      </div>
-      <div class="btn-row">
-        <label class="btn" for="heroFile">Загрузить изображение</label>
-        <input type="file" id="heroFile" accept="image/*" class="hidden">
-      </div>
-      <p class="page-sub" id="fitHint">Загрузи фото спикера или рендер метафоры. Перетаскивай — двигать, колесо — масштаб.</p>
-      <div class="fitstage hidden" id="fitStage">
-        <canvas id="fitCanvas" width="360" height="360"></canvas>
-        <div class="fit-tools">
-          <label>Масштаб <input type="range" id="zoom" min="0.05" max="5" step="0.001" value="1"></label>
-          <button class="btn btn--sm" id="fitReset">Сброс</button>
-        </div>
-      </div>
-      <div class="btn-row">
-        <button class="btn btn--accent" id="startBtn" disabled>Собрать ресайзы</button>
-      </div>
-      <div class="status" id="fitStatus"></div>
-    </section>
-
-    </div><!-- /.workspace__controls -->
-    <div class="workspace__output">
-
-    <div class="empty" id="emptyState">
-      <h2>Как это работает</h2>
-      <p>Раздел собирает все ресайзы одного вебинар-семейства из одного изображения и текстов. Кадрирование в рамке гарантирует, что объект попадёт точно в композицию каждого формата.</p>
-      <ul>
-        <li><b>01 · Тип</b> — спикер (загруженное фото) или метафора (рендер из «Картинок»).</li>
-        <li><b>02 · Тексты</b> — заголовок, дата, время (для спикера ещё подзаголовок).</li>
-        <li><b>03 · Кадрирование</b> — двигай и масштабируй изображение в рамке; сетка и линия головы помогают выровнять.</li>
-        <li><b>04 · Готово</b> — ZIP со всеми форматами семейства.</li>
-      </ul>
-    </div>
-
-    <section class="panel hidden" id="progressPanel">
-      <h2>Прогресс</h2>
-      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
-      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
-    </section>
-
-    <section class="panel hidden" id="resultsPanel">
-      <h2>04 · Готово</h2>
-      <div id="resultMsg"></div>
-      <div id="resultGrid" class="task-grid"></div>
-    </section>
-
-    <section class="panel hidden" id="tasksPanel">
-      <h2>Последние ресайзы</h2>
-      <p class="retention-note">История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
-      <div class="task-list" id="tasksList"></div>
-    </section>
-
-    </div><!-- /.workspace__output -->
-    </div><!-- /.workspace -->
+    <footer class="lp-foot">
+      <a href="{{ prefix }}/">Генерация креативов</a>
+      <a href="{{ prefix }}/library">Библиотека знаний</a>
+    </footer>
   </main>
 
+  {# Лайтбокс — два режима в одной раме: просмотр формата (две колонки) и
+     подгонка кадра (одна колонка). Панели лежат в разметке, а не собираются
+     скриптом: на них навешаны обработчики при загрузке. #}
+  <div class="lightbox hidden" id="lightbox">
+    <div class="lightbox__backdrop" data-lb="close"></div>
+    <div class="lightbox__panel" id="lbPanel">
+
+      <div class="lb-col hidden" id="lbView">
+        <img class="lb-img" id="lbImg" alt="">
+      </div>
+
+      <div class="lightbox__side hidden" id="lbSide">
+        <div class="lb-bar">
+          <button type="button" class="t-btn" data-lb="prev">Назад</button>
+          <button type="button" class="t-btn" data-lb="next">Вперёд</button>
+          <button type="button" class="t-btn lightbox__close" data-lb="close">Закрыть</button>
+        </div>
+        <span class="lb-counter" id="lbCount"></span>
+        <p class="lb-caption" id="lbCap"></p>
+        <div class="lb-actions" id="lbActions"></div>
+      </div>
+
+      <div class="lb-col hidden" id="fitPanel">
+        <div class="lb-bar">
+          <h2 class="lb-title">Кадрирование</h2>
+          <button type="button" class="t-btn lightbox__close" data-lb="close">Готово</button>
+        </div>
+        <div class="fit-stage">
+          <canvas id="fitCanvas" width="360" height="360"></canvas>
+          <div class="fit-tools">
+            <label for="zoom">Масштаб
+              <input type="range" id="zoom" min="0.05" max="5" step="0.001" value="1">
+            </label>
+            <button type="button" class="t-btn" id="fitReset">Сброс</button>
+          </div>
+        </div>
+        <p class="muted">Тащить — двигать, колесо — масштаб. Линия сверху — макушка.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Чертёж заперт в раму ленты: сцена — сама лента, притирка — к сетке
+    // плиток, иначе фаза линий случайная и плитки не садятся на них.
+    document.addEventListener("DOMContentLoaded", function () {
+      window.lpGrid({
+        grid: document.querySelector(".lp-grid--page"),
+        stage: document.getElementById("feed"),
+        alignTo: document.getElementById("feedGrid"),
+      });
+    });
+  </script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/webinar.js?v=20260809v3"></script>
+  <script src="{{ prefix }}/static/webinar.js?v=20260822v12"></script>
 </body>
 </html>

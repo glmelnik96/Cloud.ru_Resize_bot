@@ -46,10 +46,16 @@ def test_index_renders_canon_header(tmp_path, monkeypatch):
 
 
 def test_static_css_served(tmp_path, monkeypatch):
+    """Отдаётся лист канона v11: чернила, единственный акцент и модуль 24.
+    Ключ проверяем по --lp-key, а не по --accent: --accent остался ради
+    совместимости, а палитру портала задаёт именно --lp-key."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         r = c.get("/static/app.css")
         assert r.status_code == 200
-        assert "--accent:#26D07C" in r.text  # canon palette present
+        css = r.text
+        assert "--lp-key: #3FB67C" in css  # единственный акцент палитры
+        assert "--lp-ink: #0A0C0B" in css  # чернила
+        assert "--lp-cell: 24px" in css  # модуль, на котором стоит вся геометрия
 
 
 def test_static_font_served(tmp_path, monkeypatch):
@@ -60,13 +66,52 @@ def test_static_font_served(tmp_path, monkeypatch):
 
 
 def test_index_has_recent_tasks_panel(tmp_path, monkeypatch):
-    """A finished run must stay reachable after a reload: the page carries a
-    'Последние креативы' panel that the JS fills from GET /api/tasks."""
+    """Законченный прогон обязан пережить перезагрузку страницы: лента —
+    единственная рама на экране, и её наполняет JS из GET /api/tasks."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         html = c.get("/", headers=_HDR).text
-        assert 'id="tasksPanel"' in html
-        assert 'id="tasksList"' in html
-        assert "Последние креативы" in html
+        assert 'id="feedGrid"' in html  # сюда JS кладёт плитки прогонов
+        assert 'id="feedCount"' in html  # счётчик в шапке рамы
+        assert 'id="feedFoot"' in html  # срок хранения — под лентой
+
+
+def test_index_route_strip_replaces_pipeline_paragraph(tmp_path, monkeypatch):
+    """Маршрут показывает путь задачи полосой из пяти остановок, а не абзацем.
+    Полоса работает втройне — оглавление в покое, «мы здесь» в прогоне, «ждёт
+    человека» на остановке, — поэтому перечисления шагов текстом в рельсе нет."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/", headers=_HDR).text
+        assert 'id="route"' in html
+        assert html.count('class="route__stop"') == 5
+        # Номер отделён от подписи тегом: он несёт акцент плашкой, когда
+        # остановка живая, и покраска слова целиком этого не даёт.
+        for num, name in (("01", "Бриф"), ("02", "Персона"), ("03", "Тексты"),
+                          ("04", "Hero"), ("05", "Баннеры")):
+            assert f"<b>{num}</b>{name}" in html
+        # тот самый абзац, который полоса заменила
+        assert "01 · Бриф — продукт, аудитория, эмоция" not in html
+        assert "Остановки 02–04 ждут человека" not in html
+
+
+def test_creatives_js_paints_route_by_stage_number(tmp_path, monkeypatch):
+    """Подсветку остановки ведёт число stage из SSE, а не русская подпись шага:
+    подпись — текст для человека, её правка не должна гасить полосу."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "route__stop" in js
+        assert "is-live" in js  # где мы сейчас
+        assert "is-wait" in js  # остановка ждёт человека
+        assert ".stage" in js  # число едет рядом с подписью
+
+
+def test_static_css_has_route_component(tmp_path, monkeypatch):
+    """Полоса маршрута — служебный регистр канона (mono-caps 11/700/.09em) и
+    ни одной рамки: состояние метится волоском через inset box-shadow."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert ".route__stop" in css
+        assert ".route__stop.is-live" in css
+        assert ".route__stop.is-wait" in css
 
 
 def test_creatives_js_loads_recent_tasks(tmp_path, monkeypatch):
@@ -74,8 +119,8 @@ def test_creatives_js_loads_recent_tasks(tmp_path, monkeypatch):
     completed creative is re-downloadable within the 24h retention window."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
-        assert "loadRecentTasks" in js  # fetch + render recent tasks on load
-        assert "tasksPanel" in js  # reveal the panel when there are tasks
+        assert "loadTasks" in js  # fetch + render recent tasks on load
+        assert "feedGrid" in js  # плитки прогонов уезжают в раму ленты
         assert "result_url" in js  # done rows expose the ZIP download
 
 
@@ -100,7 +145,8 @@ def test_creatives_js_renders_banner_grid(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
         assert "images" in js  # consume the per-task image URLs
-        assert "task-grid" in js  # the expandable grid container
+        assert "feedGrid" in js  # рама ленты, куда ложатся плитки
+        assert "work__open" in js  # плитка прогона раскрывается в баннеры
         assert "brief" in js  # show the brief fields on expand
         assert "download" in js  # per-thumbnail download affordance
         assert "lightbox" in js  # gallery overlay to page through banners
@@ -161,7 +207,9 @@ def test_webinar_page_renders(tmp_path, monkeypatch):
         r = c.get("/webinar", headers=_HDR)
         assert r.status_code == 200
         html = r.text
-        assert 'class="topnav__link is-active">Вебинары' in html
+        # data-t обязателен на каждом пункте канон-шапки: без него шторка не
+        # умеет прокручивать надпись, поэтому проверяем пункт целиком.
+        assert 'class="topnav__link is-active" data-t="Вебинары">Вебинары' in html
         assert "/creatives/static/webinar.js" in html
         assert 'id="fitCanvas"' in html
 
@@ -191,7 +239,7 @@ def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
         assert r.status_code == 200
         html = r.text
         assert "Библиотека знаний" in html
-        assert 'class="topnav__link is-active">Креативы' in html
+        assert 'class="topnav__link is-active" data-t="Креативы">Креативы' in html
         assert "topnav__link\">Библиотека" not in html
         assert "Вернуться к генерации креативов" in html
         assert 'href="/images"' in html
@@ -256,11 +304,13 @@ def test_library_js_is_served_and_not_a_stub(tmp_path, monkeypatch):
 
 
 def test_app_css_carries_library_classes(tmp_path, monkeypatch):
-    """Список продуктов и блоки карточки держатся на .task-item/.kb-block —
-    без них строки списка рендерятся системными кнопками, а блоки схлопываются
-    в однострочные поля."""
+    """Список продуктов, строки опыта и блоки карточки держатся на
+    .scen-card/.exp-item/.kb-block — без них список рендерится системными
+    кнопками, а блоки схлопываются в однострочные поля."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         r = c.get("/static/app.css")
         assert r.status_code == 200
-        assert ".task-item" in r.text
-        assert ".kb-block" in r.text
+        css = r.text
+        assert ".scen-card" in css  # строка каталога продуктов
+        assert ".exp-item" in css  # строка отмеченного опыта и доступов
+        assert ".kb-block" in css  # высокие поля блоков карточки

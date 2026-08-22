@@ -1,25 +1,18 @@
-/* App3 / creatives — brief → SSE progress → 2 HITL pauses → results.
-   All URLs go through the gateway prefix (window.APP_PREFIX). */
+/* App3 / creatives — бриф в рельсе, задача в плитке, решения в лайтбоксе.
+   Все адреса идут через префикс шлюза (window.APP_PREFIX).
+
+   Канон v11: пяти «экранов» пайплайна больше нет. Прогон живёт одной плиткой
+   ленты от запуска до баннеров; остановка (HITL) — это состояние плитки, а ввод
+   к ней открывается лайтбоксом. Поэтому здесь нет ни empty-state, ни панелей
+   прогресса/результата: их работу делают плитка и лента. */
 (function () {
   "use strict";
   const P = window.APP_PREFIX || "";
   const $ = (id) => document.getElementById(id);
-  const show = (el) => { el.classList.remove("hidden"); updateEmpty(); };
-  const hide = (el) => { el.classList.add("hidden"); updateEmpty(); };
+  const show = (el) => { if (el) el.classList.remove("hidden"); };
+  const hide = (el) => { if (el) el.classList.add("hidden"); };
 
-  // Канон v4: empty-state в правой колонке виден только пока там нет контента
-  // (прогресс/HITL/результаты/история). Пересчитывается на каждом show/hide.
-  const OUTPUT_PANELS = ["progressPanel", "personaPanel", "textPanel", "imagePanel", "resultsPanel", "tasksPanel"];
-  function updateEmpty() {
-    const empty = $("emptyState");
-    if (!empty) return;
-    const hasContent = OUTPUT_PANELS.some((id) => {
-      const p = $(id);
-      return p && !p.classList.contains("hidden");
-    });
-    empty.classList.toggle("hidden", hasContent);
-  }
-
+  // ── состояние прогона ──────────────────────────────────
   let taskUid = null;
   let es = null; // EventSource
   // Выбранный победитель: ranked[0] по умолчанию (скоринговый порядок), пока
@@ -32,12 +25,227 @@
   // navigation does (links to /images /slides /creatives are absolute). The
   // run keeps going server-side; on load we rehydrate from here or /api/tasks.
   const LS_KEY = "app3_active_task";
-  const ACTIVE = ["queued", "running", "awaiting_persona", "awaiting_text", "awaiting_image"];
+  const AWAITING = ["awaiting_persona", "awaiting_text", "awaiting_image"];
+  const ACTIVE = ["queued", "running"].concat(AWAITING);
   const saveActive = (uid) => { try { localStorage.setItem(LS_KEY, uid); } catch (_) {} };
   const clearActive = () => { try { localStorage.removeItem(LS_KEY); } catch (_) {} };
 
-  // ── start ──────────────────────────────────────────────
-  $("startBtn").addEventListener("click", async () => {
+  // ── состояние ленты ────────────────────────────────────
+  // tasks — то, что отдал сервер (свежие первыми); плитки строятся из него, а
+  // не из отдельной модели: две копии правды разъезжались бы на каждом событии.
+  let tasks = [];
+  const byUid = (u) => tasks.find((t) => t.task_uid === u);
+  const stateEls = new Map(); // uid -> части служебной плитки (обновляются на месте)
+  let views = [];             // плоский список картинок ленты — по нему листает лайтбокс
+  let liveStep = "";          // текст состояния активной задачи (из SSE)
+  // Остановка маршрута активной задачи. Число приходит с сервера рядом с
+  // подписью шага: сопоставлять русские подписи здесь значило бы гасить полосу
+  // при каждом переименовании шага на сервере. 0 — маршрут в покое.
+  let liveStage = 0;
+
+  const feedGrid = $("feedGrid");
+  const feedCount = $("feedCount");
+  const feedEmpty = $("feedEmpty");
+  const feedFoot = $("feedFoot");
+  const routeStops = Array.prototype.slice.call(
+    document.querySelectorAll("#route .route__stop")
+  );
+
+  const STATUS_LABEL = {
+    queued: "В очереди", running: "В работе",
+    awaiting_persona: "Ждёт персону",
+    awaiting_text: "Ждёт решения", awaiting_image: "Ждёт картинку",
+    done: "Готово", failed: "Ошибка", cancelled: "Отменено",
+  };
+  const STATUS_OF_PHASE = {
+    persona_approve: "awaiting_persona",
+    text_approve: "awaiting_text",
+    image_upload: "awaiting_image",
+  };
+  // Запасной номер остановки, когда события шага ещё не было: сразу после POST
+  // (queued) и на восстановлении после перезагрузки. Бриф (01) уже позади —
+  // задача существует, значит маршрут начался со второй остановки.
+  const STAGE_OF_STATUS = {
+    queued: 2, running: 2,
+    awaiting_persona: 2, awaiting_text: 3, awaiting_image: 4,
+  };
+  const OUTCOME_LABEL = { shipped: "Пошёл в кампанию", rejected: "Отклонили" };
+  const BRIEF_LABELS = {
+    product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
+    notes: "Свободное поле", source_url: "Ссылка на страницу",
+  };
+
+  // ── мелкие конструкторы DOM ────────────────────────────
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function tBtn(label, fn, cls) {
+    const b = el("button", "t-btn" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    b.addEventListener("click", fn);
+    return b;
+  }
+  const escapeHtml = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const kv = (k, v) => v ? `<div class="kv"><b>${k}</b> ${escapeHtml(v)}</div>` : "";
+  const fileNameOf = (u) => String(u).split("/").pop();
+
+  // ── лента ──────────────────────────────────────────────
+  function stateText(t) {
+    if (t.task_uid === taskUid && liveStep) return liveStep;
+    if (t.status === "failed") return t.error ? "Ошибка: " + t.error : "Ошибка";
+    return STATUS_LABEL[t.status] || t.status;
+  }
+  const tileClass = (t) =>
+    "work work--" + t.status + (AWAITING.indexOf(t.status) >= 0 ? " work--await" : "");
+  const actsKeyOf = (t) => (AWAITING.indexOf(t.status) >= 0 ? "await" : t.status);
+
+  // Служебная плитка: прогон, у которого баннеров ещё (или уже) нет. Её каркас
+  // строится один раз — события шага приходят часто, и пересборка гасила бы
+  // кнопку прямо под курсором.
+  function stateTile(t) {
+    const wrap = el("article", tileClass(t));
+    const body = el("div", "work__body");
+    const line = el("div", "work__state", stateText(t));
+    const acts = el("div", "work__acts");
+    const bar = el("div", "work__bar is-idle");
+    bar.appendChild(document.createElement("i"));
+    bar.hidden = !(t.status === "queued" || t.status === "running");
+    body.appendChild(line);
+    body.appendChild(acts);
+    body.appendChild(bar);
+    wrap.appendChild(body);
+    const cap = el("div", "work__cap", t.prompt || "(без названия)");
+    cap.title = t.prompt || "";
+    wrap.appendChild(cap);
+    stateEls.set(t.task_uid, { wrap, line, acts, bar, actsKey: "" });
+    fillActs(t);
+    return wrap;
+  }
+
+  function fillActs(t) {
+    const p = stateEls.get(t.task_uid);
+    if (!p) return;
+    p.actsKey = actsKeyOf(t);
+    p.acts.innerHTML = "";
+    if (AWAITING.indexOf(t.status) >= 0) {
+      // Единственное, ради чего сюда вернулись: остановка ждёт человека.
+      p.acts.appendChild(tBtn("Открыть решение", () => attach(t.task_uid), "t-btn--key"));
+    } else if (t.status === "done" && t.result_url) {
+      // Готовый прогон без картинок — файлы подчистила ретенция, но архив ещё жив.
+      const a = el("a", "t-btn", "Скачать ZIP");
+      a.href = P + t.result_url;
+      a.setAttribute("download", "");
+      p.acts.appendChild(a);
+    }
+  }
+
+  // Плитка баннера. Один креатив — одна плитка: группировать двенадцать штук в
+  // «запуск» незачем, человек выбирает баннер, а не прогон.
+  function imgTile(t, url, i) {
+    const card = (Array.isArray(t.cards) ? t.cards : [])[i] || null;
+    const caption = (card && card.slogan) || "Баннер " + (i + 1);
+    const wrap = el("article", "work work--done");
+    const body = el("div", "work__body");
+    const open = el("button", "work__open");
+    open.type = "button";
+    open.title = caption;
+    const img = el("img");
+    img.loading = "lazy";
+    img.src = P + url;
+    img.alt = caption;
+    open.appendChild(img);
+    const pos = views.length;
+    open.addEventListener("click", () => openView(pos));
+    body.appendChild(open);
+    if (t.outcome) {
+      body.appendChild(el(
+        "div",
+        "work__mark" + (t.outcome === "rejected" ? " work__mark--rejected" : ""),
+        OUTCOME_LABEL[t.outcome] || t.outcome
+      ));
+    }
+    wrap.appendChild(body);
+    const cap = el("div", "work__cap", caption);
+    cap.title = caption;
+    wrap.appendChild(cap);
+    views.push({ uid: t.task_uid, idx: i, url: url, caption: caption });
+    return wrap;
+  }
+
+  function renderFeed() {
+    feedGrid.innerHTML = "";
+    stateEls.clear();
+    views = [];
+    for (const t of tasks) {
+      const imgs = Array.isArray(t.images) ? t.images : [];
+      if (t.status === "done" && imgs.length) {
+        imgs.forEach((u, i) => feedGrid.appendChild(imgTile(t, u, i)));
+      } else {
+        feedGrid.appendChild(stateTile(t));
+      }
+    }
+    const n = feedGrid.childElementCount;
+    feedCount.textContent = n;
+    feedEmpty.hidden = n > 0;
+    // Сноска про срок хранения нужна, только когда есть что хранить.
+    feedFoot.hidden = !tasks.length;
+    paintRoute();
+  }
+
+  // Маршрут метит остановки активной задачи. Без задачи полоса гаснет целиком и
+  // читается как оглавление — это её работа в покое, а не «состояние ноль».
+  // Провалившийся и отменённый прогон полосу тоже гасят: замереть на середине
+  // значило бы врать, что путь продолжается.
+  function paintRoute() {
+    if (!routeStops.length) return;
+    const t = taskUid ? byUid(taskUid) : null;
+    const live = t && ACTIVE.indexOf(t.status) >= 0;
+    const stage = live ? (liveStage || STAGE_OF_STATUS[t.status] || 1) : 0;
+    const waiting = live && AWAITING.indexOf(t.status) >= 0;
+    const finished = !!t && t.status === "done";
+    routeStops.forEach((li, i) => {
+      const n = i + 1;
+      let state = "";
+      if (finished) state = " is-done";
+      else if (!stage) state = "";
+      else if (n < stage) state = " is-done";
+      else if (n === stage) state = waiting ? " is-wait" : " is-live";
+      li.className = "route__stop" + state;
+    });
+  }
+
+  // Точечное обновление плитки под поток событий. Пересобираем целиком только
+  // тогда, когда плитки для этой задачи в ленте нет (её ещё не было или она
+  // сменила род — из служебной стала набором баннеров).
+  function syncState(uid) {
+    const t = byUid(uid);
+    if (!t) return;
+    const p = stateEls.get(uid);
+    if (!p) { renderFeed(); return; }
+    p.wrap.className = tileClass(t);
+    p.line.textContent = stateText(t);
+    p.bar.hidden = !(t.status === "queued" || t.status === "running");
+    paintRoute();
+    if (p.actsKey !== actsKeyOf(t)) fillActs(t);
+  }
+
+  async function loadTasks() {
+    try {
+      const r = await fetch(`${P}/api/tasks`);
+      if (!r.ok) return;
+      const list = await r.json();
+      tasks = Array.isArray(list) ? list : [];
+      renderFeed();
+    } catch (_) { /* на пустой ленте молчим: сеть вернётся — вернётся и список */ }
+  }
+
+  // ── запуск ─────────────────────────────────────────────
+  $("briefForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
     const product = $("product").value.trim();
     const audience = $("audience").value.trim();
     const emotion = $("emotion").value.trim();
@@ -61,11 +269,15 @@
       taskUid = data.task_uid;
       saveActive(taskUid);
       $("briefStatus").textContent = "";
-      // restore the step line (a previous onError replaces this markup)
-      $("progress").innerHTML =
-        '<span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span>';
-      hide($("resultsPanel"));
-      show($("progressPanel"));
+      // Плитка появляется сразу, до первого события: между POST и первым шагом
+      // проходит секунда-другая, и без неё лента выглядела бы не отреагировавшей.
+      tasks.unshift({
+        task_uid: taskUid, status: "queued", prompt: product,
+        images: [], cards: [], brief: {}, created_at: new Date().toISOString(),
+      });
+      liveStep = "Запуск…";
+      liveStage = 0; // маршрут начинается заново — до первого события его ведёт статус
+      renderFeed();
       subscribe();
     } catch (e) {
       $("briefStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
@@ -100,11 +312,11 @@
     if (es) es.close();
     es = new EventSource(`${P}/api/tasks/${taskUid}/events`);
     es.onopen = () => { esBackoff = 1000; };
-    es.addEventListener("queued", () => setStep("В очереди…"));
-    es.addEventListener("start", (e) => setStep(stepOf(e)));
-    es.addEventListener("step", (e) => setStep(stepOf(e)));
+    es.addEventListener("queued", () => setStep("В очереди…", "queued"));
+    es.addEventListener("start", (e) => onStep(e));
+    es.addEventListener("step", (e) => onStep(e));
     es.addEventListener("awaiting_input", (e) => onAwaiting(JSON.parse(e.data)));
-    es.addEventListener("resumed", () => { hideHitl(); setStep("Продолжаю…"); });
+    es.addEventListener("resumed", () => { closeHitl(); setStep("Продолжаю…"); });
     es.addEventListener("done", (e) => onDone(JSON.parse(e.data)));
     es.addEventListener("error", (e) => {
       if (typeof e.data === "undefined") { onStreamDrop(); return; } // connection, not task
@@ -112,17 +324,27 @@
     });
     es.addEventListener("cancelled", (e) => onCancelled(JSON.parse(e.data)));
   }
-  const stepOf = (e) => { try { return JSON.parse(e.data).step || "…"; } catch { return "…"; } };
-  function setStep(t) {
-    const el = $("stepLabel");
-    if (el) el.textContent = t;
-    show($("progressPanel"));
+  // Событие шага несёт подпись для плитки и номер остановки для маршрута.
+  // stage === null значит «шаг остановку не меняет» — полосу оставляем как есть,
+  // иначе продолжение сегмента сбрасывало бы подсветку назад.
+  function onStep(e) {
+    let d = {};
+    try { d = JSON.parse(e.data) || {}; } catch (_) {}
+    if (typeof d.stage === "number") liveStage = d.stage;
+    setStep(d.step || "…");
+  }
+
+  function setStep(text, status) {
+    liveStep = text;
+    const t = byUid(taskUid);
+    if (t) t.status = status || "running";
+    syncState(taskUid);
   }
 
   function onStreamDrop() {
     if (!taskUid) return;
     if (es) es.close();
-    setStep("Соединение потеряно, переподключаюсь…");
+    setStep("Связь потеряна, переподключаюсь…");
     const delay = esBackoff;
     esBackoff = Math.min(esBackoff * 2, ES_BACKOFF_MAX);
     setTimeout(resync, delay);
@@ -137,7 +359,7 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       if (d.phase) { onAwaiting(d); subscribe(); return; }
-      if (ACTIVE.includes(d.status)) { subscribe(); return; }
+      if (ACTIVE.indexOf(d.status) >= 0) { subscribe(); return; }
       // went terminal while we were offline
       const tr = await fetch(`${P}/api/tasks/${taskUid}`);
       const t = tr.ok ? await tr.json() : null;
@@ -149,23 +371,27 @@
     }
   }
 
-  // ── awaiting (HITL) ────────────────────────────────────
-  // A HITL pause means the pipeline is BLOCKED on the user. Hide the running
-  // progress bar (its indeterminate animation + pulsing dot read as "still
-  // working") so it's unambiguous that the user must now act, then scroll the
-  // decision panel into view.
-  function onAwaiting(d) {
-    hide($("progressPanel"));
+  // ── остановки пайплайна (HITL) ─────────────────────────
+  // Остановка — состояние задачи, а не отдельный экран: плитка метится, а разбор
+  // открывается лайтбоксом. silent — путь восстановления после перезагрузки:
+  // модалка сама собой на загрузке не выскакивает, плитка ждёт клика.
+  function onAwaiting(d, silent) {
+    const status = STATUS_OF_PHASE[d.phase];
+    const t = byUid(taskUid);
+    if (t && status) t.status = status;
+    liveStep = STATUS_LABEL[status] || "Ждёт решения";
+    // Фаза — источник правды о том, где задача встала: восстановление после
+    // перезагрузки приходит сюда без единого события шага.
+    liveStage = STAGE_OF_STATUS[status] || liveStage;
+    syncState(taskUid);
     if (d.phase === "persona_approve") {
       renderPersona(d.persona || {}, d.kb_match);
       setBusy($("personaPanel"), false);
-      hide($("textPanel")); hide($("imagePanel")); show($("personaPanel"));
-      focusPanel($("personaPanel"));
+      if (!silent) openLb("personaPanel");
     } else if (d.phase === "text_approve") {
       renderCandidates(d.candidates || []);
       setBusy($("textPanel"), false);
-      hide($("imagePanel")); show($("textPanel"));
-      focusPanel($("textPanel"));
+      if (!silent) openLb("textPanel");
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
       renderMetaphor(d);
@@ -177,71 +403,297 @@
       else if (!d.can_generate) msg = "Автогенерация hero на сервере недоступна — загрузи свою картинку.";
       $("imageStatus").textContent = msg;
       setBusy($("imagePanel"), false);
-      hide($("textPanel")); show($("imagePanel"));
-      focusPanel($("imagePanel"));
+      if (!silent) openLb("imagePanel");
     }
   }
-  function focusPanel(el) {
-    try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
+
+  // Клик по ждущей плитке: перецепляемся к этой задаче и открываем её разбор.
+  async function attach(uid) {
+    taskUid = uid;
+    saveActive(uid);
+    try {
+      const r = await fetch(`${P}/api/tasks/${uid}/pending`);
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.phase) { onAwaiting(d); subscribe(); }
+      else { setStep("Продолжаю…"); subscribe(); }
+    } catch (_) {}
   }
+
+  // ── лайтбокс: четыре режима в одной раме ───────────────
+  const lightbox = $("lightbox");
+  const lbPanel = $("lbPanel");
+  const LB_PARTS = ["lbView", "lbSide", "personaPanel", "textPanel", "imagePanel"];
+  const LB_MODE = {
+    view: { cls: "", parts: ["lbView", "lbSide"] },
+    personaPanel: { cls: " lightbox__panel--form", parts: ["personaPanel"] },
+    textPanel: { cls: " lightbox__panel--wide", parts: ["textPanel"] },
+    imagePanel: { cls: " lightbox__panel--form", parts: ["imagePanel"] },
+  };
+  const HITL_MODES = ["personaPanel", "textPanel", "imagePanel"];
+  let lbMode = null;
+
+  function openLb(mode) {
+    const m = LB_MODE[mode];
+    if (!m) return;
+    lbMode = mode;
+    LB_PARTS.forEach((id) => {
+      const p = $(id);
+      if (p) p.classList.toggle("hidden", m.parts.indexOf(id) < 0);
+    });
+    lbPanel.className = "lightbox__panel" + m.cls;
+    show(lightbox);
+    document.body.style.overflow = "hidden";
+  }
+  function closeLb() {
+    hide(lightbox);
+    lbMode = null;
+    document.body.style.overflow = "";
+  }
+  // Пайплайн поехал дальше — разбор закрываем, но просмотр баннера не трогаем.
+  function closeHitl() { if (HITL_MODES.indexOf(lbMode) >= 0) closeLb(); }
+
+  lightbox.addEventListener("click", (ev) => {
+    const act = ev.target.getAttribute && ev.target.getAttribute("data-lb");
+    if (act === "close") closeLb();
+    else if (act === "prev") viewNav(-1);
+    else if (act === "next") viewNav(1);
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (!lbMode) return;
+    if (ev.key === "Escape") { closeLb(); return; }
+    if (lbMode !== "view") return;
+    if (ev.key === "ArrowRight") viewNav(1);
+    else if (ev.key === "ArrowLeft") viewNav(-1);
+  });
+
+  // ── просмотр баннера ───────────────────────────────────
+  let viewPos = 0;
+  function openView(pos) {
+    if (!views.length) return;
+    viewPos = (pos + views.length) % views.length;
+    renderView();
+    openLb("view");
+  }
+  function viewNav(delta) {
+    if (!views.length) return;
+    viewPos = (viewPos + delta + views.length) % views.length;
+    renderView();
+  }
+  function renderView() {
+    const v = views[viewPos];
+    if (!v) return;
+    const t = byUid(v.uid) || {};
+    $("lbImg").src = P + v.url;
+    $("lbImg").alt = v.caption;
+    $("lbCount").textContent = `${viewPos + 1} / ${views.length}`;
+    $("lbCap").textContent = v.caption;
+    buildViewActions(t, v);
+  }
+
+  function group(label) {
+    const g = el("div", "lb-group");
+    if (label) g.appendChild(el("p", "lb-group__label", label));
+    const row = el("div", "lb-group__row");
+    g.appendChild(row);
+    g._row = row;
+    return g;
+  }
+  function details(summary, bodyHtml) {
+    const d = el("details", "tool-details");
+    d.appendChild(el("summary", null, summary));
+    const b = el("div", "tool-details__body");
+    b.innerHTML = bodyHtml;
+    d.appendChild(b);
+    return d;
+  }
+
+  function buildViewActions(t, v) {
+    const box = $("lbActions");
+    box.innerHTML = "";
+
+    const save = group("");
+    const dl = el("a", "t-btn t-btn--key", "Скачать баннер");
+    dl.href = P + v.url;
+    dl.download = fileNameOf(v.url);
+    save._row.appendChild(dl);
+    if (t.result_url) {
+      const zip = el("a", "t-btn", "Скачать ZIP");
+      zip.href = P + t.result_url;
+      zip.setAttribute("download", "");
+      save._row.appendChild(zip);
+    }
+    box.appendChild(save);
+
+    // Карточка этого баннера (Block 3), выровнена по индексу с файлами 01_…, 02_…
+    const card = (Array.isArray(t.cards) ? t.cards : [])[v.idx];
+    if (card) {
+      const rows = kv("cta", card.cta) + kv("hook", card.hook_angle) +
+        kv("почему зайдёт ЦА", card.reason) + kv("идея", card.body);
+      if (rows) box.appendChild(details("Что в этом баннере", rows));
+    }
+
+    const brief = t.brief || {};
+    const briefRows = Object.keys(BRIEF_LABELS)
+      .filter((k) => brief[k]).map((k) => kv(BRIEF_LABELS[k], brief[k])).join("");
+    if (briefRows) box.appendChild(details("Бриф запуска", briefRows));
+
+    box.appendChild(recipeDetails(t));
+    box.appendChild(outcomeGroup(t));
+  }
+
+  // Рецепт лежит в задаче, а не в списке — дочитываем его при первом раскрытии.
+  function recipeDetails(t) {
+    const d = el("details", "tool-details");
+    d.appendChild(el("summary", null, "Как сделан этот баннер"));
+    const b = el("div", "tool-details__body");
+    b.innerHTML = '<p class="muted">Читаю…</p>';
+    d.appendChild(b);
+    let loaded = false;
+    d.addEventListener("toggle", async () => {
+      if (!d.open || loaded) return;
+      loaded = true;
+      try {
+        const r = await fetch(`${P}/api/tasks/${t.task_uid}`);
+        const j = r.ok ? await r.json() : null;
+        b.innerHTML = recipeHtml(j && j.recipe) || '<p class="muted">Рецепт не сохранён.</p>';
+      } catch (_) {
+        b.innerHTML = '<p class="muted">Не удалось прочитать рецепт.</p>';
+      }
+    });
+    return d;
+  }
+  function recipeHtml(rec) {
+    if (!rec || !Object.keys(rec).length) return "";
+    const kbs = rec.kb_source;
+    const HERO = { generated: "сгенерирован на сервере", uploaded: "загружен вручную", none: "нет" };
+    const comments = Array.isArray(rec.metaphor_comments) ? rec.metaphor_comments.join("; ") : "";
+    return (
+      kv("карточка знаний", kbs ? `${kbs.name} (версия ${kbs.version})` : "не использовалась") +
+      kv("персона", rec.persona_segment) +
+      kv("ведущий текст", rec.slogan) +
+      kv("якорь персоны", rec.anchor) +
+      kv("что человек получит", rec.desired_outcome) +
+      kv("образ", rec.metaphor) +
+      kv("читатель должен подумать", rec.intended_inference) +
+      kv("не должно читаться как", rec.anti_reading) +
+      kv("комментарии к образу", comments) +
+      kv("hero", HERO[rec.hero_source] || rec.hero_source)
+    );
+  }
+
+  // Исход почти никогда не известен в момент финиша: баннер уносят
+  // согласовывать, а вкладку закрывают. Поэтому отметка живёт здесь, на самом
+  // баннере, и доступна ровно столько, сколько живёт сам баннер.
+  function outcomeGroup(t) {
+    const g = el("div", "lb-group");
+    g.appendChild(el("p", "lb-group__label", "Что стало с этим баннером"));
+    g.appendChild(el("p", "muted", "Ответ попадёт в опыт и повлияет на следующие запуски по этому продукту."));
+    const form = el("div", "gen-form");
+    const lab = document.createElement("label");
+    lab.appendChild(el("span", "field-label", "Комментарий"));
+    const ta = document.createElement("textarea");
+    ta.placeholder = "Почему взяли или почему нет";
+    ta.value = t.outcome_comment || "";
+    lab.appendChild(ta);
+    form.appendChild(lab);
+    g.appendChild(form);
+    const row = el("div", "lb-group__row");
+    const st = el("div", "status");
+    const mk = (val, text, key) => {
+      const b = el("button", "t-btn" + (key ? " t-btn--key" : "") + (t.outcome === val ? " t-btn--on" : ""), text);
+      b.type = "button";
+      b.dataset.outcome = val;
+      b.addEventListener("click", () => sendOutcome(t, val, ta.value.trim(), st, row));
+      return b;
+    };
+    row.appendChild(mk("shipped", "Пошёл в кампанию", true));
+    row.appendChild(mk("rejected", "Отклонили", false));
+    g.appendChild(row);
+    g.appendChild(st);
+    return g;
+  }
+
+  async function sendOutcome(t, outcome, comment, statusEl, row) {
+    setBusy(row, true);
+    const r = await post(`${P}/api/tasks/${t.task_uid}/outcome`, { outcome, comment });
+    setBusy(row, false);
+    if (!(r && r.ok)) {
+      statusEl.innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
+      return;
+    }
+    const d = await r.json();
+    statusEl.textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
+    t.outcome = outcome;
+    t.outcome_comment = comment;
+    row.querySelectorAll("[data-outcome]").forEach((b) => {
+      b.classList.toggle("t-btn--on", b.dataset.outcome === outcome);
+    });
+    // Метка исхода стоит на всех двенадцати плитках этого запуска — перерисовываем
+    // ленту целиком. Лайтбокс лежит вне ленты, поэтому под руками ничего не пропадёт.
+    renderFeed();
+  }
+
+  // ── 03 · предложения ───────────────────────────────────
+  const PICK_ON = "Главный — это баннер №1";
+  const PICK_OFF = "Сделать главным";
+
   function renderCandidates(list) {
     winnerId = list.length ? (list[0].id || null) : null;
-    if (!list.length) { $("candidates").innerHTML = "<p class=\"page-sub\">Нет предложений.</p>"; return; }
-    $("candidates").innerHTML = list.map((c, i) => {
-      const rank = i + 1;
+    const box = $("candidates");
+    if (!list.length) { box.innerHTML = '<p class="muted">Нет предложений.</p>'; return; }
+    box.innerHTML = list.map((c, i) => {
       const score = (typeof c.score === "number") ? c.score.toFixed(1) : "";
       const id = c.id || "";
-      const head = `<div class="cand-head"><span class="cand-rank">#${rank}</span>` +
-        `<span class="cand-slogan">${escapeHtml(c.slogan || "")}</span>` +
-        (i === 0 ? `<span class="cand-badge">главный</span>` : "") +
-        (score ? `<span class="cand-score">${score}</span>` : "") + `</div>`;
+      const head = `<div class="cand__head"><span class="cand__rank">#${i + 1}</span>` +
+        `<span class="cand__slogan">${escapeHtml(c.slogan || "")}</span>` +
+        (i === 0 ? `<span class="cand__badge">главный</span>` : "") +
+        (score ? `<span class="cand__score">${score}</span>` : "") + `</div>`;
       // Флажки линта (блок 3): информируют, не гейтят — решает человек.
       const flags = (Array.isArray(c.lint_flags) && c.lint_flags.length)
-        ? `<div class="cand-flags">${c.lint_flags.map((f) => `<span class="cand-flag">${escapeHtml(f)}</span>`).join("")}</div>`
+        ? `<div class="cand__flags">${c.lint_flags.map((f) => `<span class="cand__flag">${escapeHtml(f)}</span>`).join("")}</div>`
         : "";
-      // Обоснование под спойлером: якорь персоны и обещанный результат —
+      // Обоснование под раскрытием: якорь персоны и обещанный результат —
       // то, из чего кандидат вырос, а не пересказ слогана.
       const why = (c.anchor || c.desired_outcome || c.reason)
-        ? `<details class="cand-why"><summary>Почему такой текст</summary>` +
+        ? `<details class="tool-details"><summary>Почему такой текст</summary>` +
+          `<div class="tool-details__body">` +
           kv("якорь персоны", c.anchor) + kv("что человек получит", c.desired_outcome) +
-          kv("почему зайдёт ЦА", c.reason) + `</details>`
+          kv("почему зайдёт ЦА", c.reason) + `</div></details>`
         : "";
       // «Ведёт эта / Взять эту» не отвечало на вопрос «ведёт куда»: баннер
-      // получат все двенадцать, и человек не понимал, что вообще выбирает.
-      // Называем последствие — главный идёт первым баннером.
+      // получат все двенадцать. Называем последствие — главный идёт первым.
       const pick = id
-        ? `<button class="btn cand-pick${i === 0 ? " is-winner" : ""}" data-pick="${escapeHtml(id)}">` +
+        ? `<button type="button" class="t-btn${i === 0 ? " t-btn--key" : ""}" data-pick="${escapeHtml(id)}">` +
           `${i === 0 ? PICK_ON : PICK_OFF}</button>`
         : "";
-      return `<div class="cand-card${i === 0 ? " is-winner" : ""}">${head}` +
+      return `<div class="cand${i === 0 ? " is-winner" : ""}">${head}` +
         kv("cta", c.cta) + kv("hook", c.hook_angle) +
         kv("идея", c.body) + why + flags + pick + `</div>`;
     }).join("");
   }
-  const PICK_ON = "Главный — это баннер №1";
-  const PICK_OFF = "Сделать главным";
 
-  // Делегированный выбор победителя: перекрашиваем кнопки, ничего не шлём —
+  // Делегированный выбор победителя: перекрашиваем карточки, ничего не шлём —
   // решение уходит одним запросом по «Принять».
   $("candidates").addEventListener("click", (ev) => {
     const btn = ev.target.closest("[data-pick]");
     if (!btn) return;
     winnerId = btn.dataset.pick;
-    $("candidates").querySelectorAll(".cand-pick").forEach((b) => {
+    $("candidates").querySelectorAll("[data-pick]").forEach((b) => {
       const on = b.dataset.pick === winnerId;
-      b.classList.toggle("is-winner", on);
+      b.classList.toggle("t-btn--key", on);
       b.textContent = on ? PICK_ON : PICK_OFF;
-      // Рамка и бейдж переезжают на выбранную карточку целиком: кнопка одна
+      // Планка и бейдж переезжают на выбранную карточку целиком: кнопка одна
       // среди двенадцати одинаковых, и одной её подсветки человек не находил.
-      const card = b.closest(".cand-card");
+      const card = b.closest(".cand");
       card.classList.toggle("is-winner", on);
-      const badge = card.querySelector(".cand-badge");
+      const badge = card.querySelector(".cand__badge");
       if (on && !badge) {
         // Строго перед оценкой, а не в конец шапки: при вставке в конец бейдж
         // и оценка менялись бы местами относительно первой отрисовки.
-        const head = card.querySelector(".cand-head");
-        const score = head.querySelector(".cand-score");
-        const html = `<span class="cand-badge">главный</span>`;
+        const head = card.querySelector(".cand__head");
+        const score = head.querySelector(".cand__score");
+        const html = `<span class="cand__badge">главный</span>`;
         if (score) score.insertAdjacentHTML("beforebegin", html);
         else head.insertAdjacentHTML("beforeend", html);
       } else if (!on && badge) {
@@ -249,10 +701,32 @@
       }
     });
   });
-  const kv = (k, v) => v ? `<div class="kv"><b>${k}:</b> ${escapeHtml(v)}</div>` : "";
 
-  // Персона: списки якорей редактируются как многострочный текст — одна
-  // строка = один якорь. Это ровно та форма, в которой их читает промпт.
+  document.querySelectorAll("#textPanel [data-act]").forEach((btn) => {
+    btn.addEventListener("click", () => sendText(btn.dataset.act));
+  });
+
+  async function sendText(action) {
+    if (action === "cancel" && !window.confirm("Отменить задачу? Прогресс будет потерян.")) return;
+    const panel = $("textPanel");
+    $("textStatus").textContent = "";
+    setBusy(panel, true);
+    const body = { action };
+    if (action === "approve" && winnerId) body.winner_id = winnerId;
+    const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, body);
+    if (r && r.ok) {
+      setBusy(panel, false);
+      closeHitl();
+      setStep("Применяю решение…");
+      return;
+    }
+    setBusy(panel, false); // stay on the panel so the user can retry
+    $("textStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
+  }
+
+  // ── 02 · персона ───────────────────────────────────────
+  // Списки якорей редактируются как многострочный текст — одна строка = один
+  // якорь. Это ровно та форма, в которой их читает промпт.
   const linesOf = (v) => (Array.isArray(v) ? v.join("\n") : "");
   const listOf = (id) => $(id).value.split("\n").map((s) => s.trim()).filter(Boolean);
 
@@ -263,11 +737,9 @@
     $("personaMotivations").value = linesOf(p.motivations);
     $("personaObjections").value = linesOf(p.objections);
     $("personaStyle").value = p.communication_style || "";
-    const badge = $("personaKb");
-    badge.textContent = kb && kb.slug
+    $("personaKb").textContent = kb && kb.slug
       ? `Карточка знаний: ${kb.name} (версия ${kb.version})`
       : "Карточка знаний не подобрана — тексты опираются только на бриф.";
-    badge.classList.toggle("kb-badge--none", !(kb && kb.slug));
   }
 
   document.querySelectorAll("#personaPanel [data-pact]").forEach((btn) => {
@@ -300,7 +772,7 @@
     if (r && r.ok) {
       setBusy(panel, false);
       // regenerate возвращает граф на эту же остановку, а не двигает дальше.
-      hideHitl();
+      closeHitl();
       setStep(action === "approve" ? "Пишу тексты…" : "Обновляю персону…");
       return;
     }
@@ -308,51 +780,7 @@
     $("personaStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
   }
 
-  function hideHitl() { hide($("personaPanel")); hide($("textPanel")); hide($("imagePanel")); }
-
-  // Double-click protection: freeze every control in a HITL panel while its
-  // request is in flight; unfreeze if the request fails (panel stays visible).
-  function setBusy(panel, busy) {
-    panel.querySelectorAll("button, input, textarea, label.btn").forEach((el) => {
-      if ("disabled" in el) el.disabled = busy;
-      el.classList.toggle("is-busy", busy);
-    });
-  }
-  function errText(status) {
-    if (!status) return "Нет соединения с сервером — проверь сеть и попробуй ещё раз.";
-    if (status === 429) return "Сервер занят — попробуй ещё раз через пару минут.";
-    if (status === 409) return "Задача уже в другом состоянии — обнови страницу.";
-    if (status === 501) return "Генерация недоступна — загрузи картинку.";
-    // 422 на этих роутах приезжает от валидации тела: пустой или слишком
-    // длинный комментарий, чужой action. Без ветки пользователь видел голое
-    // «Ошибка 422» и не понимал, что поправить надо у себя в поле.
-    if (status === 422) return "Проверь поля — комментарий пустой или слишком длинный.";
-    return `Ошибка ${status}`;
-  }
-
-  // text decisions (approve all / regenerate all / cancel)
-  document.querySelectorAll("#textPanel [data-act]").forEach((btn) => {
-    btn.addEventListener("click", () => sendText(btn.dataset.act));
-  });
-
-  async function sendText(action) {
-    if (action === "cancel" && !window.confirm("Отменить задачу? Прогресс будет потерян.")) return;
-    const panel = $("textPanel");
-    $("textStatus").textContent = "";
-    setBusy(panel, true);
-    const body = { action };
-    if (action === "approve" && winnerId) body.winner_id = winnerId;
-    const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, body);
-    if (r && r.ok) {
-      setBusy(panel, false);
-      hideHitl(); setStep("Применяю решение…");
-      return;
-    }
-    setBusy(panel, false); // stay on the panel so the user can retry
-    $("textStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
-  }
-
-  // image decisions
+  // ── 04 · hero ──────────────────────────────────────────
   async function sendImage(fd, progressLabel) {
     const panel = $("imagePanel");
     $("imageStatus").textContent = "";
@@ -360,13 +788,14 @@
     const r = await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
     if (r && r.ok) {
       setBusy(panel, false);
-      hideHitl(); setStep(progressLabel);
+      closeHitl();
+      setStep(progressLabel);
       return;
     }
     setBusy(panel, false); // stay on the panel so the user can retry
     $("imageStatus").innerHTML = `<span class="err">${escapeHtml(errText(r ? r.status : 0))}</span>`;
-    show($("imagePanel"));
   }
+
   // Задумка образа. Блока нет, если generate_image_prompt не отдал meta —
   // экран тогда прежний: один промпт без разговора.
   function renderMetaphor(d) {
@@ -395,7 +824,6 @@
     fd.append("comment", comment);
     sendImage(fd, "Переделываю образ…");
   });
-
   $("genBtn").addEventListener("click", () => {
     const fd = new FormData(); fd.append("action", "generate");
     sendImage(fd, "Генерирую 12 hero…");
@@ -412,94 +840,46 @@
     sendImage(fd, "Отменяю…");
   });
 
-  // ── terminal ───────────────────────────────────────────
-  function onDone(d) {
+  // ── терминальные состояния ─────────────────────────────
+  async function onDone(d) {
     if (es) es.close();
     clearActive(); resetWinner();
-    hideHitl(); hide($("progressPanel")); show($("resultsPanel"));
-    const url = d.result_url ? `${P}${d.result_url}` : null;
-    $("resultMsg").innerHTML = url
-      ? `<a class="dl" href="${url}" download>Скачать ZIP</a>`
-      : "Готово, но файл результата не найден.";
+    liveStep = ""; liveStage = 0;
+    closeHitl();
     $("startBtn").disabled = false;
-    $("outcomeStatus").textContent = "";
-    $("outcomeComment").value = "";
-    loadRecipe(d.task_uid || taskUid);
-    loadRecentTasks();
+    $("briefStatus").textContent = d.result_url
+      ? "Готово — баннеры в ленте."
+      : "Готово, но файл результата не найден.";
+    await loadTasks();
   }
 
-  // Отметка исхода: результат уже готов, поэтому ошибка здесь — не сбой
-  // задачи, а неудачная запись опыта; текст об этом так и говорит.
-  document.querySelectorAll("#outcomeBox [data-outcome]").forEach((btn) => {
-    btn.addEventListener("click", () => sendOutcome(btn.dataset.outcome));
-  });
-
-  async function sendOutcome(outcome) {
-    const box = $("outcomeBox");
-    setBusy(box, true);
-    const r = await post(`${P}/api/tasks/${taskUid}/outcome`, {
-      outcome, comment: $("outcomeComment").value.trim(),
-    });
-    setBusy(box, false);
-    if (r && r.ok) {
-      const d = await r.json();
-      $("outcomeStatus").textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
-      markOutcomeInHistory(taskUid, outcome, $("outcomeComment").value.trim());
-      return;
-    }
-    $("outcomeStatus").innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
-  }
-
-  // Рецепт лежит в задаче (не в SSE-событии) — дочитываем его после финиша.
-  async function loadRecipe(uid) {
-    const box = $("recipePanel");
-    hide(box);
-    if (!uid) return;
-    try {
-      const r = await fetch(`${P}/api/tasks/${uid}`);
-      if (!r.ok) return;
-      const t = await r.json();
-      const html = recipeHtml(t.recipe);
-      if (!html) return;
-      $("recipeBody").innerHTML = html;
-      box.classList.remove("hidden");
-    } catch (_) {}
-  }
-
-  function recipeHtml(rec) {
-    if (!rec || !Object.keys(rec).length) return "";
-    const kbs = rec.kb_source;
-    const HERO = { generated: "сгенерирован на сервере", uploaded: "загружен вручную", none: "нет" };
-    const comments = Array.isArray(rec.metaphor_comments) ? rec.metaphor_comments.join("; ") : "";
-    return (
-      kv("карточка знаний", kbs ? `${kbs.name} (версия ${kbs.version})` : "не использовалась") +
-      kv("персона", rec.persona_segment) +
-      kv("ведущий текст", rec.slogan) +
-      kv("якорь персоны", rec.anchor) +
-      kv("что человек получит", rec.desired_outcome) +
-      kv("образ", rec.metaphor) +
-      kv("читатель должен подумать", rec.intended_inference) +
-      kv("не должно читаться как", rec.anti_reading) +
-      kv("комментарии к образу", comments) +
-      kv("hero", HERO[rec.hero_source] || rec.hero_source)
-    );
-  }
   function onError(e) {
     if (es) es.close();
     clearActive(); resetWinner();
     let msg = "Сбой генерации.";
-    try { msg = JSON.parse(e.data).message || msg; } catch {}
-    $("progress").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+    try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
+    liveStep = ""; liveStage = 0;
+    const t = byUid(taskUid);
+    if (t) { t.status = "failed"; t.error = msg; }
+    closeHitl();
+    syncState(taskUid);
     $("startBtn").disabled = false;
-    loadRecentTasks();
+    $("briefStatus").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+    loadTasks();
   }
+
   function onCancelled(d) {
     if (es) es.close();
     clearActive(); resetWinner();
-    hideHitl(); hide($("progressPanel"));
-    $("briefStatus").textContent = d.reason === "timeout" ? "Время истекло, сессия отменена." : "Отменено.";
-    show($("briefPanel")); $("startBtn").disabled = false;
-    loadRecentTasks();
+    liveStep = ""; liveStage = 0;
+    const t = byUid(taskUid);
+    if (t) t.status = "cancelled";
+    closeHitl();
+    syncState(taskUid);
+    $("briefStatus").textContent = d.reason === "timeout"
+      ? "Время истекло, сессия отменена." : "Отменено.";
+    $("startBtn").disabled = false;
+    loadTasks();
   }
 
   // ── helpers ────────────────────────────────────────────
@@ -515,283 +895,43 @@
       return await fetch(url, { method: "POST", body: fd });
     } catch (_) { return null; }
   }
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
-
-  // ── recent tasks (history within the 24h retention window) ─
-  // GET /api/tasks does not carry an in-flight run's progress (that's what
-  // rehydrate() restores) — this list just makes finished creatives reachable
-  // again so a completed ZIP can be re-downloaded after a reload.
-  const STATUS_LABEL = {
-    queued: "В очереди", running: "В работе",
-    awaiting_persona: "Ждёт персону",
-    awaiting_text: "Ждёт решения", awaiting_image: "Ждёт картинку",
-    done: "Готово", failed: "Ошибка", cancelled: "Отменено",
-  };
-  function fmtDate(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return isNaN(d) ? "" : d.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
-  }
-  // Per-task banner URLs + brief, kept out of the DOM so the grid's <img>
-  // elements are built lazily on first expand (a full history of 100×12 images
-  // at once would hammer the DOM and the network).
-  const imagesByUid = {};
-  const briefByUid = {};
-  const cardsByUid = {};
-  // Исход запуска (shipped/rejected + комментарий) из /api/tasks. Нужен здесь,
-  // потому что исход почти никогда не известен в момент финиша: баннер уносят
-  // согласовывать, а вкладку закрывают. Без отметки из истории опыт наполнялся
-  // бы только теми запусками, которые кто-то досидел до конца.
-  const outcomeByUid = {};
-  const OUTCOME_LABEL = { shipped: "Пошёл в кампанию", rejected: "Отклонили" };
-  const BRIEF_LABELS = {
-    product: "Что рекламируем", audience: "Целевая аудитория", emotion: "Эмоция / образ",
-    notes: "Свободное поле", source_url: "Ссылка на страницу",
-  };
-  const fileNameOf = (u) => String(u).split("/").pop();
-  function briefHtml(brief) {
-    if (!brief) return "";
-    const rows = Object.keys(BRIEF_LABELS)
-      .filter((k) => brief[k])
-      .map((k) => `<div class="kv"><b>${BRIEF_LABELS[k]}:</b> ${escapeHtml(brief[k])}</div>`)
-      .join("");
-    return rows ? `<div class="task-brief">${rows}</div>` : "";
-  }
-  function taskRow(t) {
-    const label = STATUS_LABEL[t.status] || t.status;
-    const title = escapeHtml(t.prompt || "(без названия)");
-    const imgs = Array.isArray(t.images) ? t.images : [];
-    // Готовый запуск разворачивается даже без картинок: через сутки ретенции
-    // файлы подчищены, а отметить исход всё ещё нужно.
-    const expandable = imgs.length > 0 || t.status === "done";
-    if (expandable) {
-      imagesByUid[t.task_uid] = imgs;
-      briefByUid[t.task_uid] = t.brief || {};
-      cardsByUid[t.task_uid] = Array.isArray(t.cards) ? t.cards : [];
-      // Отметку принимает только готовый запуск (POST /outcome иначе даёт 409).
-      outcomeByUid[t.task_uid] = t.status === "done"
-        ? { outcome: t.outcome || "", comment: t.outcome_comment || "" }
-        : null;
-    }
-    let action = "";
-    if (t.status === "done" && t.result_url) {
-      action = `<a class="task-dl" href="${P}${t.result_url}" download>ZIP</a>`;
-    } else if (t.status === "failed" && t.error) {
-      action = `<span class="task-err">${escapeHtml(t.error)}</span>`;
-    }
-    const mark = t.outcome
-      ? `<span class="task-badge is-outcome-${t.outcome}">${OUTCOME_LABEL[t.outcome] || t.outcome}</span>`
-      : "";
-    const cls = expandable ? "task-row is-expandable" : "task-row";
-    const uidAttr = expandable ? ` data-uid="${escapeHtml(t.task_uid)}"` : "";
-    const grid = expandable
-      ? `<div class="task-grid hidden" data-grid="${escapeHtml(t.task_uid)}"></div>`
-      : "";
-    return (
-      `<div class="${cls}"${uidAttr}>` +
-      `<span class="task-title">${title}</span>` +
-      `<span class="task-meta"><span class="task-badge is-${t.status}">${label}</span>${mark}` +
-      `<span class="task-date">${fmtDate(t.created_at)}</span>${action}</span>` +
-      `</div>` + grid
-    );
-  }
-  // Тот же вопрос, что и на экране результата, только для прошлого запуска.
-  // Кнопка уже сделанного выбора подсвечена — чтобы «передумал» отличалось от
-  // «ещё не отмечал», и человек не гадал, записалось ли что-то в прошлый раз.
-  function outcomeHtml(uid) {
-    const cur = outcomeByUid[uid] || { outcome: "", comment: "" };
-    const btn = (val, cls, text) =>
-      `<button class="btn ${cls}${cur.outcome === val ? " is-picked" : ""}" ` +
-      `data-hist-outcome="${val}">${text}</button>`;
-    return (
-      `<div class="task-outcome" data-outcome-uid="${escapeHtml(uid)}">` +
-      `<span class="page-sub">Что стало с этим баннером? Ответ попадёт в опыт.</span>` +
-      `<textarea class="oc-comment" placeholder="Почему взяли или почему нет">` +
-      `${escapeHtml(cur.comment)}</textarea>` +
-      `<div class="btn-row">` +
-      btn("shipped", "btn--accent", "Пошёл в кампанию") +
-      btn("rejected", "", "Отклонили") +
-      `</div><div class="status oc-status"></div></div>`
-    );
-  }
-  // Каждому баннеру — его карточка (Block 3): slogan/cta/hook/reason/body,
-  // aligned by index with the sorted banner files (01_…, 02_…).
-  function capHtml(card, i) {
-    if (!card) return "";
-    const kv = (label, v) =>
-      v ? `<span class="cap-kv"><b>${label}:</b> ${escapeHtml(v)}</span>` : "";
-    return (
-      `<figcaption class="thumb-cap">` +
-      `<span class="cap-slogan">${escapeHtml(card.slogan || `Баннер ${i + 1}`)}</span>` +
-      kv("cta", card.cta) + kv("hook", card.hook_angle) +
-      kv("почему зайдёт ЦА", card.reason) + kv("идея", card.body) +
-      `</figcaption>`
-    );
-  }
-  // Build the brief + thumbnail grid the first time its row is opened. Each
-  // thumb carries an index (→ lightbox), its own download link and its card.
-  function fillGrid(grid, uid) {
-    const imgs = imagesByUid[uid] || [];
-    const cards = cardsByUid[uid] || [];
-    const thumbs = imgs.map((u, i) =>
-      `<figure class="task-thumb" data-uid="${escapeHtml(uid)}" data-idx="${i}">` +
-      `<img src="${P}${u}" alt="Баннер ${i + 1}" loading="lazy">` +
-      `<a class="thumb-dl" href="${P}${u}" download="${escapeHtml(fileNameOf(u))}" ` +
-      `title="Скачать баннер ${i + 1}">↓</a>${capHtml(cards[i], i)}</figure>`
-    ).join("");
-    const capsCls = cards.length ? " has-caps" : "";
-    const outcome = outcomeByUid[uid] ? outcomeHtml(uid) : "";
-    grid.innerHTML =
-      briefHtml(briefByUid[uid]) +
-      (thumbs ? `<div class="task-thumbs${capsCls}">${thumbs}</div>` : "") +
-      outcome;
-  }
-  function toggleGrid(row) {
-    const uid = row.getAttribute("data-uid");
-    if (!uid) return;
-    const grid = row.parentElement.querySelector(`[data-grid="${uid}"]`);
-    if (!grid) return;
-    if (grid.classList.contains("hidden") && !grid.childElementCount) fillGrid(grid, uid);
-    grid.classList.toggle("hidden");
-    row.classList.toggle("is-open");
-  }
-  async function loadRecentTasks() {
-    try {
-      const r = await fetch(`${P}/api/tasks`);
-      if (!r.ok) return;
-      const tasks = await r.json();
-      if (!tasks || !tasks.length) return;
-      $("tasksList").innerHTML = tasks.map(taskRow).join("");
-      show($("tasksPanel"));
-    } catch (_) { /* leave the panel hidden on any error */ }
-  }
-  // Delegated: download links keep their default; a thumbnail opens the
-  // lightbox; an expandable row header toggles its grid.
-  $("tasksList").addEventListener("click", (ev) => {
-    if (ev.target.closest("a")) return; // ZIP + per-thumb download links
-    const oc = ev.target.closest("[data-hist-outcome]");
-    if (oc) { sendHistOutcome(oc); return; }
-    const thumb = ev.target.closest(".task-thumb");
-    if (thumb) { openLightbox(thumb.dataset.uid, +thumb.dataset.idx); return; }
-    const row = ev.target.closest(".task-row.is-expandable");
-    if (row) toggleGrid(row);
-  });
-
-  // Отметка исхода из истории. Список НЕ перерисовываем: перерисовка схлопнула
-  // бы развёрнутую строку прямо под курсором — правим только тронутый блок.
-  async function sendHistOutcome(btn) {
-    const box = btn.closest(".task-outcome");
-    const uid = box.getAttribute("data-outcome-uid");
-    const outcome = btn.getAttribute("data-hist-outcome");
-    const comment = box.querySelector(".oc-comment").value.trim();
-    const status = box.querySelector(".oc-status");
-    setBusy(box, true);
-    const r = await post(`${P}/api/tasks/${uid}/outcome`, { outcome, comment });
-    setBusy(box, false);
-    if (!(r && r.ok)) {
-      status.innerHTML = `<span class="err">Не удалось записать: ${escapeHtml(errText(r ? r.status : 0))}</span>`;
-      return;
-    }
-    const d = await r.json();
-    status.textContent = d.recorded ? "Записано в опыт." : "Исход обновлён.";
-    box.querySelectorAll("[data-hist-outcome]").forEach((b) => {
-      b.classList.toggle("is-picked", b.getAttribute("data-hist-outcome") === outcome);
+  // Double-click protection: freeze every control in a HITL panel while its
+  // request is in flight; unfreeze if the request fails (panel stays visible).
+  // label.t-btn — кнопка загрузки файла: свойства disabled у <label> нет, её
+  // держит только класс is-busy.
+  function setBusy(scope, busy) {
+    scope.querySelectorAll("button, input, textarea, label.t-btn").forEach((e) => {
+      if ("disabled" in e) e.disabled = busy;
+      e.classList.toggle("is-busy", busy);
     });
-    markOutcomeInHistory(uid, outcome, comment);
+  }
+  function errText(status) {
+    if (!status) return "Нет соединения с сервером — проверь сеть и попробуй ещё раз.";
+    if (status === 429) return "Сервер занят — попробуй ещё раз через пару минут.";
+    if (status === 409) return "Задача уже в другом состоянии — обнови страницу.";
+    if (status === 501) return "Генерация недоступна — загрузи картинку.";
+    // 422 на этих роутах приезжает от валидации тела: пустой или слишком
+    // длинный комментарий, чужой action. Без ветки пользователь видел голое
+    // «Ошибка 422» и не понимал, что поправить надо у себя в поле.
+    if (status === 422) return "Проверь поля — комментарий пустой или слишком длинный.";
+    return `Ошибка ${status}`;
   }
 
-  // Бейдж в шапке строки + кэш, из которого строится развёрнутый блок. Вызывают
-  // оба места отметки, поэтому строки в списке может ещё не быть.
-  function markOutcomeInHistory(uid, outcome, comment) {
-    outcomeByUid[uid] = { outcome, comment };
-    const meta = $("tasksList").querySelector(`.task-row[data-uid="${uid}"] .task-meta`);
-    if (!meta) return;
-    let badge = meta.querySelector(".task-badge[class*='is-outcome-']");
-    if (!badge) {
-      badge = document.createElement("span");
-      meta.insertBefore(badge, meta.querySelector(".task-date"));
-    }
-    badge.className = `task-badge is-outcome-${outcome}`;
-    badge.textContent = OUTCOME_LABEL[outcome] || outcome;
-  }
-
-  // ── lightbox gallery ───────────────────────────────────
-  // Page through a task's banners full-size without leaving the page.
-  let lbUid = null, lbIdx = 0;
-  function ensureLightbox() {
-    let lb = $("lightbox");
-    if (lb) return lb;
-    lb = document.createElement("div");
-    lb.id = "lightbox";
-    lb.className = "lightbox hidden";
-    lb.innerHTML =
-      `<button class="lb-close" data-lb="close" aria-label="Закрыть">×</button>` +
-      `<button class="lb-nav lb-prev" data-lb="prev" aria-label="Назад">‹</button>` +
-      `<img id="lbImg" class="lb-img" alt="">` +
-      `<button class="lb-nav lb-next" data-lb="next" aria-label="Вперёд">›</button>` +
-      `<div class="lb-bar"><span id="lbCount"></span><span id="lbCap" class="lb-cap"></span>` +
-      `<a id="lbDl" class="lb-dl" download>Скачать</a></div>`;
-    document.body.appendChild(lb);
-    lb.addEventListener("click", (ev) => {
-      const act = ev.target.getAttribute("data-lb");
-      if (act === "next") lbNav(1);
-      else if (act === "prev") lbNav(-1);
-      else if (act === "close" || ev.target === lb) closeLightbox();
-    });
-    return lb;
-  }
-  function renderLightbox() {
-    const imgs = imagesByUid[lbUid] || [];
-    const u = imgs[lbIdx];
-    if (!u) return;
-    $("lbImg").src = `${P}${u}`;
-    $("lbImg").alt = `Баннер ${lbIdx + 1}`;
-    $("lbCount").textContent = `${lbIdx + 1} / ${imgs.length}`;
-    const card = (cardsByUid[lbUid] || [])[lbIdx];
-    $("lbCap").textContent = card && card.slogan ? card.slogan : "";
-    const dl = $("lbDl"); dl.href = `${P}${u}`; dl.download = fileNameOf(u);
-  }
-  function openLightbox(uid, idx) {
-    lbUid = uid; lbIdx = idx || 0;
-    ensureLightbox(); renderLightbox(); show($("lightbox"));
-  }
-  function closeLightbox() { const lb = $("lightbox"); if (lb) hide(lb); }
-  function lbNav(delta) {
-    const imgs = imagesByUid[lbUid] || [];
-    if (!imgs.length) return;
-    lbIdx = (lbIdx + delta + imgs.length) % imgs.length;
-    renderLightbox();
-  }
-  document.addEventListener("keydown", (ev) => {
-    const lb = $("lightbox");
-    if (!lb || lb.classList.contains("hidden")) return;
-    if (ev.key === "ArrowRight") lbNav(1);
-    else if (ev.key === "ArrowLeft") lbNav(-1);
-    else if (ev.key === "Escape") closeLightbox();
-  });
-
-  // ── rehydrate active task on page load ─────────────────
+  // ── восстановление активной задачи при загрузке ────────
   // Canon-header navigation is a full reload that drops JS state + the
   // EventSource, but the run lives on server-side (detached create_task). Find
   // the active task (localStorage, else /api/tasks), snapshot its state via
   // /pending (EventBus has no replay, so snapshot BEFORE resubscribing), then
   // reattach the stream.
-  async function findActiveUid() {
+  function findActiveUid() {
     const stored = (() => { try { return localStorage.getItem(LS_KEY); } catch (_) { return null; } })();
     if (stored) return stored;
-    try {
-      const r = await fetch(`${P}/api/tasks`);
-      if (!r.ok) return null;
-      const tasks = await r.json();
-      const t = (tasks || []).find((x) => ACTIVE.includes(x.status));
-      return t ? t.task_uid : null;
-    } catch (_) { return null; }
+    const t = tasks.find((x) => ACTIVE.indexOf(x.status) >= 0);
+    return t ? t.task_uid : null;
   }
 
   async function rehydrate() {
-    const uid = await findActiveUid();
+    const uid = findActiveUid();
     if (!uid) return;
     taskUid = uid;
     try {
@@ -799,24 +939,26 @@
       if (!r.ok) { clearActive(); return; }
       const d = await r.json();
       if (d.phase) {
-        // parked at a HITL pause → re-render the decision UI
+        // parked at a HITL pause → плитка метится, разбор ждёт клика
         saveActive(uid);
-        show($("progressPanel"));
-        onAwaiting(d);
+        $("startBtn").disabled = true;
+        onAwaiting(d, true);
         subscribe();
-      } else if (ACTIVE.includes(d.status)) {
+      } else if (ACTIVE.indexOf(d.status) >= 0) {
         // still computing → show progress and reattach the stream
         saveActive(uid);
-        setStep("Продолжаю…");
+        $("startBtn").disabled = true;
+        setStep("Продолжаю…", d.status);
         subscribe();
       } else {
-        // terminal (done/failed/cancelled) since we last saw it
         clearActive();
       }
     } catch (_) { /* leave the brief form as-is on any error */ }
   }
 
-  rehydrate();
-  loadRecentTasks();
-  loadProducts();
+  (async function boot() {
+    await loadTasks();   // лента до восстановления: rehydrate правит уже готовую плитку
+    await rehydrate();
+    loadProducts();
+  })();
 })();

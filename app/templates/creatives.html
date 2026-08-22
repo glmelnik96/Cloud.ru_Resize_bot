@@ -4,17 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260809v6">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
+  {# Живая сетка — общий модуль портала, забран как есть. #}
+  <script src="{{ prefix }}/static/grid.js?v=20260822v12" defer></script>
 </head>
-<body>
+{# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
+   is-landing не копируем — это класс лендинга. #}
+<body class="v11 is-tool is-auth">
+  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Копия эталона из App1 (gateway/templates/base.html),
+     включая data-t на каждом пункте: без него шторка не умеет прокручивать надпись.
+     Ссылки абсолютные от корня домена — переход между разделами это полная
+     перезагрузка, и относительные адреса увели бы в /creatives/images. #}
   <header class="topbar">
     <a class="brand" href="/">Cloud.ru <span>Design</span></a>
     <nav class="topnav">
-      <a href="/images" class="topnav__link">Картинки</a>
-      <a href="/slides" class="topnav__link">Слайды</a>
-      <a href="/creatives" class="topnav__link is-active">Креативы</a>
-      <a href="/present" class="topnav__link">Онлайн трансляции презентаций</a>
-      <a href="/creatives/webinar" class="topnav__link">Вебинары</a>
+      <a href="/images" class="topnav__link" data-t="Картинки">Картинки</a>
+      <a href="/slides" class="topnav__link" data-t="Слайды">Слайды</a>
+      <a href="/creatives" class="topnav__link is-active" data-t="Креативы">Креативы</a>
+      <a href="/present" class="topnav__link" data-t="Трансляции">Трансляции</a>
+      <a href="/creatives/webinar" class="topnav__link" data-t="Вебинары">Вебинары</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -22,162 +30,235 @@
     </div>
   </header>
 
-  <main class="wrap">
-    <h1 class="page-title">Генерация креативов</h1>
-    <p class="page-sub">Бриф → 12 предложений под аудиторию → 12 hero-картинок → 12 баннеров 300×600 (render + photo).</p>
+  <main>
+    <section class="tool">
+      {# Заголовок вынесен из рельса на всю ширину: это единственный
+         крупный кегль страницы, и в колонке 264 он ломался бы переносами.
+         Он же даёт странице третью типографическую ступень — без неё
+         экран был полем одинаковых 11px. #}
+      <h1>Генерация креативов</h1>
+      <div class="tool__grid">
 
-    <!-- Канон v4: двухколоночный workspace — управление слева (sticky), выдача справа -->
-    <div class="workspace">
-    <div class="workspace__controls">
+      {# Рельс — только бриф. Пять «шагов» пайплайна не пять экранов, а одна
+         задача: её остановки живут в плитке ленты и открываются лайтбоксом. #}
+      <aside class="rail">
+        <form id="briefForm" class="gen-form">
+          <label for="productSlug">
+            <span class="field-label">Карточка знаний</span>
+            <select id="productSlug">
+              <option value="auto">Определить автоматически</option>
+              <option value="none">Не использовать</option>
+            </select>
+          </label>
+          <a class="field-note" href="{{ prefix }}/library">Библиотека знаний</a>
 
-    <!-- 1. brief -->
-    <section class="panel" id="briefPanel">
-      <h2>01 · Бриф</h2>
-      <label for="productSlug">Карточка из библиотеки знаний</label>
-      <select id="productSlug">
-        <option value="auto">Определить автоматически</option>
-        <option value="none">Не использовать</option>
-      </select>
-      <p class="page-sub">Факты о продукте, на которые пайплайн опирается и за которые не выходит. Автоопределение ищет продукт по тексту брифа.</p>
-      <p class="page-sub"><a href="{{ prefix }}/library">Библиотека знаний →</a> Там лежит текст карточки: что это, что умеет, кому нужно. Это граница достоверности — сверх карточки баннеры не обещают. Если продукт описан неточно или его там нет, правится это в библиотеке, и правка действует со следующего запуска.</p>
-      <label for="product">Что рекламируем</label>
-      <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
-      <label for="audience">Целевая аудитория</label>
-      <textarea id="audience" placeholder="Кто это, какие боли, чем мотивированы; можно указать канал (TG/VK/IG)"></textarea>
-      <label for="emotion">Эмоция / образ</label>
-      <textarea id="emotion" placeholder="уверенность и контроль — будто всё управление под рукой"></textarea>
-      <p class="page-sub">Формула: «[чувство] + [образ/ассоциация]». Что должен почувствовать человек и с чем это ассоциируется. На этой эмоции строятся 12 предложений под аудиторию.</p>
-      <label for="notes">Свободное поле <span class="page-sub">(необязательно)</span></label>
-      <textarea id="notes" placeholder="Что обязательно упомянуть, что нельзя говорить, на чём сделать акцент"></textarea>
-      <p class="page-sub">Приоритет выше базы знаний и страницы по ссылке: всё, что здесь написано, пайплайн читает пристально и проверяет на каждом предложении.</p>
-      <label for="sourceUrl">Ссылка на страницу продукта <span class="page-sub">(необязательно)</span></label>
-      <input type="url" id="sourceUrl" placeholder="https://cloud.ru/products/...">
-      <p class="page-sub">Страницу прочитает первый узел пайплайна — не надо переписывать описание руками.</p>
-      <div class="btn-row">
-        <button class="btn btn--accent" id="startBtn">Запустить генерацию</button>
-      </div>
-      <div class="status" id="briefStatus"></div>
+          <label for="product">
+            <span class="field-label">Что рекламируем</span>
+            <textarea id="product" placeholder="Продукт или услуга в 1–2 предложениях"></textarea>
+          </label>
+
+          <label for="audience">
+            <span class="field-label">Целевая аудитория</span>
+            <textarea id="audience" placeholder="Кто это, какие боли, чем мотивированы; можно указать канал (TG/VK/IG)"></textarea>
+          </label>
+
+          <label for="emotion">
+            <span class="field-label">Эмоция / образ</span>
+            <textarea id="emotion" placeholder="уверенность и контроль — будто всё управление под рукой"></textarea>
+          </label>
+          {# Единственная подсказка рельса: формулу «чувство + образ» из подписи
+             поля не вывести, а без неё поле заполняют одним прилагательным. #}
+          <p class="muted">Формула: «[чувство] + [образ]».</p>
+
+          <label for="notes">
+            <span class="field-label">Свободное поле</span>
+            <textarea id="notes" placeholder="Что обязательно упомянуть, чего нельзя говорить, на чём сделать акцент"></textarea>
+          </label>
+
+          <label for="sourceUrl">
+            <span class="field-label">Ссылка на страницу продукта</span>
+            <input type="url" id="sourceUrl" placeholder="https://cloud.ru/products/...">
+          </label>
+
+          <button type="submit" id="startBtn">Запустить генерацию</button>
+        </form>
+
+        <div class="status" id="briefStatus"></div>
+
+        {# Единственное место для объяснений: длинные абзацы не висят над полями
+           и над панелями остановок, а лежат здесь свёрнутыми. Путь задачи
+           показывает маршрут в ленте, поэтому перечислять шаги тут незачем. #}
+        <details class="tool-details">
+          <summary>Как это работает</summary>
+          <div class="tool-details__body">
+            <p class="muted">Из брифа собираются 12 баннеров 300×600 под одну аудиторию.</p>
+            <p class="muted">Отмеченная плитка ленты ждёт решения — клик открывает его.</p>
+            <p class="muted">Свободное поле весит больше карточки знаний и страницы по ссылке.</p>
+          </div>
+        </details>
+      </aside>
+
+      {# Лента — единственное место жизни задачи. Плитка = один креатив;
+         пока креативов нет, плитка показывает состояние прогона. #}
+      <section class="feed" id="feed">
+        <div class="lp-grid lp-grid--page"><canvas class="lp-grid__canvas"></canvas></div>
+        <header class="feed__head">
+          <p class="feed__title">Креативы</p>
+          <span class="feed__count" id="feedCount">0</span>
+        </header>
+        {# Маршрут — пять остановок задачи одной строкой. В покое это оглавление
+           раздела, в прогоне указатель «мы здесь», на остановке отметка «ждёт
+           человека». Поэтому перечисления шагов текстом в рельсе больше нет:
+           одно место вместо абзаца, и оно же живое. #}
+        <ol class="route" id="route">
+          <li class="route__stop"><b>01</b>Бриф</li>
+          <li class="route__stop"><b>02</b>Персона</li>
+          <li class="route__stop"><b>03</b>Тексты</li>
+          <li class="route__stop"><b>04</b>Hero</li>
+          <li class="route__stop"><b>05</b>Баннеры</li>
+        </ol>
+        <div class="feed__grid" id="feedGrid"></div>
+        <p class="feed__empty" id="feedEmpty">Креативов пока нет</p>
+        <p class="feed__foot" id="feedFoot" hidden>История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
+      </section>
+
+      </div><!-- /.tool__grid -->
     </section>
 
-    <!-- 4. image HITL (управление: генерация/загрузка hero) -->
-    <section class="panel hidden" id="imagePanel">
-      <h2>04 · Hero-картинки</h2>
-      <p class="page-sub">12 hero-картинок (по одной на предложение, сценарий render/photo выбран под каждое). Можно сгенерировать на сервере все сразу или загрузить свою одну картинку. Ниже — задумка образа и промпт первого предложения.</p>
-      <div class="metaphor hidden" id="metaphorBox">
-        <div class="kv"><b>Задумка:</b> <span id="mIdea"></span></div>
-        <div class="kv"><b>Читатель должен подумать:</b> <span id="mInfer"></span></div>
-        <div class="kv"><b>Не должно читаться как:</b> <span id="mAnti"></span></div>
-        <label for="metaphorComment">Что не так с образом <span class="page-sub">(если всё нравится — просто загрузи картинку)</span></label>
-        <textarea id="metaphorComment" placeholder="Слишком буквально; хочу без людей; ближе к идее скорости"></textarea>
-        <div class="btn-row">
-          <button class="btn" id="metaphorBtn">Переделать образ</button>
-        </div>
-      </div>
-      <pre class="prompt" id="imagePrompt"></pre>
-      <div class="btn-row">
-        <button class="btn btn--accent hidden" id="genBtn">Сгенерировать 12 hero</button>
-        <label class="btn" for="heroFile">Загрузить картинку</label>
-        <input type="file" id="heroFile" accept="image/*" class="hidden">
-        <button class="btn btn--danger" id="imgCancel">Отменить</button>
-      </div>
-      <div class="status" id="imageStatus"></div>
-    </section>
-
-    </div><!-- /.workspace__controls -->
-    <div class="workspace__output">
-
-    <!-- 0. empty-state: первый вход — правая колонка не пустая (канон v4) -->
-    <div class="empty" id="emptyState">
-      <h2>Как это работает</h2>
-      <p>Раздел собирает рекламные баннеры под конкретную аудиторию из короткого брифа: что рекламируете, на кого и какую эмоцию хотите вызвать. Готовые баннеры можно скачать по одному или ZIP-архивом.</p>
-      <ul>
-        <li><b>01 · Бриф</b> — продукт, аудитория, эмоция/образ; плюс необязательные свободное поле и ссылка на страницу продукта, которую пайплайн прочитает сам.</li>
-        <li><b>02 · Кому пишем</b> — пайплайн выводит персону аудитории; вы правите боли, мотивации и возражения, из которых потом собираются тексты.</li>
-        <li><b>03 · Тексты</b> — маркетолог пишет 24 черновика, персона ЦА отбирает из них 12 лучших от своего лица; вы выбираете, какой текст ведёт.</li>
-        <li><b>04 · Hero</b> — под каждое предложение генерируется своя картинка (render или photo — выбирается автоматически), либо вы загружаете одну свою.</li>
-        <li><b>05 · Баннеры</b> — 12 готовых 300×600, текст, CTA и логотип уже наложены композером.</li>
-      </ul>
-    </div>
-
-    <!-- 2. progress -->
-    <section class="panel hidden" id="progressPanel">
-      <h2>Прогресс</h2>
-      <div class="status" id="progress"><span class="step"><span class="dot"></span><span id="stepLabel">Запуск…</span></span></div>
-      <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
-    </section>
-
-    <!-- 2.5 persona HITL -->
-    <section class="panel hidden" id="personaPanel">
-      <h2>02 · Кому пишем</h2>
-      <p class="page-sub">Так пайплайн понял вашу аудиторию. Боли, мотивации и возражения — это якоря, из которых собираются все тексты: правьте прямо здесь, каждая строка с новой строки.</p>
-      <div class="kb-badge" id="personaKb"></div>
-      <label for="personaSegment">Сегмент</label>
-      <input type="text" id="personaSegment">
-      <label for="personaAge">Возраст</label>
-      <input type="text" id="personaAge">
-      <label for="personaPains">Боли</label>
-      <textarea id="personaPains"></textarea>
-      <label for="personaMotivations">Мотивации</label>
-      <textarea id="personaMotivations"></textarea>
-      <label for="personaObjections">Возражения</label>
-      <textarea id="personaObjections"></textarea>
-      <label for="personaStyle">Как с ними говорить</label>
-      <textarea id="personaStyle"></textarea>
-      <div class="btn-row">
-        <button class="btn btn--accent" data-pact="approve">Продолжить</button>
-        <button class="btn" data-pact="regenerate">Вывести заново</button>
-        <button class="btn btn--danger" data-pact="cancel">Отменить</button>
-      </div>
-      <div class="status" id="personaStatus"></div>
-    </section>
-
-    <!-- 3. text HITL -->
-    <section class="panel hidden" id="textPanel">
-      <h2>03 · Тексты — 12 предложений под аудиторию</h2>
-      <p class="page-sub">Отсортированы по предсказанному резонансу с ЦА. У каждого — почему этот угол должен зайти.</p>
-      <p class="page-sub">Баннер получат все двенадцать — у каждого свой текст и своя картинка. Главный отличается тремя вещами: он идёт баннером №1, только его образ можно переделать комментарием на следующем шаге, и именно он попадёт в отмеченный опыт.</p>
-      <div class="btn-row">
-        <button class="btn btn--accent" data-act="approve">Принять</button>
-        <button class="btn" data-act="regenerate">Перегенерить все</button>
-        <button class="btn btn--danger" data-act="cancel">Отменить</button>
-      </div>
-      <div class="status" id="textStatus"></div>
-      <div id="candidates" class="candidates"></div>
-    </section>
-
-    <!-- 5. results -->
-    <section class="panel hidden" id="resultsPanel">
-      <h2>05 · Баннеры</h2>
-      <div id="resultMsg"></div>
-      <details class="recipe hidden" id="recipePanel">
-        <summary>Как сделан этот баннер</summary>
-        <div id="recipeBody"></div>
-      </details>
-      <div class="outcome" id="outcomeBox">
-        <p class="page-sub">Что стало с этим баннером? Ответ попадёт в опыт и повлияет на следующие запуски по этому продукту.</p>
-        <label for="outcomeComment">Комментарий <span class="page-sub">(необязательно)</span></label>
-        <textarea id="outcomeComment" placeholder="Почему взяли или почему нет"></textarea>
-        <div class="btn-row">
-          <button class="btn btn--accent" data-outcome="shipped">Пошёл в кампанию</button>
-          <button class="btn" data-outcome="rejected">Отклонили</button>
-        </div>
-        <div class="status" id="outcomeStatus"></div>
-      </div>
-      <div class="results" id="results"></div>
-    </section>
-
-    <!-- 6. recent tasks (history within the 24h retention window) -->
-    <section class="panel hidden" id="tasksPanel">
-      <h2>Последние креативы</h2>
-      <p class="retention-note">История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
-      <div class="task-list" id="tasksList"></div>
-    </section>
-
-    </div><!-- /.workspace__output -->
-    </div><!-- /.workspace -->
+    <footer class="lp-foot">
+      <a href="{{ prefix }}/library">Библиотека знаний</a>
+      <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
+    </footer>
   </main>
 
+  {# Лайтбокс — рабочий стол задачи. Четыре режима в одной раме: просмотр
+     баннера (две колонки) и три остановки пайплайна (одна колонка). Панели
+     лежат в разметке, а не собираются скриптом: на них навешаны обработчики
+     при загрузке, и пересборка отрывала бы их. #}
+  <div class="lightbox hidden" id="lightbox">
+    <div class="lightbox__backdrop" data-lb="close"></div>
+    <div class="lightbox__panel" id="lbPanel">
+
+      <!-- режим «баннер» -->
+      <div class="lb-col hidden" id="lbView">
+        <img class="lb-img" id="lbImg" alt="">
+      </div>
+      <div class="lightbox__side hidden" id="lbSide">
+        <div class="lb-bar">
+          <button type="button" class="t-btn" data-lb="prev" title="Назад (←)">←</button>
+          <button type="button" class="t-btn" data-lb="next" title="Вперёд (→)">→</button>
+          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+        </div>
+        <div class="lb-counter" id="lbCount"></div>
+        <div class="lb-caption" id="lbCap"></div>
+        <div class="lb-actions" id="lbActions"></div>
+      </div>
+
+      <!-- 02 · остановка на персоне -->
+      <div class="lb-col hidden" id="personaPanel">
+        <div class="lb-bar">
+          <h2 class="lb-title">02 · Кому пишем</h2>
+          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+        </div>
+        <p class="muted">Якоря, из которых соберутся тексты. Списки — по строке на пункт.</p>
+        <div class="lb-counter" id="personaKb"></div>
+        <div class="gen-form">
+          <label for="personaSegment">
+            <span class="field-label">Сегмент</span>
+            <input type="text" id="personaSegment">
+          </label>
+          <label for="personaAge">
+            <span class="field-label">Возраст</span>
+            <input type="text" id="personaAge">
+          </label>
+          <label for="personaPains">
+            <span class="field-label">Боли</span>
+            <textarea id="personaPains"></textarea>
+          </label>
+          <label for="personaMotivations">
+            <span class="field-label">Мотивации</span>
+            <textarea id="personaMotivations"></textarea>
+          </label>
+          <label for="personaObjections">
+            <span class="field-label">Возражения</span>
+            <textarea id="personaObjections"></textarea>
+          </label>
+          <label for="personaStyle">
+            <span class="field-label">Как с ними говорить</span>
+            <textarea id="personaStyle"></textarea>
+          </label>
+        </div>
+        <div class="lb-group__row">
+          <button type="button" class="t-btn t-btn--key" data-pact="approve">Продолжить</button>
+          <button type="button" class="t-btn" data-pact="regenerate">Вывести заново</button>
+          <button type="button" class="t-btn" data-pact="cancel">Отменить задачу</button>
+        </div>
+        <div class="status" id="personaStatus"></div>
+      </div>
+
+      <!-- 03 · остановка на текстах -->
+      <div class="lb-col hidden" id="textPanel">
+        <div class="lb-bar">
+          <h2 class="lb-title">03 · Тексты — 12 предложений под аудиторию</h2>
+          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+        </div>
+        <p class="muted">Баннер получат все двенадцать. Главный идёт первым, только
+          его образ переделывается комментарием, и он попадёт в отмеченный опыт.</p>
+        <div class="lb-group__row">
+          <button type="button" class="t-btn t-btn--key" data-act="approve">Принять</button>
+          <button type="button" class="t-btn" data-act="regenerate">Перегенерить все</button>
+          <button type="button" class="t-btn" data-act="cancel">Отменить задачу</button>
+        </div>
+        <div class="status" id="textStatus"></div>
+        <div class="cand-grid" id="candidates"></div>
+      </div>
+
+      <!-- 04 · остановка на hero -->
+      <div class="lb-col hidden" id="imagePanel">
+        <div class="lb-bar">
+          <h2 class="lb-title">04 · Hero-картинки</h2>
+          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+        </div>
+        <p class="muted">По картинке на предложение — сгенерировать 12 или загрузить одну свою.</p>
+        <div class="lb-block hidden" id="metaphorBox">
+          <div class="kv"><b>Задумка</b> <span id="mIdea"></span></div>
+          <div class="kv"><b>Читатель должен подумать</b> <span id="mInfer"></span></div>
+          <div class="kv"><b>Не должно читаться как</b> <span id="mAnti"></span></div>
+          <div class="gen-form">
+            <label for="metaphorComment">
+              <span class="field-label">Что не так с образом</span>
+              <textarea id="metaphorComment" placeholder="Слишком буквально; хочу без людей; ближе к идее скорости"></textarea>
+            </label>
+          </div>
+          <div class="lb-group__row">
+            <button type="button" class="t-btn" id="metaphorBtn">Переделать образ</button>
+          </div>
+        </div>
+        <pre class="lb-prompt" id="imagePrompt"></pre>
+        <div class="lb-group__row">
+          <button type="button" class="t-btn t-btn--key hidden" id="genBtn">Сгенерировать 12 hero</button>
+          <label class="t-btn" for="heroFile">Загрузить картинку</label>
+          <input type="file" id="heroFile" accept="image/*" class="hidden">
+          <button type="button" class="t-btn" id="imgCancel">Отменить задачу</button>
+        </div>
+        <div class="status" id="imageStatus"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Чертёж заперт в раму ленты: сцена — сама лента, притирка — к сетке
+    // плиток, иначе фаза линий случайная и плитки не садятся на них.
+    document.addEventListener("DOMContentLoaded", function () {
+      window.lpGrid({
+        grid: document.querySelector(".lp-grid--page"),
+        stage: document.getElementById("feed"),
+        alignTo: document.getElementById("feedGrid"),
+      });
+    });
+  </script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260811v1"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260822v12"></script>
 </body>
 </html>

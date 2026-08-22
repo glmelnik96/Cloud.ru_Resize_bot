@@ -49,6 +49,24 @@ _NODE_LABELS: dict[str, str] = {
     "render_all": "Собираю ZIP",
 }
 
+# Остановка маршрута, к которой относится узел. Полоса в ленте показывает
+# человеку, где он в пятишаговом пути (01 бриф → 05 баннеры), а узлов больше,
+# чем остановок: несколько подряд складываются в одну. Номер едет по SSE рядом
+# с подписью именно потому, что подпись — текст для человека, и её правка не
+# должна молча гасить подсветку в браузере.
+_STAGE_PERSONA, _STAGE_TEXTS, _STAGE_HERO, _STAGE_BANNERS = 2, 3, 4, 5
+_NODE_STAGE: dict[str, int] = {
+    "understand_product": _STAGE_PERSONA,
+    "derive_persona": _STAGE_PERSONA,
+    "generate_message_candidates": _STAGE_TEXTS,
+    "select_by_persona": _STAGE_TEXTS,
+    "lint_candidates": _STAGE_TEXTS,
+    "route_image_style": _STAGE_HERO,
+    "generate_image_prompt": _STAGE_HERO,
+    "fill_templates_per_format": _STAGE_BANNERS,
+    "render_all": _STAGE_BANNERS,
+}
+
 # Non-terminal statuses count toward a user's open-session budget. App3 gates
 # create() by a DB count of these (not TaskManager.has_capacity) because parked
 # tasks legitimately sit open for a long time.
@@ -197,6 +215,7 @@ class CreativesService:
             await self._run_segment(
                 task_uid, user_id, payload, reporter,
                 first_label=_NODE_LABELS["understand_product"],
+                first_stage=_STAGE_PERSONA,
             )
 
         if not await self.manager.submit(user_id, runner):
@@ -309,7 +328,9 @@ class CreativesService:
                         user_id=end_user_id, email=end_user_email,
                     )
                 done_count += 1
-                await reporter.step(f"Генерирую hero-картинки ({done_count}/{total})")
+                await reporter.step(
+                    f"Генерирую hero-картинки ({done_count}/{total})", stage=_STAGE_HERO
+                )
                 return {
                     "url": None,
                     "local_path": str(dest),
@@ -360,6 +381,7 @@ class CreativesService:
                 task_uid, user_id,
                 Command(resume={"action": "upload", "heroes": heroes}),
                 reporter, first_label="Накладываю в шаблоны",
+                first_stage=_STAGE_BANNERS,
             )
 
         if not await self.manager.submit(user_id, runner):
@@ -413,11 +435,16 @@ class CreativesService:
         reporter: WebStatusReporter,
         *,
         first_label: str = "Запуск",
+        first_stage: int | None = None,
     ) -> None:
         """Run one compute segment to the next interrupt or to the terminal.
-        Holds global_sem only while computing; releases at park."""
+        Holds global_sem only while computing; releases at park.
+
+        first_stage — остановка маршрута для стартового события. None у
+        сегментов, которые продолжают путь с того же места: браузер оставит
+        подсвеченной ту остановку, что уже стоит."""
         await self._set_status(task_uid, "running", started=True)
-        await reporter.start(first_label)
+        await reporter.start(first_label, stage=first_stage)
         try:
             async with self.manager.global_sem:
                 final = await self._stream(task_uid, payload, reporter)
@@ -469,7 +496,7 @@ class CreativesService:
                     final.update(update)
                 label = _NODE_LABELS.get(node_name)
                 if label:
-                    await reporter.step(label)
+                    await reporter.step(label, stage=_NODE_STAGE.get(node_name))
         return final
 
     async def _park(self, task_uid: str, reporter: WebStatusReporter, value: Any) -> None:
