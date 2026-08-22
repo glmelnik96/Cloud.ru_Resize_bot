@@ -48,13 +48,15 @@ def test_index_renders_canon_header(tmp_path, monkeypatch):
 def test_static_css_served(tmp_path, monkeypatch):
     """Отдаётся лист канона v11: чернила, единственный акцент и модуль 24.
     Ключ проверяем по --lp-key, а не по --accent: --accent остался ради
-    совместимости, а палитру портала задаёт именно --lp-key."""
+    совместимости, а палитру портала задаёт именно --lp-key.
+    Чернила сведены с App2: полюса у двух разделов одного портала обязаны
+    совпадать, иначе переход между ними читается сменой площадки."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         r = c.get("/static/app.css")
         assert r.status_code == 200
         css = r.text
         assert "--lp-key: #3FB67C" in css  # единственный акцент палитры
-        assert "--lp-ink: #0A0C0B" in css  # чернила
+        assert "--lp-ink: #141817" in css  # чернила
         assert "--lp-cell: 24px" in css  # модуль, на котором стоит вся геометрия
 
 
@@ -314,3 +316,28 @@ def test_app_css_carries_library_classes(tmp_path, monkeypatch):
         assert ".scen-card" in css  # строка каталога продуктов
         assert ".exp-item" in css  # строка отмеченного опыта и доступов
         assert ".kb-block" in css  # высокие поля блоков карточки
+
+
+def test_css_repaints_the_stone_floor_by_tokens_only(tmp_path, monkeypatch):
+    """Светлый этаж перекрашивается переопределением переменных на .rail.
+    Ни одного правила вида `.rail .что-то { color: ... }` быть не должно:
+    дубль цвета — это второе место, где живёт правда о палитре."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert "--lp-ink: #D9DEDB" in css  # камень, не белый
+        assert "--lp-muted: #565E5B" in css  # 4.6:1 к камню — AA
+        assert "--lp-hi: #1B211F" in css  # инверсия на светлом идёт в темноту
+        assert "--lp-key: #35A171" in css  # ступень вниз: #3FB67C на камне светится
+        assert "--sl-surface: #CBD1CE" in css  # ящик утоплен, а не приподнят
+        # Полюса сведены с App2: расхождение в одну ступень между двумя
+        # разделами одного портала хуже, чем разница двух оттенков серого.
+        assert "--lp-line-2: #2C3532" in css
+        assert "--lp-line-2: #333D3A" not in css
+        assert "scrollbar-gutter: stable" in css
+
+
+def test_css_has_no_duplicated_colour_rules_under_rail(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        for sel in (".rail .t-btn", ".rail .field-label", ".rail input", ".rail button"):
+            assert sel not in css
