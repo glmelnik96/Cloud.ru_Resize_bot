@@ -3,25 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Креативы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
+  <title>Промо-баннеры — Cloud.ru Design</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260823v1">
   {# Живая сетка — общий модуль портала, забран как есть. #}
 </head>
 {# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
    is-landing не копируем — это класс лендинга. #}
 <body class="v11 is-tool is-auth">
-  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Копия эталона из App1 (gateway/templates/base.html),
-     включая data-t на каждом пункте: без него шторка не умеет прокручивать надпись.
+  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Геометрия и разметка — эталон App1
+     (gateway/templates/base.html), включая data-t на каждом пункте: без него
+     шторка не умеет прокручивать надпись.
+     Надписи разошлись с эталоном СОЗНАТЕЛЬНО: разделы названы тем, что человек
+     получает на выходе. «Слайды» — единица файла, «Креативы» — жаргон отдела;
+     ни то, ни другое не говорит, что лежит за пунктом. Это обязательство перед
+     App1: пока шлюз не подтянет те же надписи, у одного раздела два имени.
+     Пунктов три, и все три делают материал. Вебинарные ресайзы ушли потому, что
+     они внутренность промо-баннеров, как и библиотека: пятым пунктом они делали
+     шапку списком страниц приложения вместо списка разделов портала — вход в
+     них остался в подвале. Трансляции сняты решением Глеба; ссылки на /present
+     в App3 больше нет нигде, и если раздел живой, вход в него обязан вернуть
+     шлюз.
      Ссылки абсолютные от корня домена — переход между разделами это полная
      перезагрузка, и относительные адреса увели бы в /creatives/images. #}
   <header class="topbar">
     <a class="brand" href="/">Cloud.ru <span>Design</span></a>
     <nav class="topnav">
       <a href="/images" class="topnav__link" data-t="Картинки">Картинки</a>
-      <a href="/slides" class="topnav__link" data-t="Слайды">Слайды</a>
-      <a href="/creatives" class="topnav__link is-active" data-t="Креативы">Креативы</a>
-      <a href="/present" class="topnav__link" data-t="Трансляции">Трансляции</a>
-      <a href="/creatives/webinar" class="topnav__link" data-t="Вебинары">Вебинары</a>
+      <a href="/slides" class="topnav__link" data-t="Презентации">Презентации</a>
+      <a href="/creatives" class="topnav__link is-active" data-t="Промо-баннеры">Промо-баннеры</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -88,15 +97,15 @@
         </details>
       </aside>
 
-      {# Лента — единственное место жизни задачи. Плитка = один креатив;
-         пока креативов нет, плитка показывает состояние прогона. #}
+      {# Лента — единственное место жизни задачи. Строка = один прогон;
+         пока баннеров нет, строка показывает его состояние. #}
       <section class="feed" id="feed">
         {# Заголовок стоит на этаже чернил, а не над обоими: он называет то, что
            человек смотрит, а не то, чем управляет. Он же даёт странице третью
            типографическую ступень — без неё экран был полем одинаковых 11px. #}
-        <h1>Генерация креативов</h1>
+        <h1>Промо-баннеры</h1>
         <header class="feed__head">
-          <p class="feed__title">Креативы</p>
+          <p class="feed__title">Баннеры</p>
           <span class="feed__count" id="feedCount">0</span>
         </header>
         {# Маршрут — пять остановок задачи одной строкой. В покое это оглавление
@@ -248,6 +257,6 @@
   </div>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/creatives.js?v=20260822v12"></script>
+  <script src="{{ prefix }}/static/creatives.js?v=20260823v1"></script>
 </body>
 </html>

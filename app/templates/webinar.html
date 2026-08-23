@@ -3,25 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Вебинары — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
+  <title>Вебинарные ресайзы — Cloud.ru Design</title>
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260823v1">
   {# Живая сетка — общий модуль портала, забран как есть. #}
 </head>
 {# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
    is-landing не копируем — это класс лендинга. #}
 <body class="v11 is-tool is-auth">
-  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Копия эталона из App1 (gateway/templates/base.html),
-     включая data-t на каждом пункте: без него шторка не умеет прокручивать надпись.
-     Ссылки абсолютные от корня домена — переход между разделами это полная
-     перезагрузка, и относительные адреса увели бы в /creatives/images. #}
+  {# КАНОНИЧЕСКАЯ ШАПКА ПЛАТФОРМЫ. Геометрия и разметка — эталон App1
+     (gateway/templates/base.html); надписи разошлись сознательно, разбор
+     в creatives.html. Своего пункта у вебинарных ресайзов больше нет: они
+     внутренность промо-баннеров, поэтому подсвечены именно они, а путь назад
+     даёт подвал. #}
   <header class="topbar">
     <a class="brand" href="/">Cloud.ru <span>Design</span></a>
     <nav class="topnav">
       <a href="/images" class="topnav__link" data-t="Картинки">Картинки</a>
-      <a href="/slides" class="topnav__link" data-t="Слайды">Слайды</a>
-      <a href="/creatives" class="topnav__link" data-t="Креативы">Креативы</a>
-      <a href="/present" class="topnav__link" data-t="Трансляции">Трансляции</a>
-      <a href="/creatives/webinar" class="topnav__link is-active" data-t="Вебинары">Вебинары</a>
+      <a href="/slides" class="topnav__link" data-t="Презентации">Презентации</a>
+      <a href="/creatives" class="topnav__link is-active" data-t="Промо-баннеры">Промо-баннеры</a>
     </nav>
     <div class="topbar__auth">
       <span class="topbar__user">{{ email }}</span>
@@ -81,7 +80,7 @@
             <p class="muted">Один макет — все форматы семейства из одного изображения и текстов.</p>
             <p class="muted">Спикер — загруженное фото, метафора — рендер по описанию.</p>
             <p class="muted">Кадрирование сажает объект в композицию каждого формата.</p>
-            <p class="muted"><a href="{{ prefix }}/">Генерация креативов</a></p>
+            <p class="muted"><a href="{{ prefix }}/">Промо-баннеры</a></p>
           </div>
         </details>
       </aside>
@@ -112,7 +111,7 @@
     </section>
 
     <footer class="lp-foot">
-      <a href="{{ prefix }}/">Генерация креативов</a>
+      <a href="{{ prefix }}/">Промо-баннеры</a>
       <a href="{{ prefix }}/library">Библиотека знаний</a>
     </footer>
   </main>
@@ -160,6 +159,6 @@
   </div>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/webinar.js?v=20260822v12"></script>
+  <script src="{{ prefix }}/static/webinar.js?v=20260823v1"></script>
 </body>
 </html>

@@ -32,10 +32,27 @@ def test_index_renders_canon_header(tmp_path, monkeypatch):
         r = c.get("/", headers=_HDR)
         assert r.status_code == 200
         html = r.text
-        # canon nav: 3 sections, is-active on Креативы, brand split span
+        # canon nav: 4 sections, is-active on Промо-баннеры, brand split span
         assert 'href="/images"' in html
         assert 'href="/slides"' in html
         assert 'href="/creatives" class="topnav__link is-active"' in html
+        # Разделы названы тем, что человек получает на выходе. «Слайды» и
+        # «Креативы» — слова производства, а не результата: слайд это единица
+        # файла, креатив — жаргон отдела. data-t обязан совпадать с надписью,
+        # иначе шторка прокручивает одно, а на месте стоит другое.
+        assert 'data-t="Презентации">Презентации' in html
+        assert 'data-t="Промо-баннеры">Промо-баннеры' in html
+        assert "Слайды" not in html
+        assert "Креативы" not in html
+        # Вебинарные ресайзы — не раздел платформы, а внутренность промо-баннеров,
+        # ровно как библиотека. Пятым пунктом они делали шапку списком страниц
+        # приложения вместо списка разделов портала. Вход остался в подвале.
+        assert 'data-t="Вебинары"' not in html
+        # Трансляции сняты по решению Глеба (2026-08-23): в шапке остаются три
+        # раздела, которые делают материал. Ссылка на /present ушла из App3
+        # целиком — если раздел живой, вход в него обязан вернуть шлюз.
+        assert 'data-t="Трансляции"' not in html
+        assert 'href="/present"' not in html
         assert "Cloud.ru <span>Design</span>" in html
         # user email + logout to gateway
         assert "gleb@cloud.ru" in html
@@ -204,15 +221,21 @@ def test_empty_prefix_serves_assets_and_api_at_root(tmp_path, monkeypatch):
 
 
 def test_webinar_page_renders(tmp_path, monkeypatch):
-    """The webinar resizes page serves with canon nav (is-active on Вебинары)
-    and loads its own fit-engine script."""
+    """Страница вебинарных ресайзов несёт канон-шапку и свой скрипт кадрирования.
+    Своего пункта в шапке у неё нет: ресайзы — внутренность промо-баннеров, как и
+    библиотека, поэтому подсвечены «Промо-баннеры», а путь назад даёт подвал."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         r = c.get("/webinar", headers=_HDR)
         assert r.status_code == 200
         html = r.text
         # data-t обязателен на каждом пункте канон-шапки: без него шторка не
         # умеет прокручивать надпись, поэтому проверяем пункт целиком.
-        assert 'class="topnav__link is-active" data-t="Вебинары">Вебинары' in html
+        assert 'class="topnav__link is-active" data-t="Промо-баннеры">Промо-баннеры' in html
+        assert 'data-t="Вебинары"' not in html
+        # Раз пункта в шапке нет, путь назад обязан быть на странице — иначе
+        # ресайзы становятся тупиком, куда попадают и откуда не выходят.
+        # Ссылка идёт через prefix: за шлюзом корень приложения — /creatives/.
+        assert 'href="/creatives/">Промо-баннеры' in html
         assert "/creatives/static/webinar.js" in html
         assert 'id="fitCanvas"' in html
 
@@ -242,9 +265,9 @@ def test_library_page_carries_canon_topbar(tmp_path, monkeypatch):
         assert r.status_code == 200
         html = r.text
         assert "Библиотека знаний" in html
-        assert 'class="topnav__link is-active" data-t="Креативы">Креативы' in html
+        assert 'class="topnav__link is-active" data-t="Промо-баннеры">Промо-баннеры' in html
         assert "topnav__link\">Библиотека" not in html
-        assert "Вернуться к генерации креативов" in html
+        assert 'href="/creatives/">Вернуться к промо-баннерам' in html
         assert 'href="/images"' in html
         assert 'href="/slides"' in html
         assert 'href="/creatives"' in html
@@ -325,7 +348,8 @@ def test_css_repaints_the_stone_floor_by_tokens_only(tmp_path, monkeypatch):
     дубль цвета — это второе место, где живёт правда о палитре."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
-        assert "--lp-ink: #D9DEDB" in css  # камень, не белый
+        assert "--sl-stone: #D9DEDB" in css  # камень, не белый
+        assert "--lp-ink: var(--sl-stone)" in css  # рельс берёт его оттуда же, что и сетка
         assert "--lp-muted: #565E5B" in css  # 4.6:1 к камню — AA
         assert "--lp-hi: #1B211F" in css  # инверсия на светлом идёт в темноту
         assert "--lp-key: #35A171" in css  # ступень вниз: #3FB67C на камне светится
@@ -484,3 +508,30 @@ def test_hints_did_not_grow(tmp_path, monkeypatch):
         hints = re.findall(r'<p class="muted">(.*?)</p>', html, re.S)
         total = sum(len(re.sub(r"<[^>]+>", "", h).strip()) for h in hints)
         assert total <= 240, total
+
+
+def test_stone_floor_reaches_the_bottom_of_the_page(tmp_path, monkeypatch):
+    """Камень — этаж, а не колонка высотой в окно. Рельс липкий и ростом ровно
+    в экран, поэтому ниже первого экрана его столбец оставался бы чернилами:
+    светлое поле обрывалось бы посреди страницы. Красит столбец не рельс и даже
+    не сетка, а main — единственный узел, который тянется до самого низа
+    страницы, включая полосу подвала. Цвет берётся из одного места."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert "--sl-stone:" in css
+        main = css.split("body.is-tool main {", 1)[1].split("}", 1)[0]
+        assert "linear-gradient" in main
+        assert "var(--sl-stone)" in main
+        assert "360px" in main
+        rail = css.split(".rail { --lp-ink:", 1)[1].split(";", 1)[0]
+        assert "var(--sl-stone)" in rail
+        # В одну колонку красить нечего: рельс встаёт НАД лентой, и вертикальная
+        # заливка слева легла бы поперёк обоих этажей.
+        narrow = css.split("@media (max-width: 860px) {", 1)[1]
+        assert "background: none" in narrow.split("body.is-tool main {", 1)[1].split("}", 1)[0]
+        # Подвал — служебная строка этажа чернил, и начинаться обязан там же, где
+        # этаж. Отцентрованный по всей ширине, он заезжает светлыми ссылками на
+        # камень: на 900px «Библиотека знаний» встаёт левее 360 и пропадает.
+        foot = css.split("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
+        assert "margin-left: 360px" in foot
+        assert "margin-left: 0" in narrow.split("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
