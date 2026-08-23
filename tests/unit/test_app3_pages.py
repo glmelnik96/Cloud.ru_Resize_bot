@@ -450,6 +450,11 @@ def test_row_and_stop_bar_align_by_centre_not_baseline(tmp_path, monkeypatch):
         assert "height: 48px" in hit
         bar = css.split(".lb-bar { display: flex;", 1)[1].split("}", 1)[0]
         assert "align-items: center" in bar
+        # Зазор между текстом строки и действиями принадлежит строке: клик в него
+        # приходился на .work__head, у которого обработчика нет, — мёртвая полоса
+        # в 24px вплотную слева от кнопки, ровно там, куда промахиваются.
+        assert "margin-right: -24px" in hit
+        assert "padding: 0 36px 0 12px" in hit
         # Пара текстов базовую линию сохраняет: там она и нужна.
         head = css.split(".feed__head { display: flex;", 1)[1].split("}", 1)[0]
         assert "align-items: baseline" in head

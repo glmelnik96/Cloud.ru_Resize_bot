@@ -432,8 +432,14 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
    центрирует группу, а приклеивает её к верху: имя вставало на y 0…24, метки —
    на 1…25. Кнопка справа живёт не здесь, а в .work__head с align-items: center,
    то есть на y 12…36 — и текст читался на 12px выше кнопки в той же строке. */
+/* Зазор 24 между текстом строки и действиями принадлежит строке, а не пустоте:
+   без этого клик в него приходился на .work__head, у которого обработчика нет,
+   и вплотную слева от «Открыть решение» лежала мёртвая полоса. Отрицательное
+   поле съедает зазор границей, отбивка отдаёт его обратно — правый край текста
+   остаётся на месте, картинка не меняется. */
 .work__hit { flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
-  gap: 24px; height: 48px; padding: 0 12px; cursor: pointer;
+  gap: 24px; height: 48px; padding: 0 36px 0 12px; margin-right: -24px;
+  cursor: pointer;
   border: 0; border-radius: 0; background: none; text-align: left;
   font-family: var(--font-text); color: var(--lp-text); }
 /* Имя работы — содержание, поэтому Display и крупнее служебного. Переносов нет
