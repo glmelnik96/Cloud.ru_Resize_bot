@@ -169,6 +169,18 @@
   };
   const HITL_PANELS = ["personaPanel", "textPanel", "imagePanel"];
 
+  // Панель остановки лежит в ящике строки как перемещённый узел, а не копия:
+  // обработчики на ней навешаны при загрузке страницы и пересборку не переживут.
+  // Поэтому любая очистка, куда такой узел может попасть, обязана сначала
+  // вернуть его в хранилище: innerHTML = "" уничтожает узел вместе с
+  // обработчиками, и следующая остановка того же вида уже не открывается.
+  function stowPanels(box) {
+    HITL_PANELS.forEach((id) => {
+      const node = $(id);
+      if (node && box.contains(node)) $("stops").appendChild(node);
+    });
+  }
+
   function toggleRow(uid) {
     const t = byUid(uid);
     const p = stateEls.get(uid);
@@ -183,8 +195,15 @@
     const t = byUid(uid);
     const p = stateEls.get(uid);
     if (!t || !p) return;
+    // Уже раскрытую строку не открывают заново. Без этой проверки второй вызов
+    // (сначала клик по строке, затем «Открыть решение» в ней же) чистил ящик
+    // открытой строки: сотни пикселей содержимого исчезали в том же кадре —
+    // отсюда прыжок вверх, — а панель остановки при этом умирала, и следующий
+    // клик молча не делал ничего.
+    if (p.wrap.classList.contains("is-open")) return;
     // Открыт всегда один ящик: два раскрытых прогона рядом — это снова каша.
     stateEls.forEach((_, other) => { if (other !== uid) closeRow(other); });
+    stowPanels(p.panel);
     p.panel.innerHTML = "";
     const stop = STOP_PANEL[t.status];
     if (stop) p.panel.appendChild($(stop));   // перемещение узла, а не копия
@@ -198,10 +217,7 @@
     const p = stateEls.get(uid);
     if (!p || !p.wrap.classList.contains("is-open")) return;
     // Панель возвращается в хранилище живой: узел тот же, обработчики те же.
-    HITL_PANELS.forEach((id) => {
-      const node = $(id);
-      if (node && p.panel.contains(node)) $("stops").appendChild(node);
-    });
+    stowPanels(p.panel);
     p.panel.innerHTML = "";
     p.wrap.classList.remove("is-open");
     p.hit.setAttribute("aria-expanded", "false");
@@ -250,6 +266,9 @@
   }
 
   function renderFeed() {
+    // Лента пересобирается целиком, и раскрытый ящик исчезает вместе со строкой.
+    // Панель остановки в нём — перемещённый узел, вынимаем до очистки.
+    stowPanels(feedList);
     feedList.innerHTML = "";
     stateEls.clear();
     views = [];
@@ -328,6 +347,20 @@
   }
 
   // ── запуск ─────────────────────────────────────────────
+  // Сервер держит до пяти открытых задач на человека, но экран ведёт одну:
+  // один поток событий, один набор панелей остановок. Пока прогон не закрыт,
+  // кнопка гаснет — и гаснет не молча. Погасшая кнопка без объяснения читается
+  // как поломка, поэтому причина стоит строкой прямо под ней и уходит вместе с
+  // запретом: строку перетирает тот же обработчик, что кнопку и отпускает.
+  // Имя именно про замок на запуске: ниже живёт setBusy(scope, busy), который
+  // морозит контролы внутри панели остановки. Это разные вещи, и общее имя одну
+  // из них молча съедало бы — объявления функций перетирают друг друга.
+  const BUSY_NOTE = "Прогон не закрыт — новый не запустить.";
+  function setStartLock(on) {
+    $("startBtn").disabled = on;
+    if (on) $("briefStatus").textContent = BUSY_NOTE;
+  }
+
   $("briefForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const product = $("product").value.trim();
@@ -340,7 +373,7 @@
       $("briefStatus").textContent = "Заполни продукт, аудиторию и эмоцию.";
       return;
     }
-    $("startBtn").disabled = true;
+    setStartLock(true);
     $("briefStatus").textContent = "Создаю задачу…";
     try {
       const r = await fetch(`${P}/api/tasks`, {
@@ -352,7 +385,9 @@
       const data = await r.json();
       taskUid = data.task_uid;
       saveActive(taskUid);
-      $("briefStatus").textContent = "";
+      // Задача принята — «Создаю задачу…» сменяется причиной, по которой кнопка
+      // остаётся погашенной.
+      setStartLock(true);
       // Плитка появляется сразу, до первого события: между POST и первым шагом
       // проходит секунда-другая, и без неё лента выглядела бы не отреагировавшей.
       tasks.unshift({
@@ -365,7 +400,7 @@
       subscribe();
     } catch (e) {
       $("briefStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-      $("startBtn").disabled = false;
+      setStartLock(false);
     }
   });
 
@@ -503,11 +538,15 @@
     saveActive(uid);
     try {
       const r = await fetch(`${P}/api/tasks/${uid}/pending`);
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(errText(r.status));
       const d = await r.json();
       if (d.phase) { onAwaiting(d); subscribe(); }
       else { setStep("Продолжаю…"); subscribe(); }
-    } catch (_) {}
+    } catch (e) {
+      // Пустой catch прятал отказ: кнопка нажималась, ничего не происходило, и
+      // строка выглядела мёртвой. Сбой должен читаться словами, а не молчанием.
+      $("briefStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+    }
   }
 
   // ── лайтбокс: один режим — просмотр баннера ────────────
@@ -930,7 +969,7 @@
     clearActive(); resetWinner();
     liveStep = ""; liveStage = 0;
     closeHitl();
-    $("startBtn").disabled = false;
+    setStartLock(false);
     $("briefStatus").textContent = d.result_url
       ? "Готово — баннеры в ленте."
       : "Готово, но файл результата не найден.";
@@ -947,7 +986,7 @@
     if (t) { t.status = "failed"; t.error = msg; }
     closeHitl();
     syncState(taskUid);
-    $("startBtn").disabled = false;
+    setStartLock(false);
     $("briefStatus").innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
     loadTasks();
   }
@@ -962,7 +1001,7 @@
     syncState(taskUid);
     $("briefStatus").textContent = d.reason === "timeout"
       ? "Время истекло, сессия отменена." : "Отменено.";
-    $("startBtn").disabled = false;
+    setStartLock(false);
     loadTasks();
   }
 
@@ -1025,13 +1064,13 @@
       if (d.phase) {
         // parked at a HITL pause → плитка метится, разбор ждёт клика
         saveActive(uid);
-        $("startBtn").disabled = true;
+        setStartLock(true);
         onAwaiting(d, true);
         subscribe();
       } else if (ACTIVE.indexOf(d.status) >= 0) {
         // still computing → show progress and reattach the stream
         saveActive(uid);
-        $("startBtn").disabled = true;
+        setStartLock(true);
         setStep("Продолжаю…", d.status);
         subscribe();
       } else {

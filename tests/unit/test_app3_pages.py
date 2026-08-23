@@ -471,6 +471,63 @@ def test_status_takes_its_gap_from_the_column_not_from_a_margin(tmp_path, monkey
         assert before.rstrip().endswith("</form>")
 
 
+def test_open_row_does_not_reopen_itself(tmp_path, monkeypatch):
+    """Раскрытую строку нельзя открывать второй раз. Путь был реальный: клик по
+    строке раскрывает ящик через toggleRow, а кнопка «Открыть решение» в той же
+    строке ведёт в openRow напрямую — мимо всех проверок. Второй проход чистил
+    ящик открытой строки: сотни пикселей исчезали в одном кадре, страница
+    прыгала вверх, панель остановки умирала, и строка переставала отвечать."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        body = js.split("function openRow(uid) {", 1)[1].split("\n  }", 1)[0]
+        guard = body.split('p.panel.innerHTML = ""', 1)[0]
+        assert 'classList.contains("is-open")) return' in guard
+
+
+def test_stop_panels_are_stowed_before_any_box_is_emptied(tmp_path, monkeypatch):
+    """Панель остановки — перемещённый узел с обработчиками, навешанными при
+    загрузке; innerHTML = "" убивает её насовсем. Возврат в хранилище поэтому
+    вынесен в отдельную функцию и вызывается перед КАЖДОЙ очисткой — включая
+    пересборку ленты, где узел раньше уничтожался вместе со строкой."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "function stowPanels(box) {" in js
+        for fn, box in (("function openRow(uid) {", "p.panel"),
+                        ("function closeRow(uid) {", "p.panel"),
+                        ("function renderFeed() {", "feedList")):
+            body = js.split(fn, 1)[1].split("\n  }", 1)[0]
+            before = body.split(f'{box}.innerHTML = ""', 1)[0]
+            assert f"stowPanels({box})" in before, fn
+        # Отказ «Открыть решение» больше не проглатывается молча.
+        attach = js.split("async function attach(uid) {", 1)[1].split("\n  }", 1)[0]
+        assert "catch (_) {}" not in attach
+        assert 'briefStatus").innerHTML' in attach
+
+
+def test_disabled_start_button_says_why(tmp_path, monkeypatch):
+    """Сервер держит до пяти открытых задач, экран ведёт одну. Запрет сам по
+    себе честен, а вот гаснуть молча кнопка не имеет права: погасшая кнопка без
+    причины читается как поломка. Причина пишется в статус под кнопкой и уходит
+    вместе с запретом — потому что и то и другое делает одна функция.
+    Имя у неё своё: setBusy в этом файле уже занят заморозкой контролов внутри
+    панели остановки, и одноимённое объявление молча съело бы одну из двух."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        body = js.split("function setStartLock(on) {", 1)[1].split("\n  }", 1)[0]
+        assert '$("startBtn").disabled = on;' in body
+        assert "if (on) $(\"briefStatus\").textContent = BUSY_NOTE;" in body
+        assert "не запустить" in js.split("const BUSY_NOTE = ", 1)[1].split("\n", 1)[0]
+        # Второго пути к кнопке нет: всё идёт через setStartLock.
+        assert js.count('$("startBtn").disabled') == 1
+        # Одно объявление на имя: два перетёрли бы друг друга.
+        for name in ("function setStartLock(", "function setBusy("):
+            assert js.count(name) == 1, name
+        assert "setStartLock(true)" in js.split("async function rehydrate()", 1)[1]
+        # Пустой статус не рисует коробку — строка появляется и исчезает целиком.
+        css = c.get("/static/app.css").text
+        assert "body.is-tool .status:empty { display: none; }" in css
+
+
 def test_css_has_no_duplicated_colour_rules_under_feed(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
