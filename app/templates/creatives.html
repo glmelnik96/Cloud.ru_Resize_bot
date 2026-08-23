@@ -131,15 +131,13 @@
     </footer>
   </main>
 
-  {# Лайтбокс — рабочий стол задачи. Четыре режима в одной раме: просмотр
-     баннера (две колонки) и три остановки пайплайна (одна колонка). Панели
-     лежат в разметке, а не собираются скриптом: на них навешаны обработчики
-     при загрузке, и пересборка отрывала бы их. #}
+  {# Лайтбокс — просмотр баннера, и только он. Остановки пайплайна отсюда ушли:
+     окно поверх ленты закрывали — и работа терялась из виду, хотя ждала
+     человека. Режим остался один, поэтому и переключателя режимов больше нет. #}
   <div class="lightbox hidden" id="lightbox">
     <div class="lightbox__backdrop" data-lb="close"></div>
     <div class="lightbox__panel" id="lbPanel">
 
-      <!-- режим «баннер» -->
       <div class="lb-col hidden" id="lbView">
         <img class="lb-img" id="lbImg" alt="">
       </div>
@@ -154,11 +152,20 @@
         <div class="lb-actions" id="lbActions"></div>
       </div>
 
+    </div>
+  </div>
+
+  {# Хранилище панелей остановок. Панели лежат в разметке, а не собираются
+     скриптом: на них навешаны обработчики при загрузке, и пересборка отрывала
+     бы их. Открывая работу, скрипт ПЕРЕМЕЩАЕТ нужную панель в ящик строки —
+     перемещение узла обработчики переживает, пересборка нет. #}
+  <div class="stops hidden" id="stops">
+
       <!-- 02 · остановка на персоне -->
-      <div class="lb-col hidden" id="personaPanel">
+      <div class="stop" id="personaPanel">
         <div class="lb-bar">
           <h2 class="lb-title">02 · Кому пишем</h2>
-          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+          <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
         <p class="muted">Якоря, из которых соберутся тексты. Списки — по строке на пункт.</p>
         <div class="lb-counter" id="personaKb"></div>
@@ -197,10 +204,10 @@
       </div>
 
       <!-- 03 · остановка на текстах -->
-      <div class="lb-col hidden" id="textPanel">
+      <div class="stop" id="textPanel">
         <div class="lb-bar">
           <h2 class="lb-title">03 · Тексты — 12 предложений под аудиторию</h2>
-          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+          <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
         <p class="muted">Баннер получат все двенадцать. Главный идёт первым, только
           его образ переделывается комментарием, и он попадёт в отмеченный опыт.</p>
@@ -214,10 +221,10 @@
       </div>
 
       <!-- 04 · остановка на hero -->
-      <div class="lb-col hidden" id="imagePanel">
+      <div class="stop" id="imagePanel">
         <div class="lb-bar">
           <h2 class="lb-title">04 · Hero-картинки</h2>
-          <button type="button" class="t-btn lightbox__close" data-lb="close" title="Закрыть (Esc)">✕</button>
+          <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
         <p class="muted">По картинке на предложение — сгенерировать 12 или загрузить одну свою.</p>
         <div class="lb-block hidden" id="metaphorBox">
@@ -244,7 +251,6 @@
         <div class="status" id="imageStatus"></div>
       </div>
 
-    </div>
   </div>
 
   <script>window.APP_PREFIX = "{{ prefix }}";</script>

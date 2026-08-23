@@ -385,6 +385,21 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
   font-size: 11px; line-height: 24px; letter-spacing: .09em; text-transform: uppercase;
   color: var(--lp-key); }
 .work__mark--rejected { color: var(--lp-muted); }
+.work__mark { flex: none; }
+/* Панель остановки, переехавшая в ящик. Ограничений лайтбокса (свой скролл,
+   своя максимальная высота) здесь быть не должно: ящик растёт вместе со
+   страницей, и второй скролл внутри строки читался бы окном. */
+.stop { display: flex; flex-direction: column; gap: 24px; }
+/* Ряд превью: прокрутка вбок, высота 192 — восемь модулей. Форматы баннеров
+   одинаковые, поэтому ряд не рвётся, но кадрирование всё равно cover: ряд не
+   должен зависеть от того, что вернул композер. */
+.work__done { display: flex; flex-direction: column; gap: 24px; }
+.strip { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: thin;
+  padding-bottom: 12px; }
+.strip__item { flex: none; width: 96px; height: 192px; padding: 0; border: 0;
+  border-radius: 0; cursor: pointer; background: var(--lp-ink);
+  box-shadow: inset 0 0 0 1px var(--lp-line-2); }
+.strip__item img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
 /* ===== Лайтбокс — рабочий стол задачи =====
    Действия стоят колонкой справа, а не под картинкой: иначе высота картинки
@@ -398,11 +413,11 @@ body.is-tool .lightbox__panel { position: relative; display: grid;
   grid-template-columns: 1fr 264px; gap: 24px; align-items: start;
   width: min(1176px, 100%); padding: 24px; background: var(--lp-ink);
   box-shadow: inset 0 0 0 1px var(--lp-line-2); }
-/* Остановка пайплайна — это разговор, а не картинка: колонки действий у него
-   нет, и панель становится одноколоночной. 600 = 25 ячеек, 1176 = 49. Обе
-   кратны модулю, поэтому внутренняя сетка полей не сбивается. */
+/* Панель без картинки — это разговор: колонки действий справа у неё нет, и
+   она становится одноколоночной. 600 = 25 ячеек, кратно модулю, поэтому
+   внутренняя сетка полей не сбивается. Остались только вебинарные ресайзы:
+   остановки креативов уехали в ящик строки. */
 body.is-tool .lightbox__panel--form { grid-template-columns: 1fr; width: min(600px, 100%); }
-body.is-tool .lightbox__panel--wide { grid-template-columns: 1fr; width: min(1176px, 100%); }
 body.is-tool .lb-col { min-width: 0; display: flex; flex-direction: column; gap: 24px;
   max-height: calc(100vh - 96px); overflow: auto; scrollbar-width: thin; }
 body.is-tool .lb-img { display: block; width: 100%;
@@ -666,15 +681,16 @@ body.is-tool .scen-card:focus-visible .scen-card__desc { opacity: 1;
    блоки формы. */
 .rail > .tool-details { margin-top: 48px; }
 
-/* ===== 12 предложений: сетка плиток в лайтбоксе =====
-   Тот же кирпич, что и везде: прямые углы, хайрлайн вместо рамки. Ведущее
-   предложение метим планкой ключа слева — ровно так же, как выбранную строку
-   в рельсе. Единая система вместо отдельного языка для этого экрана. */
-.cand-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr));
-  gap: 24px; }
+/* ===== 12 предложений: строки, а не второе поле карточек =====
+   Сетка одинаковых карточек здесь повторяла бы ровно ту кашу, от которой ушла
+   лента. Двенадцать предложений читают сверху вниз и сравнивают между собой —
+   это список. Ведущее метим планкой ключа слева, тем же приёмом, что и
+   выбранную строку в рельсе: единая система вместо языка на один экран. */
+.cand-grid { display: flex; flex-direction: column; }
 .cand { position: relative; display: flex; flex-direction: column; gap: 12px;
-  padding: 12px; box-shadow: inset 0 0 0 1px var(--lp-line-2); }
-.cand.is-winner { box-shadow: inset 0 0 0 1px var(--lp-edge); }
+  padding: 12px; box-shadow: inset 0 -1px 0 var(--lp-line-2); }
+/* Рамку вокруг ведущего не рисуем: строку в списке метит планка, а вторая
+   обводка поверх хайрлайна ломала бы ровный шаг разделителей. */
 .cand.is-winner::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
   width: 6px; background: var(--lp-key); }
 .cand__head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }

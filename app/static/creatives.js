@@ -105,10 +105,14 @@
   const rowClass = (t) =>
     "work work--" + t.status + (AWAITING.indexOf(t.status) >= 0 ? " work--await" : "");
   const actsKeyOf = (t) => (AWAITING.indexOf(t.status) >= 0 ? "await" : t.status);
+  // Отметка исхода стоит на строке, а не только внутри ящика: иначе, чтобы
+  // понять, что из прошлых запусков ушло в кампанию, пришлось бы открыть все.
+  const markClass = (t) =>
+    "work__mark" + (t.outcome === "rejected" ? " work__mark--rejected" : "");
 
   // Остаток срока хранения. Дата создания человеку не говорит ничего: он
   // спрашивает «успею ли скачать», а не «когда это было».
-  // ⚠️ Наивный UTC: сервер отдаёт created_at без суффикса, и new Date() читает
+  // Наивный UTC: сервер отдаёт created_at без суффикса, и new Date() читает
   // такую строку как местное время — в Москве это ошибка на три часа.
   function keepText(t) {
     if (!t.created_at || ACTIVE.indexOf(t.status) >= 0) return "";
@@ -135,6 +139,9 @@
     hit.appendChild(name);
     const line = el("span", "work__state", stateText(t));
     hit.appendChild(line);
+    const mark = el("span", markClass(t), OUTCOME_LABEL[t.outcome] || "");
+    mark.hidden = !t.outcome;
+    hit.appendChild(mark);
     const keep = el("span", "work__keep", keepText(t));
     hit.appendChild(keep);
     hit.addEventListener("click", () => toggleRow(t.task_uid));
@@ -148,19 +155,81 @@
     const panel = el("div", "work__panel");
     wrap.appendChild(head);
     wrap.appendChild(panel);
-    stateEls.set(t.task_uid, { wrap, hit, line, keep, acts, bar, panel, actsKey: "" });
+    stateEls.set(t.task_uid, { wrap, hit, line, mark, keep, acts, bar, panel, actsKey: "" });
     fillActs(t);
     return wrap;
   }
 
-  // Раскрытие строки. Тело ящика наполняется отдельно; здесь только
-  // переключатель, чтобы состояние строки и подпись для скринридера не
-  // разъезжались.
+  // Что лежит в ящике — зависит от состояния работы. Идущий прогон не
+  // открывается: показывать нечего, живой шаг стоит на самой строке.
+  const STOP_PANEL = {
+    awaiting_persona: "personaPanel",
+    awaiting_text: "textPanel",
+    awaiting_image: "imagePanel",
+  };
+  const HITL_PANELS = ["personaPanel", "textPanel", "imagePanel"];
+
   function toggleRow(uid) {
+    const t = byUid(uid);
     const p = stateEls.get(uid);
-    if (!p) return;
-    const open = p.wrap.classList.toggle("is-open");
-    p.hit.setAttribute("aria-expanded", String(open));
+    if (!t || !p) return;
+    if (t.status === "queued" || t.status === "running") return;
+    if (t.status === "failed" || t.status === "cancelled") return;
+    if (p.wrap.classList.contains("is-open")) { closeRow(uid); return; }
+    openRow(uid);
+  }
+
+  function openRow(uid) {
+    const t = byUid(uid);
+    const p = stateEls.get(uid);
+    if (!t || !p) return;
+    // Открыт всегда один ящик: два раскрытых прогона рядом — это снова каша.
+    stateEls.forEach((_, other) => { if (other !== uid) closeRow(other); });
+    p.panel.innerHTML = "";
+    const stop = STOP_PANEL[t.status];
+    if (stop) p.panel.appendChild($(stop));   // перемещение узла, а не копия
+    else if (t.status === "done") fillDoneDrawer(t, p.panel);
+    else return;                              // открывать нечего — строка молчит
+    p.wrap.classList.add("is-open");
+    p.hit.setAttribute("aria-expanded", "true");
+  }
+
+  function closeRow(uid) {
+    const p = stateEls.get(uid);
+    if (!p || !p.wrap.classList.contains("is-open")) return;
+    // Панель возвращается в хранилище живой: узел тот же, обработчики те же.
+    HITL_PANELS.forEach((id) => {
+      const node = $(id);
+      if (node && p.panel.contains(node)) $("stops").appendChild(node);
+    });
+    p.panel.innerHTML = "";
+    p.wrap.classList.remove("is-open");
+    p.hit.setAttribute("aria-expanded", "false");
+  }
+
+  // Готовая работа: ряд превью с прокруткой вбок и отметка исхода. Ряд, а не
+  // сетка: двенадцать квадратов в сетке — ровно то, от чего ушли.
+  function fillDoneDrawer(t, box) {
+    const body = el("div", "work__done");
+    const imgs = Array.isArray(t.images) ? t.images : [];
+    if (imgs.length) {
+      const strip = el("div", "strip");
+      imgs.forEach((u, i) => {
+        const b = el("button", "strip__item");
+        b.type = "button";
+        const img = el("img");
+        img.loading = "lazy";
+        img.src = P + u;
+        img.alt = "Баннер " + (i + 1);
+        b.appendChild(img);
+        const pos = views.findIndex((v) => v.uid === t.task_uid && v.idx === i);
+        b.addEventListener("click", () => openView(pos < 0 ? 0 : pos));
+        strip.appendChild(b);
+      });
+      body.appendChild(strip);
+    }
+    body.appendChild(outcomeGroup(t));
+    box.appendChild(body);
   }
 
   function fillActs(t) {
@@ -239,6 +308,9 @@
     const open = p.wrap.classList.contains("is-open");
     p.wrap.className = rowClass(t) + (open ? " is-open" : "");
     p.line.textContent = stateText(t);
+    p.mark.className = markClass(t);
+    p.mark.textContent = OUTCOME_LABEL[t.outcome] || "";
+    p.mark.hidden = !t.outcome;
     p.keep.textContent = keepText(t);
     p.bar.hidden = !(t.status === "queued" || t.status === "running");
     paintRoute();
@@ -384,9 +456,8 @@
   }
 
   // ── остановки пайплайна (HITL) ─────────────────────────
-  // Остановка — состояние задачи, а не отдельный экран: плитка метится, а разбор
-  // открывается лайтбоксом. silent — путь восстановления после перезагрузки:
-  // модалка сама собой на загрузке не выскакивает, плитка ждёт клика.
+  // Остановка — состояние задачи, а не отдельный экран: строка метится и
+  // раскрывается ящиком на месте, лента при этом остаётся на экране.
   function onAwaiting(d, silent) {
     const status = STATUS_OF_PHASE[d.phase];
     const t = byUid(taskUid);
@@ -399,11 +470,11 @@
     if (d.phase === "persona_approve") {
       renderPersona(d.persona || {}, d.kb_match);
       setBusy($("personaPanel"), false);
-      if (!silent) openLb("personaPanel");
+      openStop(silent);
     } else if (d.phase === "text_approve") {
       renderCandidates(d.candidates || []);
       setBusy($("textPanel"), false);
-      if (!silent) openLb("textPanel");
+      openStop(silent);
     } else if (d.phase === "image_upload") {
       $("imagePrompt").textContent = d.image_prompt || "(пусто)";
       renderMetaphor(d);
@@ -415,11 +486,18 @@
       else if (!d.can_generate) msg = "Автогенерация hero на сервере недоступна — загрузи свою картинку.";
       $("imageStatus").textContent = msg;
       setBusy($("imagePanel"), false);
-      if (!silent) openLb("imagePanel");
+      openStop(silent);
     }
   }
 
-  // Клик по ждущей плитке: перецепляемся к этой задаче и открываем её разбор.
+  // Остановка открывает СВОЮ строку. Раньше здесь выскакивало окно поверх
+  // ленты; окно закрывали — и работа терялась из виду, хотя ждала человека.
+  function openStop(silent) {
+    if (silent) return;   // восстановление после перезагрузки: строка ждёт клика
+    openRow(taskUid);
+  }
+
+  // Клик по ждущей строке: перецепляемся к этой задаче и открываем её разбор.
   async function attach(uid) {
     taskUid = uid;
     saveActive(uid);
@@ -432,38 +510,26 @@
     } catch (_) {}
   }
 
-  // ── лайтбокс: четыре режима в одной раме ───────────────
+  // ── лайтбокс: один режим — просмотр баннера ────────────
+  // Остановки отсюда ушли в ящик строки, поэтому переключателя режимов больше
+  // нет: рама показывает картинку и колонку действий к ней, и только их.
   const lightbox = $("lightbox");
-  const lbPanel = $("lbPanel");
-  const LB_PARTS = ["lbView", "lbSide", "personaPanel", "textPanel", "imagePanel"];
-  const LB_MODE = {
-    view: { cls: "", parts: ["lbView", "lbSide"] },
-    personaPanel: { cls: " lightbox__panel--form", parts: ["personaPanel"] },
-    textPanel: { cls: " lightbox__panel--wide", parts: ["textPanel"] },
-    imagePanel: { cls: " lightbox__panel--form", parts: ["imagePanel"] },
-  };
-  const HITL_MODES = ["personaPanel", "textPanel", "imagePanel"];
-  let lbMode = null;
+  let lbOpen = false;
 
-  function openLb(mode) {
-    const m = LB_MODE[mode];
-    if (!m) return;
-    lbMode = mode;
-    LB_PARTS.forEach((id) => {
-      const p = $(id);
-      if (p) p.classList.toggle("hidden", m.parts.indexOf(id) < 0);
-    });
-    lbPanel.className = "lightbox__panel" + m.cls;
+  function openLb() {
+    show($("lbView"));
+    show($("lbSide"));
+    lbOpen = true;
     show(lightbox);
     document.body.style.overflow = "hidden";
   }
   function closeLb() {
     hide(lightbox);
-    lbMode = null;
+    lbOpen = false;
     document.body.style.overflow = "";
   }
-  // Пайплайн поехал дальше — разбор закрываем, но просмотр баннера не трогаем.
-  function closeHitl() { if (HITL_MODES.indexOf(lbMode) >= 0) closeLb(); }
+  // Пайплайн поехал дальше — ящик закрываем, просмотр баннера не трогаем.
+  function closeHitl() { if (taskUid) closeRow(taskUid); }
 
   lightbox.addEventListener("click", (ev) => {
     const act = ev.target.getAttribute && ev.target.getAttribute("data-lb");
@@ -471,10 +537,16 @@
     else if (act === "prev") viewNav(-1);
     else if (act === "next") viewNav(1);
   });
+  // Свернуть ящик можно из самой панели остановки: она лежит в строке, и
+  // «закрывать» там нечего — только сложить обратно.
+  document.addEventListener("click", (ev) => {
+    const el0 = ev.target;
+    if (!el0 || !el0.getAttribute || el0.getAttribute("data-stop") !== "close") return;
+    if (taskUid) closeRow(taskUid);
+  });
   document.addEventListener("keydown", (ev) => {
-    if (!lbMode) return;
+    if (!lbOpen) return;
     if (ev.key === "Escape") { closeLb(); return; }
-    if (lbMode !== "view") return;
     if (ev.key === "ArrowRight") viewNav(1);
     else if (ev.key === "ArrowLeft") viewNav(-1);
   });
@@ -485,7 +557,7 @@
     if (!views.length) return;
     viewPos = (pos + views.length) % views.length;
     renderView();
-    openLb("view");
+    openLb();
   }
   function viewNav(delta) {
     if (!views.length) return;
@@ -551,7 +623,6 @@
     if (briefRows) box.appendChild(details("Бриф запуска", briefRows));
 
     box.appendChild(recipeDetails(t));
-    box.appendChild(outcomeGroup(t));
   }
 
   // Рецепт лежит в задаче, а не в списке — дочитываем его при первом раскрытии.
@@ -594,9 +665,10 @@
     );
   }
 
-  // Исход почти никогда не известен в момент финиша: баннер уносят
-  // согласовывать, а вкладку закрывают. Поэтому отметка живёт здесь, на самом
-  // баннере, и доступна ровно столько, сколько живёт сам баннер.
+  // Исход почти никогда не известен в момент финиша: баннеры уносят
+  // согласовывать, а вкладку закрывают. Отметка стоит на РАБОТЕ, а не на
+  // каждом баннере: в кампанию уходит запуск целиком, и двенадцать одинаковых
+  // вопросов «что стало с этим баннером» были той же кашей, что и плитки.
   function outcomeGroup(t) {
     const g = el("div", "lb-group");
     g.appendChild(el("p", "lb-group__label", "Что стало с этим баннером"));
@@ -641,9 +713,9 @@
     row.querySelectorAll("[data-outcome]").forEach((b) => {
       b.classList.toggle("t-btn--on", b.dataset.outcome === outcome);
     });
-    // Метка исхода стоит на всех двенадцати плитках этого запуска — перерисовываем
-    // ленту целиком. Лайтбокс лежит вне ленты, поэтому под руками ничего не пропадёт.
-    renderFeed();
+    // Исход теперь у работы, а не у каждого баннера: перерисовывать всю ленту
+    // незачем, меняется одна строка.
+    syncState(t.task_uid);
   }
 
   // ── 03 · предложения ───────────────────────────────────

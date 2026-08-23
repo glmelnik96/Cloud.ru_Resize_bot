@@ -398,3 +398,39 @@ def test_row_tells_how_long_the_run_is_kept(tmp_path, monkeypatch):
         assert '+ "Z"' in js           # наивный UTC: без суффикса дата врёт
         html = c.get("/", headers=_HDR).text
         assert 'data-retention-hours="24"' in html
+
+
+def test_stops_live_in_the_row_not_in_a_modal(tmp_path, monkeypatch):
+    """Остановка — состояние работы, а не окно поверх неё. Панели лежат в
+    разметке отдельным контейнером и ПЕРЕЕЗЖАЮТ в ящик строки: пересборка
+    оторвала бы обработчики, навешанные при загрузке."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/", headers=_HDR).text
+        assert 'id="stops"' in html
+        # три панели ушли из лайтбокса, но остались в документе
+        lightbox = html.split('id="lightbox"', 1)[1].split('id="stops"', 1)[0]
+        for pid in ("personaPanel", "textPanel", "imagePanel"):
+            assert f'id="{pid}"' in html, pid
+            assert f'id="{pid}"' not in lightbox, pid
+        js = c.get("/static/creatives.js").text
+        assert "openStop" in js
+        assert "lightbox__panel--form" not in js  # режимов остался один
+
+
+def test_candidates_are_rows_not_a_second_grid_of_cards(tmp_path, monkeypatch):
+    """Двенадцать предложений — второе поле одинаковых карточек. Строки."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert "minmax(264px, 1fr)" not in css
+        assert ".cand-grid { display: flex" in css
+
+
+def test_outcome_is_marked_on_the_run_not_on_each_banner(tmp_path, monkeypatch):
+    """Исход у работы один, а не у каждого из двенадцати баннеров."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "outcomeGroup" in js
+        assert "buildViewActions" in js
+        # отметка больше не строится внутри колонки действий лайтбокса
+        actions = js.split("function buildViewActions", 1)[1].split("\n  }", 1)[0]
+        assert "outcomeGroup" not in actions
