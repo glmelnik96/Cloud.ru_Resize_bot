@@ -343,17 +343,22 @@ def test_app_css_carries_library_classes(tmp_path, monkeypatch):
 
 
 def test_css_repaints_the_stone_floor_by_tokens_only(tmp_path, monkeypatch):
-    """Светлый этаж перекрашивается переопределением переменных на .rail.
-    Ни одного правила вида `.rail .что-то { color: ... }` быть не должно:
+    """Светлый этаж перекрашивается переопределением переменных на ленте.
+    Ни одного правила вида `.feed .что-то { color: ... }` быть не должно:
     дубль цвета — это второе место, где живёт правда о палитре."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
+        stone = css.split(".feed, body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
         assert "--sl-stone: #D9DEDB" in css  # камень, не белый
-        assert "--lp-ink: var(--sl-stone)" in css  # рельс берёт его оттуда же, что и сетка
-        assert "--lp-muted: #565E5B" in css  # 4.6:1 к камню — AA
-        assert "--lp-hi: #1B211F" in css  # инверсия на светлом идёт в темноту
-        assert "--lp-key: #35A171" in css  # ступень вниз: #3FB67C на камне светится
-        assert "--sl-surface: #CBD1CE" in css  # ящик утоплен, а не приподнят
+        assert "--lp-ink: var(--sl-stone)" in stone  # оттуда же, что и сетка
+        # Приглушённый слой считаем по САМОЙ ТЁМНОЙ поверхности этажа: тон,
+        # подобранный к камню, проваливался в утопленном ящике остановки.
+        assert "--lp-muted: #4E5653" in stone  # 5.6 к камню, 4.9 в ящике
+        # Инверсия под курсором идёт в темноту, но не до полюса: строка во всю
+        # ширину ленты, выкрашенная почти в чернила, читается как дыра.
+        assert "--lp-hi: #333B38" in stone
+        assert "--lp-key: #35A171" in stone  # ступень вниз: #3FB67C на камне светится
+        assert "--sl-surface: #CBD1CE" in stone  # ящик утоплен, а не приподнят
         # Полюса сведены с App2: расхождение в одну ступень между двумя
         # разделами одного портала хуже, чем разница двух оттенков серого.
         assert "--lp-line-2: #2C3532" in css
@@ -361,10 +366,116 @@ def test_css_repaints_the_stone_floor_by_tokens_only(tmp_path, monkeypatch):
         assert "scrollbar-gutter: stable" in css
 
 
-def test_css_has_no_duplicated_colour_rules_under_rail(tmp_path, monkeypatch):
+def test_accent_has_separate_tone_for_fill_and_for_text(tmp_path, monkeypatch):
+    """У акцента две работы. Заливкой он держит тёмный текст внутри плашки,
+    текстом — стоит сам на поверхности этажа. На чернилах обе вытягивает один
+    тон, на камне — нет: #35A171 как текст даёт 2.4:1, а #12563A как заливка
+    под тёмными чернилами даёт 2.2:1. Поэтому ролей две, и разведены они
+    ТОКЕНОМ, а не исключением в каждом правиле."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
-        for sel in (".rail .t-btn", ".rail .field-label", ".rail input", ".rail button"):
+        assert "--lp-key-text: var(--lp-key)" in css  # на чернилах роли совпали
+        stone = css.split(".feed, body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
+        assert "--lp-key-text: #12563A" in stone
+        # Всё, что рисует акцент ТЕКСТОМ, обязано брать текстовый токен.
+        for sel in (".work--await .work__state", ".work__mark",
+                    ".scen-card__tag", ".cand__badge", ".exp-item__tag"):
+            rule = css.split(sel, 1)[1].split("}", 1)[0]
+            assert "var(--lp-key-text)" in rule, sel
+            assert "color: var(--lp-key)" not in rule, sel
+
+
+def test_focus_ring_is_opaque(tmp_path, monkeypatch):
+    """Кольцо фокуса ищут глазами — значит, его обязано быть видно. Кромка была
+    полупрозрачной и давала на обоих этажах около 1.4:1, то есть не была видна
+    вовсе. Линия в 1px требует БОЛЬШЕ контраста, чем текст того же тона."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert "--lp-edge: rgba" not in css
+        assert css.count("--lp-edge: var(--lp-key-text)") == 2  # оба этажа
+        # Волосок между строками списка — чертёж, а не акцент. Пока кромка была
+        # полупрозрачной, разница не читалась и роль подменялась незаметно.
+        scen = css.split("body.is-tool .scen-card {", 1)[1].split("}", 1)[0]
+        assert "var(--lp-edge)" not in scen
+        assert "inset 0 1px 0 var(--lp-line-2)" in scen
+
+
+def test_field_label_kills_the_browser_paragraph_margin(tmp_path, monkeypatch):
+    """Внутри формы подпись — <span>, но там, где она называет целый блок
+    (каталог продуктов, доступы, отмеченный опыт), она <p> и получает
+    браузерные 1em сверху и снизу. При font-size 11px это 11px, которые
+    складываются с зазором блока: половина ячейки превращается в 23px, и
+    подпись отваливается от того, что называет."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        rule = css.split("body.is-tool .field-label {", 1)[1].split("}", 1)[0]
+        assert "margin: 0" in rule
+        # Блок «подпись сверху, содержимое под ней» держит зазор сам.
+        block = css.split(".lb-group, .field-block {", 1)[1].split("}", 1)[0]
+        assert "gap: 12px" in block
+        html = c.get("/library", headers=_HDR).text
+        assert '<p class="field-label">Продукты</p>' in html  # именно абзац
+
+
+def test_hovered_row_repaints_by_swapping_tokens(tmp_path, monkeypatch):
+    """Подсветку несёт ГОЛОВА строки, а не кнопка внутри неё: кнопка занимает
+    строку не целиком — справа от неё стоят действия, — и заливка обрывалась на
+    её границе, оставляя под курсором тёмный хвост в сотню пикселей.
+    Меняются при этом ТОКЕНЫ, а не цвет одного узла: метка состояния и срок
+    несут собственный приглушённый тон и на инверсии были нечитаемы."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert ".work__hit:hover {" not in css  # заливка не на кнопке
+        rule = css.split(".work__head:has(.work__hit:hover) {", 1)[1].split("}", 1)[0]
+        assert "background: var(--lp-hi)" in rule
+        for tok in ("--lp-text: var(--lp-hi-ink)",
+                    "--lp-muted: var(--lp-hi-muted)",
+                    "--lp-key-text: var(--lp-hi-key)"):
+            assert tok in rule, tok
+        # --lp-soft подменять НЕЛЬЗЯ: на нём стоит текст кнопок действий, а у
+        # них своя заливка --lp-ink, которая инверсию строки не наследует.
+        assert "--lp-soft:" not in rule
+
+
+def test_row_and_stop_bar_align_by_centre_not_baseline(tmp_path, monkeypatch):
+    """Базовая линия годится для пары текстов и врёт там, где рядом стоит кирпич
+    с отбивкой или где группу надо посадить в коробку фиксированной высоты.
+    В строке имя вставало на y 0…24, метки на 1…25, а кнопка — ребёнок
+    .work__head с центром — на 12…36: текст читался на 12px выше кнопки.
+    В баре остановки заголовок 19/24 и кнопка 12/12+6 давали 27px вместо 24."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        hit = css.split(".work__hit { flex: 1 1 auto;", 1)[1].split("}", 1)[0]
+        assert "align-items: center" in hit
+        assert "height: 48px" in hit
+        bar = css.split(".lb-bar { display: flex;", 1)[1].split("}", 1)[0]
+        assert "align-items: center" in bar
+        # Пара текстов базовую линию сохраняет: там она и нужна.
+        head = css.split(".feed__head { display: flex;", 1)[1].split("}", 1)[0]
+        assert "align-items: baseline" in head
+
+
+def test_status_takes_its_gap_from_the_column_not_from_a_margin(tmp_path, monkeypatch):
+    """Статус почти везде лежит в колонке с gap: 24 (.stop, .gen-form, .lib-card,
+    .rail__block) — собственный margin складывался с зазором и давал 48, вдвое
+    больше всего остального в той же колонке. Отступ оставлен ровно там, где
+    колонки нет: .rail — обычный блок и разводит детей margin'ами."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        base = css.split("body.is-tool .status { padding: 12px;", 1)[1].split("}", 1)[0]
+        assert "margin" not in base
+        assert "body.is-tool .rail > .status { margin-top: 24px; }" in css
+        # Статус брифа действительно ребёнок рельса, а не формы.
+        html = c.get("/", headers=_HDR).text
+        before = html.split('<div class="status" id="briefStatus">', 1)[0]
+        assert before.rstrip().endswith("</form>")
+
+
+def test_css_has_no_duplicated_colour_rules_under_feed(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        for sel in (".feed .t-btn", ".feed .field-label", ".feed input", ".feed button",
+                    ".rail .t-btn", ".rail .field-label", ".rail input", ".rail button"):
             assert sel not in css
 
 
@@ -385,17 +496,27 @@ def test_feed_frame_is_replaced_by_the_floor_border(tmp_path, monkeypatch):
     """Граница этажей идёт от края до края окна и работает разделителем.
     Рама вокруг ленты поверх неё — вторая линия, делающая ту же работу.
 
-    Камень прибит к окну целиком (top: 0, высота 100vh), а не отодвинут под
+    Рельс прибит к окну целиком (top: 0, высота 100vh), а не отодвинут под
     шторку: шторка канона висит поверх страницы (fixed, top: 18px) и в потоке
-    ничего не занимает, так что любой отступ сверху оставил бы над камнем
-    полосу чернил — и колонка перестала бы читаться этажом."""
+    ничего не занимает, так что любой отступ сверху оставил бы над рельсом
+    чужую полосу — и колонка перестала бы читаться этажом.
+
+    Поля ленты симметричны. Жёлоб портала здесь считать нельзя: его 100% —
+    ширина СТОЛБЦА, а не окна, и на типовом экране формула вырождается в свой
+    минимум 24. Поле справа выходило вдвое уже левого, и строка стояла в раме
+    с разными полями. Мера при этом не потеряна: как только столбец
+    перерастает 1176, поле начинает расти само."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
         assert ".feed { position: relative; isolation: isolate" not in css
         assert "grid-template-columns: 360px 1fr" in css
-        assert "position: sticky; top: 0;" in css  # камень стоит, работы едут мимо
-        assert "height: 100vh; overflow: hidden auto" in css
-        assert "padding: 96px var(--sl-gut)" in css
+        rail = css.split(".rail { min-width: 0;", 1)[1].split("}", 1)[0]
+        assert "position: sticky; top: 0;" in rail  # рельс стоит, работы едут мимо
+        assert "height: 100vh; overflow: hidden auto" in rail
+        assert "padding: 96px 48px 48px" in rail
+        feed = css.split(".feed { min-width: 0;", 1)[1].split("}", 1)[0]
+        assert "padding: 96px max(48px, calc((100% - 1176px) / 2)) 96px 48px" in feed
+        assert "var(--sl-gut)" not in feed  # жёлоб внутри столбца вырождается
 
 
 def test_a_finished_run_is_one_row_not_twelve_tiles(tmp_path, monkeypatch):
@@ -511,27 +632,31 @@ def test_hints_did_not_grow(tmp_path, monkeypatch):
 
 
 def test_stone_floor_reaches_the_bottom_of_the_page(tmp_path, monkeypatch):
-    """Камень — этаж, а не колонка высотой в окно. Рельс липкий и ростом ровно
-    в экран, поэтому ниже первого экрана его столбец оставался бы чернилами:
-    светлое поле обрывалось бы посреди страницы. Красит столбец не рельс и даже
-    не сетка, а main — единственный узел, который тянется до самого низа
-    страницы, включая полосу подвала. Цвет берётся из одного места."""
+    """Камень — этаж, а не колонка высотой в окно: он обязан доходить до низа
+    страницы, включая полосу подвала. Ни один узел заливкой столбца не занят.
+    Тёмный этаж слева — фон body, он тянется на всю страницу сам. Светлый этаж
+    справа закрывают собой те два узла, которые его и занимают: лента и подвал
+    под ней. Поэтому подвал обязан нести те же токены, что лента, и начинаться
+    там же, где она, — иначе полоса камня обрывается по низу ленты, а светлые
+    ссылки подвала пропадают на светлом."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
         assert "--sl-stone:" in css
+        # Градиента-костыля больше нет: красить слева нечего.
         main = css.split("body.is-tool main {", 1)[1].split("}", 1)[0]
-        assert "linear-gradient" in main
-        assert "var(--sl-stone)" in main
-        assert "360px" in main
-        rail = css.split(".rail { --lp-ink:", 1)[1].split(";", 1)[0]
-        assert "var(--sl-stone)" in rail
-        # В одну колонку красить нечего: рельс встаёт НАД лентой, и вертикальная
-        # заливка слева легла бы поперёк обоих этажей.
+        assert "linear-gradient" not in main
+        # Один блок переменных на два узла — второго дома для палитры нет.
+        stone = css.split(".feed, body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
+        assert "--lp-ink: var(--sl-stone)" in stone
+        assert "background: var(--lp-ink)" in stone
+        # Рельс переопределений не несёт: он остался на чернилах body.
+        assert ".rail { --lp-ink" not in css
+        # rsplit, а не split: первое вхождение селектора — это блок токенов выше,
+        # геометрия подвала описана ниже, в его собственном правиле.
+        foot = css.rsplit("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
+        assert "margin-left: 0" in foot  # это уже узкий экран
+        wide = css.split("body.is-tool .lp-foot { gap:", 1)[1].split("}", 1)[0]
+        assert "margin-left: 360px" in wide
+        # В одну колонку обходить нечего: этажи встают стопкой, камень снизу.
         narrow = css.split("@media (max-width: 860px) {", 1)[1]
-        assert "background: none" in narrow.split("body.is-tool main {", 1)[1].split("}", 1)[0]
-        # Подвал — служебная строка этажа чернил, и начинаться обязан там же, где
-        # этаж. Отцентрованный по всей ширине, он заезжает светлыми ссылками на
-        # камень: на 900px «Библиотека знаний» встаёт левее 360 и пропадает.
-        foot = css.split("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
-        assert "margin-left: 360px" in foot
         assert "margin-left: 0" in narrow.split("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]

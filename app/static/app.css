@@ -105,8 +105,29 @@ body.v11 {
      рамка: толщина и приём не меняются, меняется только светлота. */
   --lp-line-2: #2C3532;       /* хайрлайны */
   --lp-hi: #AAB4B0;           /* инверсия под курсором: серая, не белая */
-  --lp-edge: rgba(63, 182, 124, .2);
-  --lp-key: #3FB67C;          /* единственный акцент */
+  /* Спутники инверсии. Подсвеченная строка меняет ПОВЕРХНОСТЬ, а значит меняет
+     её и для всего, что на ней лежит: метка состояния и срок несут собственный
+     приглушённый цвет и на инверсии остались бы нечитаемыми. Держать их тут
+     токенами, а не отдельными правилами на каждый потомок, — то же решение, что
+     и по всему листу: перекрашивает поверхность тот, кто её меняет. */
+  --lp-hi-ink: #141817;       /* 8.4 к подсветке */
+  --lp-hi-muted: #39403D;     /* 5.0 — служебный слой на подсветке */
+  --lp-hi-key: #0F4E34;       /* 4.6 — акцент текстом на подсветке */
+  /* Кромка: обводка фокуса, включённая кнопка, рамка ошибки. Раньше была
+     полупрозрачной и на обоих этажах давала около 1.4:1 — то есть кольцо фокуса
+     не было видно вовсе, а его как раз и ищут глазами, когда ведут по форме с
+     клавиатуры. Линия в 1px требует БОЛЬШЕ контраста, чем текст того же тона, а
+     не меньше, поэтому берём акцент в полную силу. Двух объявлений не избежать:
+     var() внутри переменной разрешается там, где переменная объявлена, и одна
+     запись на body не подхватила бы подмену на камне. */
+  --lp-edge: var(--lp-key-text);
+  --lp-key: #3FB67C;          /* единственный акцент — ЗАЛИВКА */
+  /* У акцента две работы, и на разных этажах они расходятся. Заливкой он держит
+     тёмный текст внутри плашки, текстом — стоит сам на поверхности этажа. На
+     чернилах обе работы вытягивает один тон: 6.99 к фону как текст, 6.21 к
+     собственной заливке. На камне так не выходит — там нужен второй тон, и
+     именно поэтому роль вынесена в отдельный токен, а не в отдельное правило. */
+  --lp-key-text: var(--lp-key);
   --lp-key-ink: #222222;
   /* Утопленная поверхность: ящик под строкой. Не «карточка сверху», а выемка
      внутри — раскрытие принадлежит строке, а не лежит поверх неё. */
@@ -207,29 +228,29 @@ body.is-tool { --page-pad: 48px;
    читаться границей. Внутренние поля ушли внутрь .rail и .feed.
    margin обнуляем: базовое `margin: 0 auto` во флекс-колонке гасит растяжку по
    ширине, и main съёжился бы до содержимого.
-   Камень красит main, а не рельс и не сетка. Рельс липкий и ростом ровно в
-   окно — собой он умеет закрыть только первый экран. Сетка кончается там, где
-   кончается лента, и под ней остаётся полоса подвала: столбец обрывался бы, не
-   дойдя до низа страницы. main — единственный узел, который тянется до самого
-   низа, поэтому этаж на нём и остаётся этажом. Резкая остановка градиента —
-   это плоская заливка ровно 360px, а не растяжка. Ссылки подвала стоят по
-   центру, на чернилах, и полосу камня под собой не задевают. */
+   Заливки на main нет и не нужно. Тёмный этаж — это фон body, а он по
+   определению тянется на всю страницу: слева красить нечего. Светлый этаж
+   закрывают собой те два узла, которые его и занимают, — лента и подвал под
+   ней, вместе они идут от стыка до правого края и до самого низа. Пока камень
+   был слева, так не получалось: рельс липкий и ростом ровно в окно, ниже
+   первого экрана столбец обрывался, и заливку приходилось вешать на main
+   градиентом. */
 body.is-tool main { position: relative; flex: 1 0 auto; display: flex;
-  flex-direction: column; max-width: none; margin: 0; padding: 0;
-  background: linear-gradient(to right, var(--sl-stone) 0 360px, transparent 360px); }
+  flex-direction: column; max-width: none; margin: 0; padding: 0; }
 
 /* ===== Каркас: два этажа, повёрнутые на 90° =====
    На портале этажи лежат друг на друге, здесь — рядом: работа идёт слева
-   направо, а не сверху вниз. Свет слева — где задают, чернила справа — где
-   смотрят сделанное. gap нулевой: этажи стыкуются вплотную, и стык двух
+   направо, а не сверху вниз. Чернила слева — где задают, свет справа — где
+   смотрят сделанное: готовое лежит на светлом, как лист на столе, а панель
+   управления уходит в тень. gap нулевой: этажи стыкуются вплотную, и стык двух
    поверхностей и есть граница. Любой зазор превратил бы её в полосу. */
 .tool { flex: 1 0 auto; display: flex; flex-direction: column; }
 /* stretch: оба этажа доходят до низа страницы даже с пустой лентой. */
 .tool__grid { flex: 1 0 auto; display: grid;
   grid-template-columns: 360px 1fr; gap: 0; align-items: stretch; }
-/* Липкий рельс. top: 0 и высота ровно в окно — камень обязан доходить до
-   верхнего края экрана. Отступ сверху (даже под шторку) оставил бы над камнем
-   полосу чернил, и вместо двух этажей читалась бы колонка, приставленная сбоку.
+/* Липкий рельс. top: 0 и высота ровно в окно — этаж обязан доходить до верхнего
+   края экрана. Отступ сверху (даже под шторку) оставил бы над рельсом чужую
+   полосу, и вместо двух этажей читалась бы колонка, приставленная сбоку.
    Шторка канона висит поверх (fixed, top: 18px, высота 35px) и ничего не
    занимает в потоке — от неё уводит не отступ рельса, а его внутреннее поле
    сверху: 96px, столько же, сколько у ленты, поэтому содержимое двух этажей
@@ -241,18 +262,41 @@ body.is-tool main { position: relative; flex: 1 0 auto; display: flex;
    весь лист построен на var(--lp-*), и переопределения десяти переменных
    хватает, чтобы перекрасить поля, галки, кирпичи, селекты и дропзону — без
    единого продублированного правила. Дубль цвета был бы вторым местом, где
-   живёт правда о палитре. */
-.rail { --lp-ink: var(--sl-stone);   /* камень — поверхность этажа И полей на нём */
+   живёт правда о палитре. Ровно поэтому смена стороны — это перенос одного
+   блока переменных с рельса на ленту, а не переписывание листа.
+   Подвал перечислен рядом с лентой не для красоты: он служебная строка того же
+   этажа, стоит прямо под ней и на той же поверхности. Без этих токенов его
+   ссылки остались бы светлыми по светлому и пропали бы. */
+.feed, body.is-tool .lp-foot {
+  --lp-ink: var(--sl-stone);    /* камень — поверхность этажа И полей на нём */
   --lp-text: #171C1A;
   --lp-soft: #39403D;
-  --lp-muted: #565E5B;          /* 4.6:1 к камню — AA */
+  /* Приглушённый слой считаем по САМОЙ ТЁМНОЙ поверхности этажа, а не по самой
+     светлой. Подобранный к камню тон давал 4.3 в утопленном ящике — все подписи
+     полей на остановках проваливались под порог, а остановка это ровно то место,
+     где текст читают внимательно. 5.6 к камню и 4.9 в ящике берут обе. */
+  --lp-muted: #4E5653;
   --lp-line: #D2D8D5;
   --lp-line-2: #B4BDB9;
-  --lp-hi: #1B211F;             /* инверсия на светлом обязана идти в темноту */
-  --lp-edge: rgba(38, 138, 92, .42);
-  --lp-key: #35A171;            /* ступень вниз: #3FB67C на камне светится */
+  /* Инверсия под курсором идёт в темноту, но НЕ до полюса. На чернилах она
+     серая, а не белая (#AAB4B0 — 8.4 к фону); на камне обязана быть настолько
+     же недотянутой, иначе строка в 48×993 под курсором становится не подсветкой,
+     а дырой в странице. #333B38 даёт те же 8.5 с обратной стороны. */
+  --lp-hi: #333B38;
+  --lp-hi-ink: #D9DEDB;         /* 8.5 к подсветке */
+  --lp-hi-muted: #A8B2AE;       /* 5.3 */
+  --lp-hi-key: #4CC489;         /* 5.3 */
+  --lp-edge: var(--lp-key-text);
+  --lp-key: #35A171;            /* ЗАЛИВКА: ступень вниз, #3FB67C на камне светится */
+  /* Тот же акцент ТЕКСТОМ. #35A171 на камне даёт 2.4:1 — метка «ждёт картинку»
+     и обводка остановки просто не читались. Заливкой этот тон работать не может:
+     под тёмным --lp-key-ink он даёт 2.2:1, поэтому ролей две, а не одна. */
+  --lp-key-text: #12563A;       /* 6.4 к камню, 5.6 в ящике */
   --sl-surface: #CBD1CE;        /* ящик утоплен, а не приподнят */
-  min-width: 0; align-self: start;
+  background: var(--lp-ink); color: var(--lp-text); }
+/* Рельс переопределений не несёт: он остался на чернилах body и красит себя
+   теми же токенами, что и вся страница. */
+.rail { min-width: 0; align-self: start;
   position: sticky; top: 0;
   height: 100vh; overflow: hidden auto;
   scrollbar-width: thin;
@@ -303,9 +347,12 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
    сняли намеренно — она обводила то, что и так отделено сменой поверхности, и
    читалась второй, лишней линией внутри уже разделённого экрана.
    Слева 48 — то же поле, что внутри рельса, чтобы содержимое двух этажей стояло
-   на одном расстоянии от стыка. Справа --sl-gut держит текст в пределах меры
-   на широком экране и не даёт ленте растечься до края. */
-.feed { min-width: 0; padding: 96px var(--sl-gut) 96px 48px; }
+   на одном расстоянии от стыка. Справа столько же, пока лента уже меры: жёлоб
+   портала здесь считать нельзя, его 100% — ширина СТОЛБЦА, а не окна, и на
+   типовом экране формула вырождалась в свой минимум 24. Поле справа выходило
+   вдвое уже левого, и строка стояла в раме с разными полями. Мера при этом не
+   потеряна: как только столбец перерастает 1176, поле начинает расти само. */
+.feed { min-width: 0; padding: 96px max(48px, calc((100% - 1176px) / 2)) 96px 48px; }
 .feed__head { display: flex; align-items: baseline; gap: 24px; margin: 0 0 24px;
   padding-bottom: 12px; box-shadow: inset 0 -1px 0 var(--lp-line-2); }
 .feed__title { margin: 0; font-family: var(--font-mono); font-weight: 700; font-size: 11px;
@@ -338,7 +385,7 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
 /* Ждём человека: плашка не залита, но обведена ключом — «здесь стоим, но не
    считаем». Заливка означает работу, как и движение. */
 .route__stop.is-wait { color: var(--lp-text); }
-.route__stop.is-wait b { box-shadow: inset 0 0 0 1px var(--lp-key); color: var(--lp-key); }
+.route__stop.is-wait b { box-shadow: inset 0 0 0 1px var(--lp-key-text); color: var(--lp-key-text); }
 /* Пустая лента — ОДНА строка на месте первой работы, а не текст посреди
    пустого прямоугольника. Сноска про хранение при этом спрятана (её включает
    скрипт): пока ничего не создано, хранить нечего. */
@@ -363,16 +410,32 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
 .work { display: grid; grid-template-rows: auto 0fr;
   transition: grid-template-rows .42s var(--lp-ease); }
 .work.is-open { grid-template-rows: auto 1fr; }
+/* Подсветку под курсором несёт ГОЛОВА, а не кнопка внутри неё. Кнопка занимает
+   строку не целиком — справа от неё стоят действия, — и заливка обрывалась на
+   её границе: под курсором строка получала тёмный хвост в сотню пикселей, не
+   доходящий до правого края. Условие :has сохраняет прежнюю цель (подсвечиваем,
+   только когда курсор на самой строке-цели), но красит строку целиком.
+   Меняются ТОКЕНЫ, а не цвет одного узла: метка состояния и срок несут
+   собственный приглушённый тон, и без подмены токенов они оставались бы на
+   инверсии нечитаемыми — именно так срок и пропадал со строки. */
 .work__head { position: relative; display: flex; align-items: center; gap: 24px;
-  min-height: 48px; box-shadow: inset 0 -1px 0 var(--lp-line-2); }
+  min-height: 48px; box-shadow: inset 0 -1px 0 var(--lp-line-2);
+  transition: background .25s var(--lp-ease), color .25s var(--lp-ease); }
+.work__head:has(.work__hit:hover) { background: var(--lp-hi);
+  --lp-text: var(--lp-hi-ink);
+  --lp-muted: var(--lp-hi-muted);
+  --lp-key-text: var(--lp-hi-key);
+  color: var(--lp-hi-ink); }
 /* Кликабельна вся строка, а не иконка справа: цель размером в строку не
-   требует прицеливаться. */
-.work__hit { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline;
+   требует прицеливаться.
+   Центр, а не базовая линия. Базовая линия внутри коробки высотой 48 не
+   центрирует группу, а приклеивает её к верху: имя вставало на y 0…24, метки —
+   на 1…25. Кнопка справа живёт не здесь, а в .work__head с align-items: center,
+   то есть на y 12…36 — и текст читался на 12px выше кнопки в той же строке. */
+.work__hit { flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
   gap: 24px; height: 48px; padding: 0 12px; cursor: pointer;
   border: 0; border-radius: 0; background: none; text-align: left;
-  font-family: var(--font-text); color: var(--lp-text);
-  transition: background .25s var(--lp-ease), color .25s var(--lp-ease); }
-.work__hit:hover { background: var(--lp-hi); color: var(--lp-ink); }
+  font-family: var(--font-text); color: var(--lp-text); }
 /* Имя работы — содержание, поэтому Display и крупнее служебного. Переносов нет
    намеренно: строка обязана остаться строкой, иначе список поедет по высоте. */
 .work__name { flex: 1 1 auto; min-width: 0; font-family: var(--font-display);
@@ -387,7 +450,7 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
 .work__keep { min-width: 156px; text-align: right; }
 /* Красного в палитре нет. Ожидание метится ключом, сбой — светлым текстом:
    этого хватает, чтобы строку нашли глазами в списке. */
-.work--await .work__state { color: var(--lp-key); }
+.work--await .work__state { color: var(--lp-key-text); }
 .work--failed .work__state { color: var(--lp-text); }
 .work__acts { flex: none; display: flex; gap: 12px; padding-right: 12px; }
 /* Единственное движение на странице: оно означает работу, а не украшает её. */
@@ -405,7 +468,7 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
    сценарий. Рамки нет, на портале рамок нет вовсе. */
 .work__mark { font-family: var(--font-mono); font-weight: 700;
   font-size: 11px; line-height: 24px; letter-spacing: .09em; text-transform: uppercase;
-  color: var(--lp-key); }
+  color: var(--lp-key-text); }
 .work__mark--rejected { color: var(--lp-muted); }
 .work__mark { flex: none; }
 /* Панель остановки, переехавшая в ящик. Ограничений лайтбокса (свой скролл,
@@ -452,7 +515,10 @@ body.is-tool .lb-img { display: block; width: 100%;
   max-height: calc(100vh - 96px); object-fit: contain; border-radius: 0; }
 body.is-tool .lightbox__side { display: flex; flex-direction: column; gap: 24px;
   max-height: calc(100vh - 96px); overflow: auto; scrollbar-width: thin; }
-.lb-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+/* Центр, а не базовая линия: в баре стоит не пара текстов, а заголовок 19/24 и
+   кирпич кнопки 12/12 с отбивкой 6. Кирпич равняется коробкой, а не буквами, и
+   базовая линия опускала его на 3px — бар вырастал в 27, выпадая из модуля 6. */
+.lb-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .lb-bar .lightbox__close { margin-left: auto; }
 .lb-counter { font-family: var(--font-mono); font-weight: 700; font-size: 11px;
   line-height: 24px; letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted); }
@@ -501,8 +567,13 @@ body.is-tool .gen-form label { display: flex; flex-direction: column; gap: 12px;
   letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted); }
 body.is-tool .gen-form .field-group { display: flex; flex-direction: column; gap: 12px; }
 /* Боковой отступ подписи равен отступу текста в строках и полях: контролы
-   упираются в края рельса, текст — никогда. */
-body.is-tool .field-label { padding: 0 12px; font-family: var(--font-mono);
+   упираются в края рельса, текст — никогда.
+   margin: 0 — не гигиена, а починка. Внутри формы подпись это <span>, но там,
+   где она называет не поле, а целый блок (каталог продуктов, доступы,
+   отмеченный опыт), она абзац — и получала браузерные 1em сверху и снизу. При
+   font-size 11px это 11px, которые складывались с зазором блока: половина
+   ячейки превращалась в 23px, и подпись отваливалась от того, что называет. */
+body.is-tool .field-label { margin: 0; padding: 0 12px; font-family: var(--font-mono);
   font-weight: 700; font-size: 11px; line-height: 12px; letter-spacing: .09em;
   text-transform: uppercase; color: var(--lp-muted); }
 /* Сноска поля — ссылка, а не абзац. Объяснять, что такое карточка знаний, поле
@@ -523,6 +594,13 @@ body.is-tool .gen-form textarea { font: inherit; font-size: 13px; line-height: 2
   padding: 12px; border: 0; border-radius: 0; background: var(--lp-ink);
   box-shadow: inset 0 0 0 1px var(--lp-line-2); color: var(--lp-text);
   transition: box-shadow .2s var(--lp-ease); }
+/* Подсказка в поле — не украшение: в брифе она несёт пример формулировки
+   («уверенность и контроль — будто всё управление под рукой»), и её читают.
+   Браузерный #757575 давал 3.9 к чернилам — ниже порога; приглушённый слой
+   этажа даёт 6.8 и на камне не ломается, потому что приезжает токеном. */
+body.is-tool .gen-form select::placeholder,
+body.is-tool .gen-form input::placeholder,
+body.is-tool .gen-form textarea::placeholder { color: var(--lp-muted); opacity: 1; }
 /* 48 = 24 + 12 + 12 у поля в одну строку; 96 = три строки по 24 плюс те же
    12 и 12 у многострочного. */
 body.is-tool .gen-form select,
@@ -608,10 +686,15 @@ body.is-tool p.muted a:hover { color: var(--lp-text); box-shadow: inset 0 -1px 0
 
 /* Служебная строка статуса. Ошибка — хайрлайн ключа и светлее текст: красного
    в палитре v11 нет вовсе. */
-body.is-tool .status { margin-top: 24px; padding: 12px;
+body.is-tool .status { padding: 12px;
   box-shadow: inset 0 0 0 1px var(--lp-line-2); font-family: var(--font-text);
   font-weight: 400; font-size: 13px; line-height: 24px; letter-spacing: 0;
   text-transform: none; color: var(--lp-soft); }
+/* Собственного отступа сверху у статуса нет. Почти везде он лежит в колонке с
+   gap: 24 (.stop, .gen-form, .lib-card, .rail__block) — и margin складывался с
+   зазором в 48, вдвое больше всего остального в той же колонке. Отступ нужен
+   ровно там, где колонки нет: .rail — обычный блок и разводит детей margin'ами. */
+body.is-tool .rail > .status { margin-top: 24px; }
 /* Пустая строка не должна оставлять на экране пустой прямоугольник в 48px. */
 body.is-tool .status:empty { display: none; }
 body.is-tool .status:has(.err) { box-shadow: inset 0 0 0 1px var(--lp-edge); }
@@ -620,9 +703,9 @@ body.is-tool .err { color: var(--lp-text); }
    ячейки над строкой и две под ней. Типографику переопределяем ЗДЕСЬ, а не в
    .lp-foot: базовое правило — побайтовая копия эталона портала, и трогать его
    нельзя. Ссылки подвала — названия разделов, а не метки: их читают целиком.
-   Отступ слева ровно в ширину рельса: подвал — служебная строка ЭТАЖА ЧЕРНИЛ и
-   начинается там же, где этаж. Отцентрованный по всей ширине окна, он на 900px
-   заезжает светлыми ссылками на камень — и они пропадают. */
+   Отступ слева ровно в ширину рельса: подвал — служебная строка ЭТАЖА КАМНЯ и
+   начинается там же, где этаж. Без него полоса камня обрывалась бы по низу
+   ленты, а сам подвал лёг бы поперёк обоих этажей. */
 body.is-tool .lp-foot { gap: 12px 24px; margin-left: 360px;
   padding: 48px var(--page-pad);
   font-family: var(--font-text); font-size: 13px; line-height: 24px;
@@ -641,10 +724,14 @@ body.is-tool .scen-card { position: relative; overflow: hidden; display: block;
   width: 100%; height: 48px; text-align: left;
   font: inherit; cursor: pointer; border: 0; border-radius: 0; padding: 0 12px;
   background: var(--lp-ink); color: var(--lp-text);
-  box-shadow: inset 0 1px 0 var(--lp-edge);
+  /* Волосок между строками — это чертёж списка, а не акцент. Пока кромка была
+     полупрозрачной, разница не читалась: зелень в 20% над чернилами садилась
+     ровно в вес хайрлайна, и роль подменялась незаметно. Кромка стала видимой —
+     и подмена сразу стала бы зелёными полосками между продуктами. */
+  box-shadow: inset 0 1px 0 var(--lp-line-2);
   transition: background .25s var(--lp-ease), color .25s var(--lp-ease); }
-body.is-tool .scen-card:last-child { box-shadow: inset 0 1px 0 var(--lp-edge),
-  inset 0 -1px 0 var(--lp-edge); }
+body.is-tool .scen-card:last-child { box-shadow: inset 0 1px 0 var(--lp-line-2),
+  inset 0 -1px 0 var(--lp-line-2); }
 body.is-tool .scen-card:hover { background: var(--lp-hi); color: var(--lp-ink); }
 /* Выбранное метим планкой, а не инверсией: инверсия занята ховером, и если
    красить ею же выбранное, при наведении на соседнюю строку подсвечены две. */
@@ -660,7 +747,7 @@ body.is-tool .scen-card__title { min-width: 0; font-size: 13px; font-weight: 600
   line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body.is-tool .scen-card__tag { flex: none; font-family: var(--font-mono);
   font-weight: 700; font-size: 11px; line-height: 18px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--lp-key);
+  text-transform: uppercase; color: var(--lp-key-text);
   transition: color .25s var(--lp-ease); }
 body.is-tool .scen-card:hover .scen-card__tag { color: var(--lp-ink); }
 body.is-tool .scen-card__desc { opacity: 0; font-size: 13px; line-height: 24px;
@@ -725,7 +812,7 @@ body.is-tool .scen-card:focus-visible .scen-card__desc { opacity: 1;
 .cand__slogan { min-width: 0; font-size: 13px; font-weight: 600; line-height: 18px;
   color: var(--lp-text); }
 .cand__badge { flex: none; font-family: var(--font-mono); font-weight: 700; font-size: 11px;
-  line-height: 18px; letter-spacing: .09em; text-transform: uppercase; color: var(--lp-key); }
+  line-height: 18px; letter-spacing: .09em; text-transform: uppercase; color: var(--lp-key-text); }
 /* Флажок линта — не метка, а замечание целой фразой («слоган длиннее 40
    знаков»). Читают его один раз и решают, поэтому набор текстовый. */
 .cand__flags { display: flex; flex-wrap: wrap; gap: 6px 12px; }
@@ -757,7 +844,7 @@ body.is-tool .gen-form textarea.kb-block { height: 192px; resize: vertical; }
    читалось бы по буквам. Служебность несёт цвет, регистр её нести не обязан. */
 .exp-item__tag { margin-left: auto; flex: none; font-family: var(--font-text);
   font-weight: 600; font-size: 13px; line-height: 24px; letter-spacing: 0;
-  text-transform: none; color: var(--lp-key); }
+  text-transform: none; color: var(--lp-key-text); }
 /* «Забраковано» в промпт не идёт — строка это и говорит тем, что она тише:
    тот же набор, но приглушённым тоном, а не ключевым. */
 .exp-item__tag--rejected { color: var(--lp-muted); }
@@ -806,19 +893,17 @@ body.is-tool .exp-item p.muted { padding: 0; }
    работал бы.
    ============================================================================ */
 @media (max-width: 860px) {
-  /* Этажи разворачиваются обратно в стопку: камень сверху, чернила снизу — то
-     же деление, что на портале. Граница из вертикальной становится
-     горизонтальной, но остаётся стыком двух поверхностей, а не рамой.
+  /* Этажи разворачиваются обратно в стопку: чернила сверху, камень снизу.
+     Граница из вертикальной становится горизонтальной, но остаётся стыком двух
+     поверхностей, а не рамой.
      Отступ сверху больше — на узком экране шторка переносит навигацию на
      вторую строку и становится выше. Поля внутри этажей ужимаются до ячейки:
      две пары по 48 в узкое окно не помещаются. */
   body.is-tool { --page-pad: 24px; }
-  /* Заливку столбца снимаем: колонка одна, рельс встаёт НАД лентой, и полоса
-     камня слева легла бы поперёк обоих этажей. Здесь рельс не липкий и растёт
-     под своё содержимое, так что красит себя сам. */
-  body.is-tool main { padding-top: 0; background: none; }
+  body.is-tool main { padding-top: 0; }
   .tool__grid { grid-template-columns: 1fr; }
-  /* Камня слева нет — подвалу нечего обходить, он снова во всю ширину. */
+  /* Столбца больше нет — подвалу нечего обходить, он снова во всю ширину и
+     остаётся продолжением ленты, теперь уже снизу, а не справа. */
   body.is-tool .lp-foot { margin-left: 0; }
   /* В одну колонку липнуть нечему: рельс стоит НАД лентой, и прилипший он
      закрыл бы собой работы, ради которых прокрутка и затевалась. Высоту в
