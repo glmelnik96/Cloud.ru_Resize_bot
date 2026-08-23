@@ -76,8 +76,10 @@ h1, h2, h3, .brand { font-family: var(--font-display); letter-spacing: -0.01em; 
 .topnav__link.is-active { color: var(--text); background: var(--panel-2); }
 .topbar__auth { margin-left: auto; display: flex; align-items: center; gap: 14px; }
 .topbar__user { color: var(--muted); font-size: 13px; }
-.topbar .login { text-decoration: none; color: var(--accent-ink); background: var(--accent);
-  padding: 8px 16px; border-radius: var(--r-sm); font-weight: 600; font-size: 14px; }
+/* Кнопки «Войти» здесь нет и быть не может: все три страницы отдаются только
+   аутентифицированному пользователю, шлюз без личности до них не пускает.
+   Правило для .login приехало вместе с канонической шапкой и не могло
+   отрисоваться ни разу. */
 .logout-form { margin: 0; }
 .logout-form button { cursor: pointer; border: none; background: var(--panel-2);
   color: var(--muted); padding: 8px 14px; border-radius: var(--r-sm); font: inherit; font-size: 13px;
@@ -162,9 +164,10 @@ body.v11 .topbar {
   clip-path: inset(0);
   transition: top .4s var(--lp-ease-bar), clip-path .7s var(--lp-ease-bar);
 }
-body.v11.lp-tuck .topbar { top: -88px; }
+/* Шторка (lp-tuck) и состояние «не вошёл» (:not(.is-auth)) остались снаружи:
+   первое — поведение лендинга портала, которого у инструмента нет, второе
+   не наступает, потому что body всех трёх страниц несёт is-auth жёстко. */
 body.v11 .topbar .brand { display: none; }
-body.v11:not(.is-auth) .topnav { display: none; }
 body.v11 .topnav { min-width: 0; gap: 0; padding-left: 0; }
 body.v11 .topnav__link { position: relative; border-radius: 0;
   font-family: var(--font-mono); font-weight: 700; font-size: 11px; line-height: 1;
@@ -190,16 +193,13 @@ body.v11 .topnav__link[data-t].is-active::before,
 body.v11 .topnav__link[data-t].is-active::after { color: var(--lp-key-ink); }
 body.v11 .topnav__link[data-t].is-active { box-shadow: inset 0 -1px 0 var(--lp-key-ink); }
 body.v11 .topbar__auth { margin-left: 0; gap: 12px; padding-left: 12px; }
-body.v11:not(.is-auth) .topbar__auth { padding-left: 0; }
 body.v11 .topbar__user { font-family: var(--font-mono); font-size: 11px;
   letter-spacing: .05em; color: rgba(34, 34, 34, .82); }
-body.v11 .topbar .login,
 body.v11 .logout-form button { border: 0; border-radius: 0; padding: 8px 16px;
   font-family: var(--font-mono); font-weight: 700; font-size: 11px; line-height: 1;
   letter-spacing: .09em; text-transform: uppercase;
   background: var(--lp-key-ink); color: var(--lp-key);
   transition: background .25s var(--lp-ease), color .25s var(--lp-ease); }
-body.v11 .topbar .login:hover,
 body.v11 .logout-form button:hover { background: var(--lp-text); color: var(--lp-key-ink); }
 
 /* Живого чертежа здесь больше нет. Сетка подсвечивала пустой фон, а под лентой
@@ -676,12 +676,11 @@ body.is-tool .gen-form button[type="submit"] { height: 48px; cursor: pointer;
 body.is-tool .gen-form button[type="submit"]:hover { background: var(--lp-text); }
 body.is-tool .gen-form button[type="submit"]:disabled { opacity: .4; cursor: default; }
 
-/* Чипы и сегменты — те же кирпичи, что кнопки действий, но встык: это один
+/* Сегменты — те же кирпичи, что кнопки действий, но встык: это один
    переключатель, а не несколько независимых кнопок. Стык держим на -1px,
    иначе соседние рамки сложились бы в двойную линию. */
-.chip-row { display: flex; flex-wrap: nowrap; gap: 0; }
 .seg { display: flex; gap: 0; }
-body.is-tool .chip, body.is-tool .seg__btn { flex: 1 1 0; min-width: 0;
+body.is-tool .seg__btn { flex: 1 1 0; min-width: 0;
   position: relative; height: 24px; cursor: pointer; border: 0;
   border-radius: 0; padding: 6px; background: var(--lp-ink);
   box-shadow: inset 0 0 0 1px var(--lp-line-2);
@@ -689,13 +688,13 @@ body.is-tool .chip, body.is-tool .seg__btn { flex: 1 1 0; min-width: 0;
   line-height: 12px; letter-spacing: 0; text-transform: none;
   transition: background .2s var(--lp-ease), color .2s var(--lp-ease),
               box-shadow .2s var(--lp-ease); }
-body.is-tool .chip + .chip, body.is-tool .seg__btn + .seg__btn { margin-left: -1px; }
+body.is-tool .seg__btn + .seg__btn { margin-left: -1px; }
 /* Выбранное — заливка ключом. Это единственное место в форме, где акцент
    означает «вот что уйдёт в генерацию». С ховером не спорит — тот светлый. */
-body.is-tool .chip.is-active, body.is-tool .seg__btn.is-active { z-index: 1;
+body.is-tool .seg__btn.is-active { z-index: 1;
   background: var(--lp-key); color: var(--lp-key-ink);
   box-shadow: inset 0 0 0 1px var(--lp-key); }
-body.is-tool .chip:hover, body.is-tool .seg__btn:hover { z-index: 2; background: var(--lp-hi);
+body.is-tool .seg__btn:hover { z-index: 2; background: var(--lp-hi);
   color: var(--lp-ink); box-shadow: inset 0 0 0 1px var(--lp-hi); }
 
 /* Галочка. align-items: flex-start, потому что пояснение стоит отдельной
@@ -1010,7 +1009,7 @@ body.is-tool .exp-item p.muted { padding: 0; }
   body.v11 .topbar, body.v11 .topnav__link,
   body.v11 .topnav__link[data-t]::before,
   body.v11 .topnav__link[data-t]::after,
-  body.v11 .topbar .login, body.v11 .logout-form button { transition: none; }
+  body.v11 .logout-form button { transition: none; }
   body.is-tool .scen-card, body.is-tool .scen-card__head,
   body.is-tool .scen-card__desc, body.is-tool .scen-card__tag { transition: none; }
   body.is-tool .scen-card { height: 72px; }

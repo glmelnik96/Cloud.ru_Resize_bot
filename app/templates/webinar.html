@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Вебинарные ресайзы — Cloud.ru Design</title>
-  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260823v1">
+  <link rel="stylesheet" href="{{ prefix }}/static/app.css?v={{ v }}">
   {# Живая сетка — общий модуль портала, забран как есть. #}
 </head>
 {# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
@@ -166,8 +166,8 @@
     </div>
   </div>
 
-  <script src="{{ prefix }}/static/ascii.js?v=20260823v1" defer></script>
+  <script src="{{ prefix }}/static/ascii.js?v={{ v }}" defer></script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
-  <script src="{{ prefix }}/static/webinar.js?v=20260823v1"></script>
+  <script src="{{ prefix }}/static/webinar.js?v={{ v }}"></script>
 </body>
 </html>

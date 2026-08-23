@@ -1,6 +1,8 @@
 """App3 — HTML page + static mount (canon v2 header)."""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -259,6 +261,31 @@ def test_empty_prefix_serves_assets_and_api_at_root(tmp_path, monkeypatch):
         assert 'href="/static/app.css?v=' in html
         assert 'src="/static/creatives.js?v=' in html
         assert 'window.APP_PREFIX = "";' in html
+
+
+def test_asset_version_is_computed_not_hand_written(tmp_path, monkeypatch):
+    """Метка кэша считается из самих файлов статики, а не пишется в шаблонах
+    руками. Ручную метку забывают: правка CSS без правки метки — это выкатка,
+    после которой вернувшийся браузер показывает старый экран, и отличить это
+    от «не задеплоилось» нельзя ничем. Метка одна на все страницы и все теги:
+    разойтись между ними ей негде."""
+    with TestClient(_app(tmp_path, monkeypatch, prefix="")) as c:
+        seen = set()
+        for path in ("/", "/webinar", "/library"):
+            html = c.get(path, headers=_HDR).text
+            tags = re.findall(r"/static/[\w.]+\?v=([^\"]+)", html)
+            assert len(tags) == 3      # css + ascii.js + скрипт страницы
+            seen.update(tags)
+        assert len(seen) == 1          # одно значение на весь сайт
+        assert "20260823" not in seen.pop()  # и оно не вписано в шаблон
+
+    # Правка файла статики двигает метку — иначе она ничего не гарантирует.
+    from app.api.routes_pages import _STATIC, _asset_version
+
+    before = _asset_version()
+    probe = _STATIC / "app.css"
+    probe.touch()
+    assert _asset_version() != before
 
 
 def test_webinar_page_renders(tmp_path, monkeypatch):

@@ -19,6 +19,20 @@ from app.auth.deps import get_current_user
 router = APIRouter(tags=["pages"])
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+_STATIC = Path(__file__).resolve().parent.parent / "static"
+
+
+def _asset_version() -> str:
+    """Метка кэша, посчитанная по самим файлам статики.
+
+    Раньше это была строка «20260823v1», прописанная в трёх шаблонах девять
+    раз руками. Такую метку забывают: правка CSS без правки метки — это выкатка,
+    после которой вернувшийся браузер продолжает показывать старый экран, и
+    отличить это от «не задеплоилось» нельзя ничем. Здесь метка не может
+    разойтись ни с файлами, ни между страницами: она одна и считается из
+    времени последней правки статики."""
+    stamps = [p.stat().st_mtime_ns for p in _STATIC.glob("*.*")]
+    return format(max(stamps) if stamps else 0, "x")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -32,7 +46,8 @@ async def index(request: Request):
     return _TEMPLATES.TemplateResponse(
         request=request,
         name="creatives.html",
-        context={"email": user.email, "prefix": prefix, "retention_hours": retention_hours},
+        context={"email": user.email, "prefix": prefix,
+                 "retention_hours": retention_hours, "v": _asset_version()},
     )
 
 
@@ -46,7 +61,8 @@ async def webinar_page(request: Request):
     return _TEMPLATES.TemplateResponse(
         request=request,
         name="webinar.html",
-        context={"email": user.email, "prefix": prefix, "retention_hours": retention_hours},
+        context={"email": user.email, "prefix": prefix,
+                 "retention_hours": retention_hours, "v": _asset_version()},
     )
 
 
@@ -59,5 +75,5 @@ async def library_page(request: Request):
     return _TEMPLATES.TemplateResponse(
         request=request,
         name="library.html",
-        context={"email": user.email, "prefix": prefix},
+        context={"email": user.email, "prefix": prefix, "v": _asset_version()},
     )
