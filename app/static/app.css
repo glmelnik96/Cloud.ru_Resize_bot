@@ -5,9 +5,11 @@
    геометрия: модуль 24px, всё кратно 6.
 
    Что взято из эталона (Brand_Image_site/gateway/static/app.css) БЕЗ правок:
-   @font-face, токены body.v11, шторка, .lp-grid, .lp-foot и весь слой
-   body.is-tool. Свои здесь только компоненты, которых у /images нет:
-   карточки предложений, рецепт, отметка исхода, библиотека, кадрирование.
+   @font-face, шторка, .lp-foot. Токены body.v11 сведены с App2 — портал должен
+   читаться одной площадкой. Слой body.is-tool перестроен под свой функционал:
+   на портале двери и витрина, здесь бриф и лента, и они работают одновременно.
+   Свои здесь только компоненты, которых у /images нет: карточки предложений,
+   рецепт, отметка исхода, библиотека, кадрирование.
 
    Канон целиком — docs/DESIGN_CANON_v11.md в Brand_Image_site.
    ВАЖНО: имена id и классов, на которые завязан JS, менять нельзя.
@@ -175,23 +177,9 @@ body.v11 .logout-form button { border: 0; border-radius: 0; padding: 8px 16px;
 body.v11 .topbar .login:hover,
 body.v11 .logout-form button:hover { background: var(--lp-text); color: var(--lp-key-ink); }
 
-/* ===== Живой чертёж =====
-   Базовое исполнение — градиенты (есть всегда, хватает тач-экранам и режиму
-   «меньше движения»); живое — canvas, его включает grid.js классом is-live.
-   z-index обязателен отрицательный: чертёж — позиционированный элемент, а
-   плитки работ — обычные блоки в потоке, и при z-index: 0 линии проступали бы
-   сквозь их подложку. */
-.lp-grid { position: absolute; inset: 0; overflow: hidden; pointer-events: none;
-  --lp-gy: 0px; --lp-gx: 0px; }
-.lp-grid::before { content: ""; position: absolute; inset: 0;
-  background-position: var(--lp-gx) var(--lp-gy);
-  background-image:
-    repeating-linear-gradient(to right, var(--lp-line) 0 1px, transparent 1px var(--lp-cell)),
-    repeating-linear-gradient(to bottom, var(--lp-line) 0 1px, transparent 1px var(--lp-cell)); }
-.lp-grid.is-live::before { display: none; }
-.lp-grid__canvas { position: absolute; inset: 0; display: none; width: 100%; height: 100%; }
-.lp-grid.is-live .lp-grid__canvas { display: block; }
-.lp-grid--page { z-index: -1; }
+/* Живого чертежа здесь больше нет. Сетка подсвечивала пустой фон, а под лентой
+   работ фон не пустой: линии спорили со строками и добавляли движение туда, где
+   смотрят готовое. Границу этажей теперь держит стык столбцов, а не рама. */
 
 /* ===== Подвал: служебная строка вместо секции ===== */
 .lp-foot { display: flex; flex-wrap: wrap; justify-content: center;
@@ -206,26 +194,37 @@ body.v11 .logout-form button:hover { background: var(--lp-text); color: var(--lp
    без хореографии появления: здесь курсор занят делом.
    ============================================================================ */
 /* Страница — колонка на всю высоту окна: подвал стоит внизу даже при пустой
-   ленте. Боковой отступ — две ячейки, иначе рельс читается приклеенным к краю. */
-body.is-tool { --rail-w: 264px; --page-pad: 48px;
+   ленте. */
+body.is-tool { --page-pad: 48px;
   display: flex; flex-direction: column; min-height: 100vh;
   background: var(--lp-ink); color: var(--lp-text); }
-/* margin обнуляем намеренно: базовое `margin: 0 auto` во флекс-колонке гасит
-   растяжку по ширине, и main съёжился бы до содержимого. */
+/* Отступов у main нет намеренно: этажи должны доходить до края окна, иначе
+   между камнем и краем экрана останется полоса чернил и граница перестанет
+   читаться границей. Внутренние поля ушли внутрь .rail и .feed.
+   margin обнуляем: базовое `margin: 0 auto` во флекс-колонке гасит растяжку по
+   ширине, и main съёжился бы до содержимого. */
 body.is-tool main { position: relative; flex: 1 0 auto; display: flex;
-  flex-direction: column; max-width: none; margin: 0;
-  padding: 96px var(--page-pad) 0; }
+  flex-direction: column; max-width: none; margin: 0; padding: 0; }
 
-/* ===== Каркас: рельс управления и лента результата ===== */
+/* ===== Каркас: два этажа, повёрнутые на 90° =====
+   На портале этажи лежат друг на друге, здесь — рядом: работа идёт слева
+   направо, а не сверху вниз. Свет слева — где задают, чернила справа — где
+   смотрят сделанное. gap нулевой: этажи стыкуются вплотную, и стык двух
+   поверхностей и есть граница. Любой зазор превратил бы её в полосу. */
 .tool { flex: 1 0 auto; display: flex; flex-direction: column; }
-/* stretch, а не start: рама ленты должна доходить до низа страницы даже с
-   пустой лентой, иначе чертёж обрывался бы на высоте формы. */
+/* stretch: оба этажа доходят до низа страницы даже с пустой лентой. */
 .tool__grid { flex: 1 0 auto; display: grid;
-  grid-template-columns: var(--rail-w) 1fr; gap: 48px; align-items: stretch; }
-/* Липкий рельс. Верх совпадает с padding-top у main, поэтому при нулевой
-   прокрутке колонка стоит там же, где стояла бы обычная. align-self перебивает
-   stretch: растянутому на всю ленту рельсу прилипать некуда. Ограничение по
-   высоте — на случай низкого окна, иначе кнопка запуска уходит за экран. */
+  grid-template-columns: 360px 1fr; gap: 0; align-items: stretch; }
+/* Липкий рельс. top: 0 и высота ровно в окно — камень обязан доходить до
+   верхнего края экрана. Отступ сверху (даже под шторку) оставил бы над камнем
+   полосу чернил, и вместо двух этажей читалась бы колонка, приставленная сбоку.
+   Шторка канона висит поверх (fixed, top: 18px, высота 35px) и ничего не
+   занимает в потоке — от неё уводит не отступ рельса, а его внутреннее поле
+   сверху: 96px, столько же, сколько у ленты, поэтому содержимое двух этажей
+   начинается на одной высоте.
+   align-self перебивает stretch: растянутому на всю ленту рельсу прилипать
+   некуда. Высота в размер окна, а не max-height: этаж должен быть этажом при
+   любой длине ленты. */
 /* Токены камня. Ни одно правило ниже не знает, на каком этаже исполняется:
    весь лист построен на var(--lp-*), и переопределения десяти переменных
    хватает, чтобы перекрасить поля, галки, кирпичи, селекты и дропзону — без
@@ -242,9 +241,11 @@ body.is-tool main { position: relative; flex: 1 0 auto; display: flex;
   --lp-key: #35A171;            /* ступень вниз: #3FB67C на камне светится */
   --sl-surface: #CBD1CE;        /* ящик утоплен, а не приподнят */
   min-width: 0; align-self: start;
-  position: sticky; top: 96px;
-  max-height: calc(100vh - 144px); overflow: hidden auto;
-  scrollbar-width: thin; }
+  position: sticky; top: 0;
+  height: 100vh; overflow: hidden auto;
+  scrollbar-width: thin;
+  padding: 96px 48px 48px;
+  background: var(--lp-ink); color: var(--lp-text); }
 .rail__block { display: flex; flex-direction: column; gap: 24px; }
 .rail__block + .rail__block { margin-top: 48px; }
 /* Заголовок вернулся на экран и стал единственным крупным кеглем страницы.
@@ -277,13 +278,14 @@ body.is-tool .t-btn:disabled { opacity: .4; cursor: default; }
    с виду живой, пока предыдущий запрос ещё летит. */
 body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none; }
 
-/* ===== Лента =====
-   Единственная рама на странице и единственный чертёж внутри неё.
-   isolation: isolate обязательна — чертёж лежит на z-index: -1 и без своего
-   контекста наложения ушёл бы под фон страницы. Отступ 24 — ячейка: первая
-   линия чертежа совпадает с первой линией плиток. */
-.feed { position: relative; isolation: isolate; overflow: hidden; min-width: 0;
-  padding: 24px; box-shadow: inset 0 0 0 1px var(--lp-line-2); }
+/* ===== Лента — этаж чернил =====
+   Рамы нет: лента и есть этаж, а её левый край и есть граница с камнем. Раму
+   сняли намеренно — она обводила то, что и так отделено сменой поверхности, и
+   читалась второй, лишней линией внутри уже разделённого экрана.
+   Слева 48 — то же поле, что внутри рельса, чтобы содержимое двух этажей стояло
+   на одном расстоянии от стыка. Справа --sl-gut держит текст в пределах меры
+   на широком экране и не даёт ленте растечься до края. */
+.feed { min-width: 0; padding: 96px var(--sl-gut) 96px 48px; }
 .feed__head { display: flex; align-items: baseline; gap: 24px; margin: 0 0 24px;
   padding-bottom: 12px; box-shadow: inset 0 -1px 0 var(--lp-line-2); }
 .feed__title { margin: 0; font-family: var(--font-mono); font-weight: 700; font-size: 11px;
@@ -754,16 +756,21 @@ body.is-tool .exp-item p.muted { padding: 0; }
    работал бы.
    ============================================================================ */
 @media (max-width: 860px) {
-  /* Рельс разворачивается над лентой, плитки тилятся сами. Отступ сверху
-     больше — на узком экране шторка переносит навигацию на вторую строку и
-     становится выше. Боковой отступ обратно в ячейку: 264 рельса плюс две
-     пары по 48 в узкое окно не помещаются. */
+  /* Этажи разворачиваются обратно в стопку: камень сверху, чернила снизу — то
+     же деление, что на портале. Граница из вертикальной становится
+     горизонтальной, но остаётся стыком двух поверхностей, а не рамой.
+     Отступ сверху больше — на узком экране шторка переносит навигацию на
+     вторую строку и становится выше. Поля внутри этажей ужимаются до ячейки:
+     две пары по 48 в узкое окно не помещаются. */
   body.is-tool { --page-pad: 24px; }
-  body.is-tool main { padding-top: 120px; }
+  body.is-tool main { padding-top: 0; }
   .tool__grid { grid-template-columns: 1fr; }
   /* В одну колонку липнуть нечему: рельс стоит НАД лентой, и прилипший он
-     закрыл бы собой работы, ради которых прокрутка и затевалась. */
-  .rail { position: static; max-height: none; overflow: visible; }
+     закрыл бы собой работы, ради которых прокрутка и затевалась. Высоту в
+     размер окна тоже снимаем — иначе короткая форма растянулась бы на экран. */
+  .rail { position: static; height: auto; overflow: visible;
+    padding: 120px 24px 48px; }
+  .feed { padding: 48px 24px; }
   /* Колонка действий уходит под картинку — 264 рядом с кадром не остаётся. */
   body.is-tool .lightbox { padding: 12px; }
   body.is-tool .lightbox__panel { grid-template-columns: 1fr; }

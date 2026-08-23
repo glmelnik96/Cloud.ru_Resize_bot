@@ -341,3 +341,33 @@ def test_css_has_no_duplicated_colour_rules_under_rail(tmp_path, monkeypatch):
         css = c.get("/static/app.css").text
         for sel in (".rail .t-btn", ".rail .field-label", ".rail input", ".rail button"):
             assert sel not in css
+
+
+def test_no_template_wires_the_live_grid(tmp_path, monkeypatch):
+    """Чертёж снят: цвет штриха захардкожен под тёмный фон, на камне линий не
+    видно, а под лентой работ фон не пустой — сетка спорит со строками.
+    Сам grid.js остаётся в репозитории: это общий модуль портала."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        for path in ("/", "/webinar", "/library"):
+            html = c.get(path, headers=_HDR).text
+            assert "grid.js" not in html, path
+            assert "lp-grid" not in html, path
+            assert "lpGrid(" not in html, path
+        assert "lp-grid" not in c.get("/static/app.css").text
+
+
+def test_feed_frame_is_replaced_by_the_floor_border(tmp_path, monkeypatch):
+    """Граница этажей идёт от края до края окна и работает разделителем.
+    Рама вокруг ленты поверх неё — вторая линия, делающая ту же работу.
+
+    Камень прибит к окну целиком (top: 0, высота 100vh), а не отодвинут под
+    шторку: шторка канона висит поверх страницы (fixed, top: 18px) и в потоке
+    ничего не занимает, так что любой отступ сверху оставил бы над камнем
+    полосу чернил — и колонка перестала бы читаться этажом."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        assert ".feed { position: relative; isolation: isolate" not in css
+        assert "grid-template-columns: 360px 1fr" in css
+        assert "position: sticky; top: 0;" in css  # камень стоит, работы едут мимо
+        assert "height: 100vh; overflow: hidden auto" in css
+        assert "padding: 96px var(--sl-gut)" in css

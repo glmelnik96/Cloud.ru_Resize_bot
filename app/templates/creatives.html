@@ -6,7 +6,6 @@
   <title>Креативы — Cloud.ru Design</title>
   <link rel="stylesheet" href="{{ prefix }}/static/app.css?v=20260822v12">
   {# Живая сетка — общий модуль портала, забран как есть. #}
-  <script src="{{ prefix }}/static/grid.js?v=20260822v12" defer></script>
 </head>
 {# v11: is-tool включает слой инструмента, is-auth раскрывает шторку.
    is-landing не копируем — это класс лендинга. #}
@@ -32,11 +31,6 @@
 
   <main>
     <section class="tool">
-      {# Заголовок вынесен из рельса на всю ширину: это единственный
-         крупный кегль страницы, и в колонке 264 он ломался бы переносами.
-         Он же даёт странице третью типографическую ступень — без неё
-         экран был полем одинаковых 11px. #}
-      <h1>Генерация креативов</h1>
       <div class="tool__grid">
 
       {# Рельс — только бриф. Пять «шагов» пайплайна не пять экранов, а одна
@@ -101,7 +95,10 @@
       {# Лента — единственное место жизни задачи. Плитка = один креатив;
          пока креативов нет, плитка показывает состояние прогона. #}
       <section class="feed" id="feed">
-        <div class="lp-grid lp-grid--page"><canvas class="lp-grid__canvas"></canvas></div>
+        {# Заголовок стоит на этаже чернил, а не над обоими: он называет то, что
+           человек смотрит, а не то, чем управляет. Он же даёт странице третью
+           типографическую ступень — без неё экран был полем одинаковых 11px. #}
+        <h1>Генерация креативов</h1>
         <header class="feed__head">
           <p class="feed__title">Креативы</p>
           <span class="feed__count" id="feedCount">0</span>
@@ -247,17 +244,6 @@
     </div>
   </div>
 
-  <script>
-    // Чертёж заперт в раму ленты: сцена — сама лента, притирка — к сетке
-    // плиток, иначе фаза линий случайная и плитки не садятся на них.
-    document.addEventListener("DOMContentLoaded", function () {
-      window.lpGrid({
-        grid: document.querySelector(".lp-grid--page"),
-        stage: document.getElementById("feed"),
-        alignTo: document.getElementById("feedGrid"),
-      });
-    });
-  </script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
   <script src="{{ prefix }}/static/creatives.js?v=20260822v12"></script>
 </body>
