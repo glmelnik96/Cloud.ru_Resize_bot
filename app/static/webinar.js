@@ -1,8 +1,8 @@
 /* App3 / вебинарные ресайзы — v11.
    Каркас тот же, что у «Креативов»: рельс собирает задачу, лента показывает
-   форматы плитками, лайтбокс работает в двух режимах — просмотр формата и
-   подгонка кадра. Подгонка вынесена в лайтбокс не для красоты: холст 360
-   в рельс шириной 264 не влезает.
+   сборки строками, форматы лежат рядом превью в ящике строки. Лайтбокс
+   работает в двух режимах — просмотр формата и подгонка кадра. Подгонка
+   вынесена в лайтбокс не для красоты: холст 360 в рельс шириной 264 не влезает.
 
    Движок подгонки не тронут — это Transform(scale, x, y) в единицах опорной
    рамки, который уходит на сервер как есть (infra.hero_fit.bake_frame
@@ -40,7 +40,7 @@
 
   let taskUid = null, es = null;
   // Занятость: от нажатия «Собрать» до done/ошибки. Одна задача на страницу —
-  // лента показывает прогресс в одной плитке, и вторая сборка её бы перебила.
+  // лента показывает прогресс в одной строке, и вторая сборка её бы перебила.
   let busy = false;
   const LS_KEY = "app3_webinar_task";
   const ACTIVE = ["queued", "running"];
@@ -51,14 +51,17 @@
   // плоский список форматов для листания в лайтбоксе.
   let tasks = [];
   let views = [];
-  const stateEls = new Map();   // uid → {wrap, line, acts, bar, actsKey}
+  const stateEls = new Map();   // uid → {wrap, hit, line, keep, acts, bar, panel, actsKey}
   let liveStep = "";            // текст шага активной задачи (из SSE)
   const byUid = (uid) => tasks.find((t) => t.task_uid === uid) || null;
 
-  const feedGrid = $("feedGrid");
+  const feedList = $("feedList");
   const feedCount = $("feedCount");
   const feedEmpty = $("feedEmpty");
   const feedFoot = $("feedFoot");
+  // Окно хранения приходит с сервера через шаблон: константа в JS разъехалась
+  // бы с RETENTION_TTL_SEC при первой же правке конфига.
+  const RETENTION_H = Number((feedList && feedList.dataset.retentionHours) || 24);
 
   const canvas = $("fitCanvas");
   const ctx = canvas.getContext("2d");
@@ -93,30 +96,100 @@
     if (t.status === "failed") return t.error ? "Ошибка: " + t.error : "Ошибка";
     return STATUS_LABEL[t.status] || t.status;
   }
-  const tileClass = (t) => "work work--" + t.status;
+  const rowClass = (t) => "work work--" + t.status;
   const actsKeyOf = (t) => t.status;
 
-  // Служебная плитка: задача, у которой форматов ещё (или уже) нет. Каркас
-  // строится один раз — события шага приходят часто, и пересборка гасила бы
-  // ссылку прямо под курсором.
-  function stateTile(t) {
-    const wrap = el("article", tileClass(t));
-    const body = el("div", "work__body");
-    const line = el("div", "work__state", stateText(t));
+  // Остаток срока хранения. Дата сборки человеку не говорит ничего: он
+  // спрашивает «успею ли скачать», а не «когда это было».
+  // Наивный UTC: сервер отдаёт created_at без суффикса, и new Date() читает
+  // такую строку как местное время — в Москве это ошибка на три часа.
+  function keepText(t) {
+    if (!t.created_at || ACTIVE.includes(t.status)) return "";
+    const raw = String(t.created_at);
+    const iso = /(Z|[+-]\d\d:?\d\d)$/.test(raw) ? raw : raw + "Z";
+    const left = RETENTION_H - (Date.now() - new Date(iso).getTime()) / 3600000;
+    if (!isFinite(left) || left <= 0) return "";
+    return "хранится ещё " + Math.max(1, Math.round(left)) + " ч";
+  }
+
+  // Сборка — одна строка, сколько бы форматов в ней ни было. Двадцать шесть
+  // ресайзов это один предмет: их заказывают, забирают и хранят вместе, а поле
+  // из двадцати шести плиток было той кашей, ради которой всё затевалось.
+  // Каркас строится один раз: события шага приходят часто, и пересборка гасила
+  // бы ссылку прямо под курсором.
+  function workRow(t) {
+    const wrap = el("article", rowClass(t));
+    const head = el("div", "work__head");
+    const hit = el("button", "work__hit");
+    hit.type = "button";
+    hit.setAttribute("aria-expanded", "false");
+    const name = el("span", "work__name", t.prompt || "(без названия)");
+    name.title = t.prompt || "";
+    hit.appendChild(name);
+    const line = el("span", "work__state", stateText(t));
+    hit.appendChild(line);
+    const keep = el("span", "work__keep", keepText(t));
+    hit.appendChild(keep);
+    hit.addEventListener("click", () => toggleRow(t.task_uid));
+    head.appendChild(hit);
     const acts = el("div", "work__acts");
+    head.appendChild(acts);
     const bar = el("div", "work__bar is-idle");
     bar.appendChild(document.createElement("i"));
     bar.hidden = !(t.status === "queued" || t.status === "running");
-    body.appendChild(line);
-    body.appendChild(acts);
-    body.appendChild(bar);
-    wrap.appendChild(body);
-    const cap = el("div", "work__cap", t.prompt || "(без названия)");
-    cap.title = t.prompt || "";
-    wrap.appendChild(cap);
-    stateEls.set(t.task_uid, { wrap, line, acts, bar, actsKey: "" });
+    head.appendChild(bar);
+    const panel = el("div", "work__panel");
+    wrap.appendChild(head);
+    wrap.appendChild(panel);
+    stateEls.set(t.task_uid, { wrap, hit, line, keep, acts, bar, panel, actsKey: "" });
     fillActs(t);
     return wrap;
+  }
+
+  function toggleRow(uid) {
+    const t = byUid(uid);
+    const p = stateEls.get(uid);
+    if (!t || !p) return;
+    // Открывать нечего, пока форматов нет: пустой ящик под идущей сборкой
+    // сообщал бы, что там что-то есть.
+    if (!(t.status === "done" && (t.images || []).length)) return;
+    if (p.wrap.classList.contains("is-open")) { closeRow(uid); return; }
+    stateEls.forEach((_, other) => { if (other !== uid) closeRow(other); });
+    p.panel.innerHTML = "";
+    p.panel.appendChild(formatStrip(t));
+    p.wrap.classList.add("is-open");
+    p.hit.setAttribute("aria-expanded", "true");
+  }
+
+  function closeRow(uid) {
+    const p = stateEls.get(uid);
+    if (!p || !p.wrap.classList.contains("is-open")) return;
+    p.panel.innerHTML = "";
+    p.wrap.classList.remove("is-open");
+    p.hit.setAttribute("aria-expanded", "false");
+  }
+
+  // Ряд превью в собственных пропорциях: форматы отличаются именно геометрией,
+  // и кадрирование под общий квадрат стёрло бы единственный различитель.
+  // Подпись висит подсказкой — имя файла (vk_1200x600) под каждым превью
+  // вернуло бы в ящик тот же частокол одинаковых надписей.
+  function formatStrip(t) {
+    const strip = el("div", "strip strip--shapes");
+    (t.images || []).forEach((u, i) => {
+      const caption = captionOf(u);
+      const b = el("button", "strip__item");
+      b.type = "button";
+      b.title = caption;
+      const img = el("img");
+      img.loading = "lazy";
+      img.src = P + u;
+      img.alt = caption;
+      b.appendChild(img);
+      const pos = views.findIndex((v) => v.uid === t.task_uid && v.idx === i);
+      b.addEventListener("click", () => openView(pos < 0 ? 0 : pos));
+      strip.appendChild(b);
+    });
+    return strip;
   }
 
   function fillActs(t) {
@@ -133,60 +206,42 @@
     }
   }
 
-  // Плитка формата. Один ресайз — одна плитка: группировать двадцать шесть штук
-  // в «сборку» незачем, человек выбирает формат, а не прогон.
-  function imgTile(t, url, i) {
-    const caption = captionOf(url);
-    const wrap = el("article", "work work--done");
-    const body = el("div", "work__body");
-    const open = el("button", "work__open");
-    open.type = "button";
-    open.title = caption;
-    const img = el("img");
-    img.loading = "lazy";
-    img.src = P + url;
-    img.alt = caption;
-    open.appendChild(img);
-    const pos = views.length;
-    open.addEventListener("click", () => openView(pos));
-    body.appendChild(open);
-    wrap.appendChild(body);
-    const cap = el("div", "work__cap", caption);
-    cap.title = caption;
-    wrap.appendChild(cap);
-    views.push({ uid: t.task_uid, idx: i, url: url, caption: caption });
-    return wrap;
-  }
-
+  // Счётчик ленты считает сборки, а не форматы: он стоит рядом с заголовком
+  // «Ресайзы» и отвечает на вопрос «сколько у меня работ», а не «сколько
+  // файлов лежит на диске».
   function renderFeed() {
-    feedGrid.innerHTML = "";
+    feedList.innerHTML = "";
     stateEls.clear();
     views = [];
     for (const t of tasks) {
-      const imgs = Array.isArray(t.images) ? t.images : [];
-      if (t.status === "done" && imgs.length) {
-        imgs.forEach((u, i) => feedGrid.appendChild(imgTile(t, u, i)));
-      } else {
-        feedGrid.appendChild(stateTile(t));
-      }
+      feedList.appendChild(workRow(t));
+      // Плоский список форматов собирается здесь, а не в ящике: лайтбокс
+      // листает стрелками и не должен зависеть от того, какая строка открыта.
+      (Array.isArray(t.images) ? t.images : []).forEach((u, i) => {
+        views.push({ uid: t.task_uid, idx: i, url: u, caption: captionOf(u) });
+      });
     }
-    const n = feedGrid.childElementCount;
-    feedCount.textContent = n;
-    feedEmpty.hidden = n > 0;
+    feedCount.textContent = tasks.length;
+    feedEmpty.hidden = tasks.length > 0;
     // Сноска про срок хранения нужна, только когда есть что хранить.
     feedFoot.hidden = !tasks.length;
   }
 
-  // Точечное обновление плитки под поток событий. Пересобираем целиком только
-  // тогда, когда плитки для этой задачи в ленте нет (её ещё не было или она
-  // сменила род — из служебной стала набором форматов).
+  // Точечное обновление строки под поток событий. Пересобираем ленту целиком
+  // только тогда, когда строки для этой задачи в ней нет — то есть задача
+  // появилась только что.
+  // className переписывается целиком, поэтому раскрытие пришлось бы схлопнуть:
+  // is-open возвращаем руками, иначе ящик закрывался бы на каждом событии шага
+  // прямо под руками у человека, который в нём выбирает формат.
   function syncState(uid) {
     const t = byUid(uid);
     if (!t) return;
     const p = stateEls.get(uid);
     if (!p) { renderFeed(); return; }
-    p.wrap.className = tileClass(t);
+    const open = p.wrap.classList.contains("is-open");
+    p.wrap.className = rowClass(t) + (open ? " is-open" : "");
     p.line.textContent = stateText(t);
+    p.keep.textContent = keepText(t);
     p.bar.hidden = !(t.status === "queued" || t.status === "running");
     if (p.actsKey !== actsKeyOf(t)) fillActs(t);
   }
@@ -546,7 +601,7 @@
       saveActive(taskUid);
       $("fitStatus").textContent = "";
       closeLb();
-      // Плитка появляется сразу, до первого события: между POST и первым шагом
+      // Строка появляется сразу, до первого события: между POST и первым шагом
       // проходит секунда-другая, и без неё лента выглядела бы не отреагировавшей.
       tasks.unshift({
         task_uid: taskUid, status: "queued", workflow: "webinar",
@@ -613,8 +668,8 @@
     liveStep = "";
     busy = false;
     updateStartBtn();
-    // Перечитываем список целиком: у готовой задачи появились форматы, и
-    // служебная плитка должна смениться набором плиток-ресайзов.
+    // Перечитываем список целиком: у готовой задачи появились форматы, и без
+    // них строка не откроется — открывать было бы нечего.
     await loadTasks();
   }
 

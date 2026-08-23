@@ -95,7 +95,9 @@
           <span class="feed__count" id="feedCount">0</span>
         </header>
 
-        <div class="feed__body" id="feedBody">
+        {# Карточка и опыт — разные предметы. Разделяет их пустота 48 и смена
+           регистра заголовка, а не общая рама: рамка сказала бы «это одно». #}
+        <div class="feed__split" id="feedBody">
           <p class="feed__empty" id="emptyState">Выберите продукт слева</p>
 
           {# gen-form рядом с lib-card не декорация: геометрия полей (48/96,

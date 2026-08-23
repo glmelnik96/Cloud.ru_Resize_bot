@@ -336,9 +336,10 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
 .feed__foot { margin: 48px 0 0; font-family: var(--font-text); font-weight: 400;
   font-size: 13px; line-height: 24px; letter-spacing: 0; text-transform: none;
   color: var(--lp-muted); }
-/* Лента библиотеки — не плитки, а черновик карточки: рама та же, содержимое
-   льётся колонкой. */
-.feed__body { display: flex; flex-direction: column; gap: 48px; }
+/* Лента библиотеки — два разных предмета в одном этаже: черновик карточки и
+   отмеченный опыт. Разделяет их пустота в целую ячейку и смена регистра
+   заголовка, а не рамка: рамка сказала бы «это одно». */
+.feed__split { display: flex; flex-direction: column; gap: 48px; }
 
 /* ===== Работа — одна строка =====
    Прогон с двенадцатью баннерами это ОДИН предмет, а не двенадцать: сетка
@@ -409,6 +410,12 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
   border-radius: 0; cursor: pointer; background: var(--lp-ink);
   box-shadow: inset 0 0 0 1px var(--lp-line-2); }
 .strip__item img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Вебинарные форматы отличаются друг от друга ровно геометрией: 1200×600 и
+   1080×1920 — это и есть различитель, по которому формат узнают. Кадрировать
+   их под общий столбик 96 значило бы стереть единственный признак, поэтому
+   здесь высота фиксирована, а ширину задаёт сама картинка. */
+.strip--shapes .strip__item { width: auto; }
+.strip--shapes .strip__item img { width: auto; height: 192px; object-fit: contain; }
 
 /* ===== Лайтбокс — рабочий стол задачи =====
    Действия стоят колонкой справа, а не под картинкой: иначе высота картинки

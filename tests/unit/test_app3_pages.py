@@ -452,3 +452,22 @@ def test_commands_are_set_in_the_text_register(tmp_path, monkeypatch):
         # метки регистр не меняют
         label = css.split("body.is-tool .field-label {", 1)[1].split("}", 1)[0]
         assert "text-transform: uppercase" in label
+
+
+def test_webinar_feed_is_a_list_of_rows(tmp_path, monkeypatch):
+    """Прогон вебинарных ресайзов — тоже одна работа, а не поле плиток.
+    Форматов 26, но предмет один, и в ленте он занимает одну строку."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/webinar", headers=_HDR).text
+        assert 'class="feed__list"' in html
+        assert 'class="feed__grid"' not in html
+
+
+def test_library_separates_the_card_from_the_experience(tmp_path, monkeypatch):
+    """Черновик карточки и отмеченный опыт — два разных предмета. В одной раме
+    они читались как один; разделяет их пустота и смена регистра, не рамка."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/library", headers=_HDR).text
+        assert 'id="cardPanel"' in html
+        assert 'class="feed__body"' not in html
+        assert "feed__split" in html
