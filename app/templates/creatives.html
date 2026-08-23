@@ -60,9 +60,6 @@
             <span class="field-label">Эмоция / образ</span>
             <textarea id="emotion" placeholder="уверенность и контроль — будто всё управление под рукой"></textarea>
           </label>
-          {# Единственная подсказка рельса: формулу «чувство + образ» из подписи
-             поля не вывести, а без неё поле заполняют одним прилагательным. #}
-          <p class="muted">Формула: «[чувство] + [образ]».</p>
 
           <label for="notes">
             <span class="field-label">Свободное поле</span>
@@ -85,9 +82,8 @@
         <details class="tool-details">
           <summary>Как это работает</summary>
           <div class="tool-details__body">
-            <p class="muted">Из брифа собираются 12 баннеров 300×600 под одну аудиторию.</p>
-            <p class="muted">Отмеченная плитка ленты ждёт решения — клик открывает его.</p>
-            <p class="muted">Свободное поле весит больше карточки знаний и страницы по ссылке.</p>
+            <p class="muted">Из брифа — 12 баннеров 300×600 под одну аудиторию.</p>
+            <p class="muted">Свободное поле весит больше карточки знаний и ссылки.</p>
           </div>
         </details>
       </aside>
@@ -167,7 +163,7 @@
           <h2 class="lb-title">02 · Кому пишем</h2>
           <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
-        <p class="muted">Якоря, из которых соберутся тексты. Списки — по строке на пункт.</p>
+        <p class="muted">Списки — по строке на пункт.</p>
         <div class="lb-counter" id="personaKb"></div>
         <div class="gen-form">
           <label for="personaSegment">
@@ -209,8 +205,7 @@
           <h2 class="lb-title">03 · Тексты — 12 предложений под аудиторию</h2>
           <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
-        <p class="muted">Баннер получат все двенадцать. Главный идёт первым, только
-          его образ переделывается комментарием, и он попадёт в отмеченный опыт.</p>
+        <p class="muted">Баннеры получат все; образ и отметку опыта — только главный.</p>
         <div class="lb-group__row">
           <button type="button" class="t-btn t-btn--key" data-act="approve">Принять</button>
           <button type="button" class="t-btn" data-act="regenerate">Перегенерить все</button>
@@ -226,7 +221,6 @@
           <h2 class="lb-title">04 · Hero-картинки</h2>
           <button type="button" class="t-btn stop__close" data-stop="close">Свернуть</button>
         </div>
-        <p class="muted">По картинке на предложение — сгенерировать 12 или загрузить одну свою.</p>
         <div class="lb-block hidden" id="metaphorBox">
           <div class="kv"><b>Задумка</b> <span id="mIdea"></span></div>
           <div class="kv"><b>Читатель должен подумать</b> <span id="mInfer"></span></div>

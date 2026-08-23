@@ -471,3 +471,16 @@ def test_library_separates_the_card_from_the_experience(tmp_path, monkeypatch):
         assert 'id="cardPanel"' in html
         assert 'class="feed__body"' not in html
         assert "feed__split" in html
+
+
+def test_hints_did_not_grow(tmp_path, monkeypatch):
+    """Подсказка остаётся, только если без неё человек ошибётся. Порог держит
+    экран честным: объяснять устройство раздела текстом больше нечем, устройство
+    должно читаться само. Свёрнутое «Как это работает» в счёт входит — иначе
+    абзацы просто переехали бы туда."""
+    import re
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        html = c.get("/", headers=_HDR).text
+        hints = re.findall(r'<p class="muted">(.*?)</p>', html, re.S)
+        total = sum(len(re.sub(r"<[^>]+>", "", h).strip()) for h in hints)
+        assert total <= 240, total
