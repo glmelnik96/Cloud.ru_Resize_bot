@@ -547,7 +547,7 @@
     es.addEventListener("start", (e) => onStep(e));
     es.addEventListener("step", (e) => onStep(e));
     es.addEventListener("awaiting_input", (e) => onAwaiting(JSON.parse(e.data)));
-    es.addEventListener("resumed", () => { closeHitl(); setStep("Продолжаю…"); });
+    es.addEventListener("resumed", () => setStep("Продолжаю…"));
     es.addEventListener("done", (e) => onDone(JSON.parse(e.data)));
     es.addEventListener("error", (e) => {
       if (typeof e.data === "undefined") { onStreamDrop(); return; } // connection, not task
@@ -692,7 +692,13 @@
     lbOpen = false;
     document.body.style.overflow = "";
   }
-  // Пайплайн поехал дальше — ящик закрываем, просмотр баннера не трогаем.
+  // Только для терминальных состояний: прогон кончился, показывать в ящике
+  // нечего. Когда пайплайн просто едет дальше, строку НЕ закрываем — ящик там
+  // подменяется на месте, и панель принятого решения сменяется каркасом сборки.
+  // Раньше закрывали и там: осталось с тех пор, когда у идущего прогона нечего
+  // было показать. Цена была ровно в том месте, где показ нужнее всего — человек
+  // одобрял остановку, строка складывалась у него под рукой, и самая долгая
+  // стадия шла вслепую. Просмотр баннера не трогаем ни в каком случае.
   function closeHitl() { if (taskUid) closeRow(taskUid); }
 
   lightbox.addEventListener("click", (ev) => {
@@ -964,7 +970,6 @@
     const r = await post(`${P}/api/tasks/${taskUid}/decision/text`, body);
     if (r && r.ok) {
       setBusy(panel, false);
-      closeHitl();
       setStep("Применяю решение…");
       return;
     }
@@ -1019,8 +1024,8 @@
     const r = await post(`${P}/api/tasks/${taskUid}/decision/persona`, body);
     if (r && r.ok) {
       setBusy(panel, false);
-      // regenerate возвращает граф на эту же остановку, а не двигает дальше.
-      closeHitl();
+      // regenerate возвращает граф на эту же остановку, а не двигает дальше:
+      // ящик покажет сборку и через несколько секунд сам вернётся к панели.
       setStep(action === "approve" ? "Пишу тексты…" : "Обновляю персону…");
       return;
     }
@@ -1036,7 +1041,6 @@
     const r = await postForm(`${P}/api/tasks/${taskUid}/decision/image`, fd);
     if (r && r.ok) {
       setBusy(panel, false);
-      closeHitl();
       setStep(progressLabel);
       return;
     }

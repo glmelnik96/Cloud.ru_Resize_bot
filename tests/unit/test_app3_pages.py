@@ -750,6 +750,35 @@ def test_stops_live_in_the_row_not_in_a_modal(tmp_path, monkeypatch):
         assert "lightbox__panel--form" not in js  # режимов остался один
 
 
+def test_a_decision_hands_the_row_over_to_build_instead_of_folding_it(tmp_path, monkeypatch):
+    """Человек одобряет остановку — и строка схлопывается у него под рукой,
+    унося показ ровно перед самой долгой стадией: картинки рисуются минутами.
+
+    Схлопывание осталось с тех времён, когда у идущего прогона нечего было
+    показать. Теперь есть: `drawerKind` для running отдаёт «build», а `syncState`
+    на смене вида подменяет содержимое ящика НА МЕСТЕ. То есть машинерия для
+    правильного поведения уже собрана, и закрытие с ней боролось.
+
+    Снимаем закрытие только там, где пайплайн поехал дальше. Терминальные
+    состояния закрывают строку по-прежнему — там в ящике действительно пусто."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        resumed = js.split('es.addEventListener("resumed"', 1)[1].split("\n", 1)[0]
+        assert "closeHitl" not in resumed
+        assert "setStep" in resumed
+        for fn in ("async function sendText", "async function sendPersona",
+                   "async function sendImage"):
+            body = js.split(fn, 1)[1].split("\n  }", 1)[0]
+            assert "closeHitl" not in body, fn
+            # Ящик подменяется не сам по себе, а от смены статуса: без setStep
+            # строка осталась бы стоять с панелью уже принятого решения.
+            assert "setStep(" in body, fn
+        for fn in ("async function onDone", "function onError", "function onCancelled"):
+            body = js.split(fn, 1)[1].split("\n  }", 1)[0]
+            assert "closeHitl()" in body, fn
+        assert "if (kind !== p.drawerKind)" in js
+
+
 def test_candidates_are_rows_not_a_second_grid_of_cards(tmp_path, monkeypatch):
     """Двенадцать предложений — второе поле одинаковых карточек. Строки."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
