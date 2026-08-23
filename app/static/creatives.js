@@ -43,10 +43,13 @@
   // при каждом переименовании шага на сервере. 0 — маршрут в покое.
   let liveStage = 0;
 
-  const feedGrid = $("feedGrid");
+  const feedList = $("feedList");
   const feedCount = $("feedCount");
   const feedEmpty = $("feedEmpty");
   const feedFoot = $("feedFoot");
+  // Окно хранения приходит с сервера через шаблон: константа в JS разъехалась
+  // бы с RETENTION_TTL_SEC при первой же правке конфига.
+  const RETENTION_H = Number((feedList && feedList.dataset.retentionHours) || 24);
   const routeStops = Array.prototype.slice.call(
     document.querySelectorAll("#route .route__stop")
   );
@@ -99,31 +102,65 @@
     if (t.status === "failed") return t.error ? "Ошибка: " + t.error : "Ошибка";
     return STATUS_LABEL[t.status] || t.status;
   }
-  const tileClass = (t) =>
+  const rowClass = (t) =>
     "work work--" + t.status + (AWAITING.indexOf(t.status) >= 0 ? " work--await" : "");
   const actsKeyOf = (t) => (AWAITING.indexOf(t.status) >= 0 ? "await" : t.status);
 
-  // Служебная плитка: прогон, у которого баннеров ещё (или уже) нет. Её каркас
-  // строится один раз — события шага приходят часто, и пересборка гасила бы
-  // кнопку прямо под курсором.
-  function stateTile(t) {
-    const wrap = el("article", tileClass(t));
-    const body = el("div", "work__body");
-    const line = el("div", "work__state", stateText(t));
+  // Остаток срока хранения. Дата создания человеку не говорит ничего: он
+  // спрашивает «успею ли скачать», а не «когда это было».
+  // ⚠️ Наивный UTC: сервер отдаёт created_at без суффикса, и new Date() читает
+  // такую строку как местное время — в Москве это ошибка на три часа.
+  function keepText(t) {
+    if (!t.created_at || ACTIVE.indexOf(t.status) >= 0) return "";
+    const raw = String(t.created_at);
+    const iso = /(Z|[+-]\d\d:?\d\d)$/.test(raw) ? raw : raw + "Z";
+    const left = RETENTION_H - (Date.now() - new Date(iso).getTime()) / 3600000;
+    if (!isFinite(left) || left <= 0) return "";
+    return "хранится ещё " + Math.max(1, Math.round(left)) + " ч";
+  }
+
+  // Работа — одна строка на 48, независимо от того, сколько у неё баннеров.
+  // Двенадцать креативов это один предмет, а не двенадцать: сетка одинаковых
+  // квадратов и была той кашей, ради которой всё затевалось.
+  // Каркас строится один раз: события шага приходят часто, и пересборка гасила
+  // бы кнопку прямо под курсором.
+  function workRow(t) {
+    const wrap = el("article", rowClass(t));
+    const head = el("div", "work__head");
+    const hit = el("button", "work__hit");
+    hit.type = "button";
+    hit.setAttribute("aria-expanded", "false");
+    const name = el("span", "work__name", t.prompt || "(без названия)");
+    name.title = t.prompt || "";
+    hit.appendChild(name);
+    const line = el("span", "work__state", stateText(t));
+    hit.appendChild(line);
+    const keep = el("span", "work__keep", keepText(t));
+    hit.appendChild(keep);
+    hit.addEventListener("click", () => toggleRow(t.task_uid));
+    head.appendChild(hit);
     const acts = el("div", "work__acts");
+    head.appendChild(acts);
     const bar = el("div", "work__bar is-idle");
     bar.appendChild(document.createElement("i"));
     bar.hidden = !(t.status === "queued" || t.status === "running");
-    body.appendChild(line);
-    body.appendChild(acts);
-    body.appendChild(bar);
-    wrap.appendChild(body);
-    const cap = el("div", "work__cap", t.prompt || "(без названия)");
-    cap.title = t.prompt || "";
-    wrap.appendChild(cap);
-    stateEls.set(t.task_uid, { wrap, line, acts, bar, actsKey: "" });
+    head.appendChild(bar);
+    const panel = el("div", "work__panel");
+    wrap.appendChild(head);
+    wrap.appendChild(panel);
+    stateEls.set(t.task_uid, { wrap, hit, line, keep, acts, bar, panel, actsKey: "" });
     fillActs(t);
     return wrap;
+  }
+
+  // Раскрытие строки. Тело ящика наполняется отдельно; здесь только
+  // переключатель, чтобы состояние строки и подпись для скринридера не
+  // разъезжались.
+  function toggleRow(uid) {
+    const p = stateEls.get(uid);
+    if (!p) return;
+    const open = p.wrap.classList.toggle("is-open");
+    p.hit.setAttribute("aria-expanded", String(open));
   }
 
   function fillActs(t) {
@@ -143,54 +180,24 @@
     }
   }
 
-  // Плитка баннера. Один креатив — одна плитка: группировать двенадцать штук в
-  // «запуск» незачем, человек выбирает баннер, а не прогон.
-  function imgTile(t, url, i) {
-    const card = (Array.isArray(t.cards) ? t.cards : [])[i] || null;
-    const caption = (card && card.slogan) || "Баннер " + (i + 1);
-    const wrap = el("article", "work work--done");
-    const body = el("div", "work__body");
-    const open = el("button", "work__open");
-    open.type = "button";
-    open.title = caption;
-    const img = el("img");
-    img.loading = "lazy";
-    img.src = P + url;
-    img.alt = caption;
-    open.appendChild(img);
-    const pos = views.length;
-    open.addEventListener("click", () => openView(pos));
-    body.appendChild(open);
-    if (t.outcome) {
-      body.appendChild(el(
-        "div",
-        "work__mark" + (t.outcome === "rejected" ? " work__mark--rejected" : ""),
-        OUTCOME_LABEL[t.outcome] || t.outcome
-      ));
-    }
-    wrap.appendChild(body);
-    const cap = el("div", "work__cap", caption);
-    cap.title = caption;
-    wrap.appendChild(cap);
-    views.push({ uid: t.task_uid, idx: i, url: url, caption: caption });
-    return wrap;
-  }
-
   function renderFeed() {
-    feedGrid.innerHTML = "";
+    feedList.innerHTML = "";
     stateEls.clear();
     views = [];
     for (const t of tasks) {
+      feedList.appendChild(workRow(t));
+      // Просмотр листает по всем баннерам ленты, поэтому плоский список
+      // собирается независимо от того, раскрыта строка или нет.
       const imgs = Array.isArray(t.images) ? t.images : [];
-      if (t.status === "done" && imgs.length) {
-        imgs.forEach((u, i) => feedGrid.appendChild(imgTile(t, u, i)));
-      } else {
-        feedGrid.appendChild(stateTile(t));
-      }
+      const cards = Array.isArray(t.cards) ? t.cards : [];
+      imgs.forEach((u, i) => views.push({
+        uid: t.task_uid, idx: i, url: u,
+        caption: (cards[i] && cards[i].slogan) || "Баннер " + (i + 1),
+      }));
     }
-    const n = feedGrid.childElementCount;
-    feedCount.textContent = n;
-    feedEmpty.hidden = n > 0;
+    // Счёт теперь считает работы, а не картинки: предмет ленты — работа.
+    feedCount.textContent = tasks.length;
+    feedEmpty.hidden = tasks.length > 0;
     // Сноска про срок хранения нужна, только когда есть что хранить.
     feedFoot.hidden = !tasks.length;
     paintRoute();
@@ -218,16 +225,21 @@
     });
   }
 
-  // Точечное обновление плитки под поток событий. Пересобираем целиком только
-  // тогда, когда плитки для этой задачи в ленте нет (её ещё не было или она
-  // сменила род — из служебной стала набором баннеров).
+  // Точечное обновление строки под поток событий. Пересобираем ленту целиком
+  // только тогда, когда строки для этой задачи в ней нет — то есть задача
+  // появилась только что.
+  // className переписывается целиком, поэтому раскрытие пришлось бы схлопнуть:
+  // is-open возвращаем руками, иначе ящик закрывался бы на каждом событии шага
+  // прямо под руками у человека, который в нём читает.
   function syncState(uid) {
     const t = byUid(uid);
     if (!t) return;
     const p = stateEls.get(uid);
     if (!p) { renderFeed(); return; }
-    p.wrap.className = tileClass(t);
+    const open = p.wrap.classList.contains("is-open");
+    p.wrap.className = rowClass(t) + (open ? " is-open" : "");
     p.line.textContent = stateText(t);
+    p.keep.textContent = keepText(t);
     p.bar.hidden = !(t.status === "queued" || t.status === "running");
     paintRoute();
     if (p.actsKey !== actsKeyOf(t)) fillActs(t);

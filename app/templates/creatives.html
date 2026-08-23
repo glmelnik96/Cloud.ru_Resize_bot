@@ -114,8 +114,11 @@
           <li class="route__stop"><b>04</b>Hero</li>
           <li class="route__stop"><b>05</b>Баннеры</li>
         </ol>
-        <div class="feed__grid" id="feedGrid"></div>
-        <p class="feed__empty" id="feedEmpty">Креативов пока нет</p>
+        {# Список работ. Срок хранения приезжает атрибутом, а не только фразой
+           в сноске: строке нужен остаток в часах, и разбирать его из текста
+           было бы разбором собственной вёрстки. #}
+        <div class="feed__list" id="feedList" data-retention-hours="{{ retention_hours }}"></div>
+        <p class="feed__empty" id="feedEmpty">Работ пока нет</p>
         <p class="feed__foot" id="feedFoot" hidden>История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
       </section>
 

@@ -68,12 +68,12 @@ def test_static_font_served(tmp_path, monkeypatch):
 
 
 def test_index_has_recent_tasks_panel(tmp_path, monkeypatch):
-    """Законченный прогон обязан пережить перезагрузку страницы: лента —
-    единственная рама на экране, и её наполняет JS из GET /api/tasks."""
+    """Законченный прогон обязан пережить перезагрузку страницы: лента — этаж
+    чернил, и её наполняет JS из GET /api/tasks."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         html = c.get("/", headers=_HDR).text
-        assert 'id="feedGrid"' in html  # сюда JS кладёт плитки прогонов
-        assert 'id="feedCount"' in html  # счётчик в шапке рамы
+        assert 'id="feedList"' in html  # сюда JS кладёт строки работ
+        assert 'id="feedCount"' in html  # счётчик работ в шапке этажа
         assert 'id="feedFoot"' in html  # срок хранения — под лентой
 
 
@@ -122,7 +122,7 @@ def test_creatives_js_loads_recent_tasks(tmp_path, monkeypatch):
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
         assert "loadTasks" in js  # fetch + render recent tasks on load
-        assert "feedGrid" in js  # плитки прогонов уезжают в раму ленты
+        assert "feedList" in js  # строки работ уезжают на этаж чернил
         assert "result_url" in js  # done rows expose the ZIP download
 
 
@@ -142,13 +142,14 @@ def test_index_retention_notice_defaults_to_24h(tmp_path, monkeypatch):
 
 
 def test_creatives_js_renders_banner_grid(tmp_path, monkeypatch):
-    """Finished task rows expand into a grid of their banner images with the
-    original brief, per-thumb download, and a swipeable lightbox."""
+    """Готовый прогон — одна строка; баннеры листает лайтбокс.
+    Прогон с двенадцатью баннерами остаётся одним предметом ленты: сетка
+    одинаковых квадратов и была той кашей, ради которой всё затевалось."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
         assert "images" in js  # consume the per-task image URLs
-        assert "feedGrid" in js  # рама ленты, куда ложатся плитки
-        assert "work__open" in js  # плитка прогона раскрывается в баннеры
+        assert "workRow" in js  # прогон — строка, а не набор плиток
+        assert "views.push" in js  # лайтбокс листает по всем баннерам ленты
         assert "brief" in js  # show the brief fields on expand
         assert "download" in js  # per-thumbnail download affordance
         assert "lightbox" in js  # gallery overlay to page through banners
@@ -371,3 +372,29 @@ def test_feed_frame_is_replaced_by_the_floor_border(tmp_path, monkeypatch):
         assert "position: sticky; top: 0;" in css  # камень стоит, работы едут мимо
         assert "height: 100vh; overflow: hidden auto" in css
         assert "padding: 96px var(--sl-gut)" in css
+
+
+def test_a_finished_run_is_one_row_not_twelve_tiles(tmp_path, monkeypatch):
+    """Двенадцать баннеров — это один предмет «работа», а не двенадцать.
+    Взрыв прогона в сетку одинаковых квадратов и был той самой кашей."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "imgs.forEach((u, i) => feedGrid" not in js  # сетка плиток
+        assert "feedGrid" not in js                         # рама сетки
+        assert "workRow" in js                              # строка работы
+        assert "feedList" in js
+        html = c.get("/", headers=_HDR).text
+        assert 'id="feedList"' in html
+        assert 'id="feedGrid"' not in html
+
+
+def test_row_tells_how_long_the_run_is_kept(tmp_path, monkeypatch):
+    """Дата создания человеку не нужна — ему нужен остаток срока. Отсчёт от
+    created_at (по нему чистит ретенция), окно с сервера, а не из константы."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        assert "keepText" in js
+        assert "retentionHours" in js  # окно приезжает атрибутом, не хардкодом
+        assert '+ "Z"' in js           # наивный UTC: без суффикса дата врёт
+        html = c.get("/", headers=_HDR).text
+        assert 'data-retention-hours="24"' in html
