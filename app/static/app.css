@@ -903,7 +903,15 @@ body.is-tool .gen-form textarea.kb-block { height: 192px; resize: vertical; }
 .exp-item:last-child { box-shadow: inset 0 1px 0 var(--lp-line-2),
   inset 0 -1px 0 var(--lp-line-2); }
 .exp-item__head { display: flex; align-items: baseline; gap: 12px; }
-.exp-item__title { min-width: 0; font-size: 13px; font-weight: 600; line-height: 24px; }
+/* `min-width: 0` без `overflow` — худший из вариантов, а не половина решения:
+   он разрешает флекс-элементу сжаться уже́ содержимого, но обрезать содержимое
+   нечем, и текст вылезает за свою коробку поверх соседней метки. Длинная почта
+   в списке доступов доезжала до 278px при метке роли на 261 — «user» читался
+   поверх букв. Переносим, а не режем: почта здесь опознавательный знак, и
+   отрезанный хвост сделал бы двух разных людей неразличимыми. Фразы опыта
+   рвутся по пробелам как раньше — `anywhere` трогает только неразрывный токен. */
+.exp-item__title { min-width: 0; overflow-wrap: anywhere;
+  font-size: 13px; font-weight: 600; line-height: 24px; }
 /* Не метка, а приговор фразой: «забраковано · не идёт в промпт» в капсе
    читалось бы по буквам. Служебность несёт цвет, регистр её нести не обязан. */
 .exp-item__tag { margin-left: auto; flex: none; font-family: var(--font-text);

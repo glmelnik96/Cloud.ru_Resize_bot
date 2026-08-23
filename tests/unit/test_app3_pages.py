@@ -410,6 +410,27 @@ def test_app_css_carries_library_classes(tmp_path, monkeypatch):
         assert ".kb-block" in css  # высокие поля блоков карточки
 
 
+def test_long_login_wraps_instead_of_running_over_the_role(tmp_path, monkeypatch):
+    """Найдено живьём на боевой: в списке доступов длинная почта наезжала на роль.
+
+    У заголовка строки стоял `min-width: 0` без `overflow`, а это худший из
+    вариантов: флекс-элементу разрешено сжаться уже́ содержимого, но обрезать
+    содержимое нечем — и текст просто вылезал за свою коробку поверх соседней
+    метки. `aleksandrsperanskiy@yandex.ru` доезжал до 278px при метке на 261.
+
+    Переносим, а не режем: почта — это опознавательный знак, и отрезанный хвост
+    сделал бы двух разных людей неразличимыми. Обычные фразы опыта продолжают
+    рваться по пробелам, `anywhere` вмешивается только в неразрывный токен."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        rule = css.split(".exp-item__title { min-width: 0;", 1)[1].split("}", 1)[0]
+        assert "overflow-wrap: anywhere" in rule
+        # Метка роли обязана остаться несжимаемой: иначе перенос почты просто
+        # переехал бы в неё саму и «user» разорвался бы пополам.
+        tag = css.split(".exp-item__tag { margin-left: auto;", 1)[1].split("}", 1)[0]
+        assert "flex: none" in tag
+
+
 def test_css_repaints_the_stone_floor_by_tokens_only(tmp_path, monkeypatch):
     """Светлый этаж перекрашивается переопределением переменных на ленте.
     Ни одного правила вида `.feed .что-то { color: ... }` быть не должно:
