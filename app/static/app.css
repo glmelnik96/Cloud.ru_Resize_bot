@@ -439,7 +439,16 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
    Раскрытие на grid-template-rows — единственный способ анимировать высоту, не
    зная её заранее. display: none тут не годится: он обрывает переход. */
 .feed__list { display: flex; flex-direction: column; }
-.work { display: grid; grid-template-rows: auto 0fr;
+/* Колонка задана явно, и это не украшение. Единственная колонка по умолчанию
+   `auto`, то есть по максимальному содержимому: имя работы не переносится
+   намеренно, поэтому длинный бриф раздувал её до полутора экранов, строка
+   вылезала из ленты, а вместе с ней уезжала вбок ВСЯ страница — внизу
+   появлялась горизонтальная прокрутка, а текст в ящике обрезался справа.
+   minmax(0, 1fr) запирает колонку в ширину ленты, и многоточие у имени
+   начинает работать: min-width: 0 на самом имени бессилен, пока распирает
+   колонка над ним. */
+.work { display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 0fr;
   transition: grid-template-rows .42s var(--lp-ease); }
 .work.is-open { grid-template-rows: auto 1fr; }
 /* Подсветку под курсором несёт ГОЛОВА, а не кнопка внутри неё. Кнопка занимает

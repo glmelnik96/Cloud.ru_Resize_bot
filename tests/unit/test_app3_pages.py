@@ -505,6 +505,26 @@ def test_hovered_row_repaints_by_swapping_tokens(tmp_path, monkeypatch):
         assert "--lp-soft:" not in rule
 
 
+def test_row_column_is_locked_to_the_feed_width(tmp_path, monkeypatch):
+    """Найдено живьём на боевой: длинный бриф — и вся страница уехала вбок.
+
+    Единственная колонка грида по умолчанию `auto`, то есть по максимальному
+    содержимому. Имя работы не переносится намеренно, поэтому колонка выросла до
+    1974px внутри ленты шириной 759, строка вылезла наружу, внизу появилась
+    горизонтальная прокрутка, а текст в раскрытом ящике обрезался справа.
+    min-width: 0 на самом имени от этого не спасает: он позволяет сжаться
+    флекс-элементу, но не колонке над ним, — поэтому многоточие не включалось."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        rule = css.split(".work { display: grid;", 1)[1].split("}", 1)[0]
+        assert "grid-template-columns: minmax(0, 1fr)" in rule
+        # Имя по-прежнему обязано быть однострочным с многоточием: без этой пары
+        # запертая колонка просто резала бы текст без всякого знака.
+        name = css.split(".work__name { flex: 1 1 auto;", 1)[1].split("}", 1)[0]
+        assert "white-space: nowrap" in name
+        assert "text-overflow: ellipsis" in name
+
+
 def test_row_and_stop_bar_align_by_centre_not_baseline(tmp_path, monkeypatch):
     """Базовая линия годится для пары текстов и врёт там, где рядом стоит кирпич
     с отбивкой или где группу надо посадить в коробку фиксированной высоты.
