@@ -434,3 +434,21 @@ def test_outcome_is_marked_on_the_run_not_on_each_banner(tmp_path, monkeypatch):
         # отметка больше не строится внутри колонки действий лайтбокса
         actions = js.split("function buildViewActions", 1)[1].split("\n  }", 1)[0]
         assert "outcomeGroup" not in actions
+
+
+def test_commands_are_set_in_the_text_register(tmp_path, monkeypatch):
+    """Критерий регистра — что строка делает. Метка называет (не длиннее ~12
+    знаков) и остаётся моно-капсом; команда обращается к человеку и набирается
+    текстом. Капс убирает выносные — различители, по которым слово узнают
+    целиком; на метке это не мешает, на фразе слово читают по буквам."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        css = c.get("/static/app.css").text
+        btn = css.split("body.is-tool .t-btn {", 1)[1].split("}", 1)[0]
+        assert "text-transform: uppercase" not in btn
+        assert "var(--font-text)" in btn
+        assert "font-size: 12px" in btn
+        submit = css.split('body.is-tool .gen-form button[type="submit"] {', 1)[1].split("}", 1)[0]
+        assert "text-transform: uppercase" not in submit
+        # метки регистр не меняют
+        label = css.split("body.is-tool .field-label {", 1)[1].split("}", 1)[0]
+        assert "text-transform: uppercase" in label

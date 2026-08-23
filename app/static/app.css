@@ -256,12 +256,20 @@ body.is-tool main { position: relative; flex: 1 0 auto; display: flex;
 body.is-tool h1 { margin: 0 0 48px; font-size: 44px; line-height: 48px;
   letter-spacing: -0.03em; font-weight: 700; color: var(--lp-text); }
 
-/* ===== Кирпич: прямоугольник, хайрлайн, моно-капс ===== */
+/* ===== Кирпич: прямоугольник, хайрлайн, команда текстом =====
+   Регистр выбирается по тому, ЧТО строка делает. Метка называет поле («Что
+   рекламируем») и остаётся моно-капсом. Команда обращается к человеку
+   («Сгенерировать 12 hero») — и набирается как обращение: капс срезает
+   выносные, а это те различители, по которым слово узнают целиком, так что
+   капсом длинную команду приходится читать по буквам.
+   Гарнитуру указываем явно: <button> её не наследует, без font-family придёт
+   системный шрифт формы. font: inherit тут не годится — от родителя приедет
+   дисплейный полужирный. */
 body.is-tool .t-btn { display: inline-block; height: 24px; cursor: pointer;
   border: 0; border-radius: 0; padding: 6px 12px;
   background: var(--lp-ink); box-shadow: inset 0 0 0 1px var(--lp-line-2);
-  color: var(--lp-soft); font-family: var(--font-mono); font-weight: 700;
-  font-size: 11px; line-height: 12px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--lp-soft); font-family: var(--font-text); font-weight: 600;
+  font-size: 12px; line-height: 12px; letter-spacing: 0; text-transform: none;
   text-decoration: none; white-space: nowrap;
   transition: background .2s var(--lp-ease), color .2s var(--lp-ease),
               box-shadow .2s var(--lp-ease); }
@@ -323,9 +331,10 @@ body.is-tool .t-btn.is-busy { opacity: .4; cursor: default; pointer-events: none
    пустого прямоугольника. Сноска про хранение при этом спрятана (её включает
    скрипт): пока ничего не создано, хранить нечего. */
 .feed__empty { margin: 0; font-size: 13px; line-height: 24px; color: var(--lp-muted); }
-/* Сноска остаётся служебной: это не сообщение ленте, а условие хранения. */
-.feed__foot { margin: 48px 0 0; font-family: var(--font-mono); font-weight: 700;
-  font-size: 11px; line-height: 24px; letter-spacing: .09em; text-transform: uppercase;
+/* Сноска — целая фраза, а не метка: набирается текстом и приглушена цветом.
+   Служебность здесь несёт цвет, регистр её нести не обязан. */
+.feed__foot { margin: 48px 0 0; font-family: var(--font-text); font-weight: 400;
+  font-size: 13px; line-height: 24px; letter-spacing: 0; text-transform: none;
   color: var(--lp-muted); }
 /* Лента библиотеки — не плитки, а черновик карточки: рама та же, содержимое
    льётся колонкой. */
@@ -514,8 +523,8 @@ body.is-tool .gen-form textarea:disabled { opacity: .55; cursor: default; }
 body.is-tool .gen-form button[type="submit"] { height: 48px; cursor: pointer;
   border: 0; border-radius: 0;
   padding: 12px; background: var(--lp-key); color: var(--lp-key-ink);
-  font-family: var(--font-mono); font-weight: 700; font-size: 11px; line-height: 24px;
-  letter-spacing: .09em; text-transform: uppercase;
+  font-family: var(--font-text); font-weight: 600; font-size: 13px; line-height: 24px;
+  letter-spacing: 0; text-transform: none;
   transition: background .25s var(--lp-ease), color .25s var(--lp-ease); }
 body.is-tool .gen-form button[type="submit"]:hover { background: var(--lp-text); }
 body.is-tool .gen-form button[type="submit"]:disabled { opacity: .4; cursor: default; }
@@ -529,8 +538,8 @@ body.is-tool .chip, body.is-tool .seg__btn { flex: 1 1 0; min-width: 0;
   position: relative; height: 24px; cursor: pointer; border: 0;
   border-radius: 0; padding: 6px; background: var(--lp-ink);
   box-shadow: inset 0 0 0 1px var(--lp-line-2);
-  color: var(--lp-soft); font-family: var(--font-mono); font-weight: 700; font-size: 11px;
-  line-height: 12px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--lp-soft); font-family: var(--font-text); font-weight: 600; font-size: 12px;
+  line-height: 12px; letter-spacing: 0; text-transform: none;
   transition: background .2s var(--lp-ease), color .2s var(--lp-ease),
               box-shadow .2s var(--lp-ease); }
 body.is-tool .chip + .chip, body.is-tool .seg__btn + .seg__btn { margin-left: -1px; }
@@ -573,37 +582,28 @@ body.is-tool p.muted a:hover { color: var(--lp-text); box-shadow: inset 0 -1px 0
    Нужен там, где группу целиком показывают и прячут (задумка образа). */
 .lb-block { display: flex; flex-direction: column; gap: 24px; }
 
-/* Дропзона и превью загруженного файла */
-.dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 0; height: 96px; padding: 12px; text-align: center; cursor: pointer;
-  background: var(--lp-ink); box-shadow: inset 0 0 0 1px var(--lp-line-2);
-  font-family: var(--font-mono); font-weight: 700; font-size: 11px; line-height: 24px;
-  letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted);
-  transition: box-shadow .2s var(--lp-ease), color .2s var(--lp-ease); }
-.dropzone:hover, .dropzone.is-drag { box-shadow: inset 0 0 0 1px var(--lp-edge);
-  color: var(--lp-soft); }
-.dropzone b { color: var(--lp-text); font-weight: 700; }
-.dropzone__hint { color: var(--lp-muted); }
-.previews { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
-.thumb { display: flex; flex-direction: column; gap: 6px; width: 48px; font-size: 11px;
-  line-height: 12px; color: var(--lp-muted); }
-.thumb img { width: 48px; height: 48px; object-fit: cover;
-  box-shadow: inset 0 0 0 1px var(--lp-line-2); }
-.thumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* dropzone/previews/thumb удалены: ни один шаблон и ни один скрипт App3 их
+   не ставит — загрузка hero идёт обычным input[type=file] с подписью-кирпичом.
+   Мёртвые правила прятали ловушку специфичности: body.is-tool .gen-form label
+   = (0,2,2) молча перебивал .dropzone = (0,1,0), и любая правка «не бралась». */
 
 /* Служебная строка статуса. Ошибка — хайрлайн ключа и светлее текст: красного
    в палитре v11 нет вовсе. */
 body.is-tool .status { margin-top: 24px; padding: 12px;
-  box-shadow: inset 0 0 0 1px var(--lp-line-2); font-family: var(--font-mono);
-  font-weight: 700; font-size: 11px; line-height: 24px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--lp-soft); }
+  box-shadow: inset 0 0 0 1px var(--lp-line-2); font-family: var(--font-text);
+  font-weight: 400; font-size: 13px; line-height: 24px; letter-spacing: 0;
+  text-transform: none; color: var(--lp-soft); }
 /* Пустая строка не должна оставлять на экране пустой прямоугольник в 48px. */
 body.is-tool .status:empty { display: none; }
 body.is-tool .status:has(.err) { box-shadow: inset 0 0 0 1px var(--lp-edge); }
 body.is-tool .err { color: var(--lp-text); }
-/* Подвал инструмента упирается в раму ленты, поэтому отступ сверху обязателен:
-   две ячейки над строкой и две под ней. */
-body.is-tool .lp-foot { gap: 12px 24px; padding: 48px var(--page-pad); }
+/* Подвал инструмента стоит под этажами, поэтому отступ сверху обязателен: две
+   ячейки над строкой и две под ней. Типографику переопределяем ЗДЕСЬ, а не в
+   .lp-foot: базовое правило — побайтовая копия эталона портала, и трогать его
+   нельзя. Ссылки подвала — названия разделов, а не метки: их читают целиком. */
+body.is-tool .lp-foot { gap: 12px 24px; padding: 48px var(--page-pad);
+  font-family: var(--font-text); font-size: 13px; line-height: 24px;
+  letter-spacing: 0; text-transform: none; }
 
 /* ===== Строка-переключатель: строка портала, повёрнутая в вертикаль =====
    Высота строки ФИКСИРОВАНА, под курсором двигаются только transform и
@@ -662,12 +662,14 @@ body.is-tool .scen-card:focus-visible .scen-card__desc { opacity: 1;
 .kv b { font-family: var(--font-mono); font-weight: 700; font-size: 11px;
   letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted); }
 
-/* Раскрытие («почему такой текст», «история версий»). Маркер свой: системный
+/* Раскрытие («Как это работает», «Как сделан этот баннер»). Заголовок — это
+   команда «открой», обращённая к человеку, поэтому набор текстовый; фразы
+   здесь длинные, и капсом их читали бы по буквам. Маркер свой: системный
    треугольник приходит со своим скруглением и своей типографикой. */
 .tool-details { display: block; }
 .tool-details > summary { list-style: none; cursor: pointer; padding: 6px 0;
-  font-family: var(--font-mono); font-weight: 700; font-size: 11px; line-height: 12px;
-  letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted);
+  font-family: var(--font-text); font-weight: 600; font-size: 13px; line-height: 24px;
+  letter-spacing: 0; text-transform: none; color: var(--lp-muted);
   transition: color .2s var(--lp-ease); }
 .tool-details > summary::-webkit-details-marker { display: none; }
 .tool-details > summary::before { content: "+ "; }
@@ -701,9 +703,11 @@ body.is-tool .scen-card:focus-visible .scen-card__desc { opacity: 1;
   color: var(--lp-text); }
 .cand__badge { flex: none; font-family: var(--font-mono); font-weight: 700; font-size: 11px;
   line-height: 18px; letter-spacing: .09em; text-transform: uppercase; color: var(--lp-key); }
+/* Флажок линта — не метка, а замечание целой фразой («слоган длиннее 40
+   знаков»). Читают его один раз и решают, поэтому набор текстовый. */
 .cand__flags { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-.cand__flag { font-family: var(--font-mono); font-weight: 700; font-size: 11px;
-  line-height: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--lp-muted); }
+.cand__flag { font-family: var(--font-text); font-weight: 400; font-size: 13px;
+  line-height: 24px; letter-spacing: 0; text-transform: none; color: var(--lp-muted); }
 .cand .t-btn { align-self: flex-start; }
 
 /* ===== Библиотека знаний ===== */
@@ -726,11 +730,13 @@ body.is-tool .gen-form textarea.kb-block { height: 192px; resize: vertical; }
   inset 0 -1px 0 var(--lp-line-2); }
 .exp-item__head { display: flex; align-items: baseline; gap: 12px; }
 .exp-item__title { min-width: 0; font-size: 13px; font-weight: 600; line-height: 24px; }
-.exp-item__tag { margin-left: auto; flex: none; font-family: var(--font-mono);
-  font-weight: 700; font-size: 11px; line-height: 24px; letter-spacing: .09em;
-  text-transform: uppercase; color: var(--lp-key); }
-/* «Забраковано» в промпт не идёт — метка это и говорит тем, что она тише:
-   тот же капс, но приглушённый, а не ключевой. */
+/* Не метка, а приговор фразой: «забраковано · не идёт в промпт» в капсе
+   читалось бы по буквам. Служебность несёт цвет, регистр её нести не обязан. */
+.exp-item__tag { margin-left: auto; flex: none; font-family: var(--font-text);
+  font-weight: 600; font-size: 13px; line-height: 24px; letter-spacing: 0;
+  text-transform: none; color: var(--lp-key); }
+/* «Забраковано» в промпт не идёт — строка это и говорит тем, что она тише:
+   тот же набор, но приглушённым тоном, а не ключевым. */
 .exp-item__tag--rejected { color: var(--lp-muted); }
 /* Галка внутри строки несёт собственный боковой отступ (в рельсе он равняет её
    с полями). Здесь отступ уже дала сама строка, и без сброса подпись галки
