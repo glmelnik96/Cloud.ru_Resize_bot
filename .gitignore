@@ -27,6 +27,11 @@ storage_state.json
 .idea/
 .vscode/
 
+# Локальная обвязка агента: порт превью и выданные разрешения — свои на каждой
+# машине, в общей истории им делать нечего.
+.claude/
+.superpowers/
+
 # OS
 .DS_Store
 Thumbs.db

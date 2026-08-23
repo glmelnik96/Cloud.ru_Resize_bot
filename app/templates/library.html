@@ -78,6 +78,11 @@
         </details>
       </aside>
 
+      {# Стык этажей. Модуль берёт оба цвета с соседей — поэтому полотно обязано
+         стоять между ними и не знает о палитре ничего. Без JS остаётся сплошная
+         полоса цвета рельса: граница просто снова становится прямой. #}
+      <canvas class="seam" data-ascii-seam aria-hidden="true"></canvas>
+
       {# Лента — этаж чернил. Содержимое колонкой: черновик карточки и
          отмеченный опыт. #}
       <section class="feed" id="feed">
@@ -148,15 +153,19 @@
         </div>
       </section>
 
+      {# Подвал стоит В сетке, второй строкой этажа камня. Снаружи он был блоком
+         под страницей: стык кончался по низу ленты, и последние полторы сотни
+         пикселей граница снова шла прямой линией. #}
+      <footer class="lp-foot">
+        <a href="{{ prefix }}/">Промо-баннеры</a>
+        <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
+      </footer>
+
       </div><!-- /.tool__grid -->
     </section>
-
-    <footer class="lp-foot">
-      <a href="{{ prefix }}/">Промо-баннеры</a>
-      <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
-    </footer>
   </main>
 
+  <script src="{{ prefix }}/static/ascii.js?v=20260823v1" defer></script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
   <script src="{{ prefix }}/static/library.js?v=20260823v1"></script>
 </body>

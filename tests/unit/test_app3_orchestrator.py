@@ -1318,6 +1318,119 @@ async def test_step_events_carry_route_stage(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_step_events_carry_substage_count(tmp_path):
+    """Рядом с номером остановки едет счёт ВНУТРИ неё — числами. Пока счёт жил
+    только внутри русской подписи («3/12»), браузер выковыривал его регуляркой,
+    то есть разбирал текст, написанный для человека."""
+    from app.services.creatives import _STAGE_HERO, _STAGE_UNITS
+
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(Session, _FakeGraph({"kind": "text_approve", "candidates": []}), bus=bus)
+
+    q = bus.subscribe("sc1")
+    async with Session() as s:
+        s.add(models.Task(task_uid="sc1", user_id=1, workflow="creatives", status="queued"))
+        await s.commit()
+    from app.tasks.status import WebStatusReporter
+
+    reporter = WebStatusReporter(bus, task_uid="sc1", label="creatives", eta_sec=None)
+    await svc._run_segment("sc1", "1", {}, reporter)
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    counts = {
+        e["step"]: (e.get("stage_done"), e.get("stage_total"))
+        for e in events
+        if e.get("kind") == "step"
+    }
+    # understand_product — первый из двух узлов остановки 02;
+    # generate_message_candidates — первый из трёх узлов остановки 03.
+    assert counts == {"Изучаю продукт": (1, 2), "Генерирую 24 предложения": (1, 3)}
+    # Остановка 04 считает узлы и картинки ОДНОЙ шкалой: два узла пишут промпт,
+    # дальше двенадцать генераций. Двумя шкалами кромка откатывалась бы назад
+    # ровно там, где начинается самая долгая часть прогона.
+    assert _STAGE_UNITS[_STAGE_HERO] == 2 + 12
+
+
+@pytest.mark.asyncio
+async def test_hero_progress_continues_the_stage_scale(tmp_path):
+    """Счёт генерации продолжает шкалу остановки 04, а не начинается с нуля:
+    два узла этапа к этому моменту уже позади."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    graph = _ResumableGraph()
+    graph.values = {
+        "image_prompts": ["P1", "P2", "P3"],
+        "scenarios": ["render", "photo", "render"],
+        "graph_version": GRAPH_VERSION,
+    }
+    svc = _service(
+        Session, graph, bus=bus, tmp=tmp_path / "tmp", hero_generator=_FakeHeroGen()
+    )
+    async with Session() as s:
+        s.add(models.Task(task_uid="hp1", user_id=1, workflow="creatives", status="awaiting_image"))
+        await s.commit()
+
+    q = bus.subscribe("hp1")
+    captured = {}
+
+    async def fake_submit(user_id, runner):
+        captured["runner"] = runner
+        return True
+
+    svc.manager.submit = fake_submit  # type: ignore[assignment]
+    await svc.generate_decision("hp1", "1")
+    await captured["runner"]()
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    start = next(e for e in events if e.get("kind") == "start")
+    # Старт стоит на двух пройденных узлах из пяти единиц (2 узла + 3 картинки),
+    # а не на нуле — иначе кромка прыгнула бы назад.
+    assert (start["stage"], start["stage_done"], start["stage_total"]) == (4, 2, 5)
+    steps = [
+        (e["stage_done"], e["stage_total"]) for e in events if e.get("kind") == "step"
+    ]
+    assert steps == [(3, 5), (4, 5), (5, 5)]
+
+
+@pytest.mark.asyncio
+async def test_resume_moves_the_route_to_the_next_stop(tmp_path):
+    """Возобновление после развилки сразу называет остановку, на которую
+    прогон переехал. Без номера в стартовом событии полоса весь следующий
+    отрезок стояла на предыдущей остановке — это и читалось как «прогресс не
+    соответствует прогрессу»."""
+    Session = await _sessionmaker(tmp_path)
+    bus = EventBus()
+    svc = _service(Session, _ResumableGraph(), bus=bus)
+    async with Session() as s:
+        s.add(models.Task(task_uid="rs1", user_id=1, workflow="creatives",
+                          status="awaiting_persona"))
+        await s.commit()
+
+    q = bus.subscribe("rs1")
+    captured = {}
+
+    async def fake_submit(user_id, runner):
+        captured["runner"] = runner
+        return True
+
+    svc.manager.submit = fake_submit  # type: ignore[assignment]
+    await svc.submit_decision("rs1", "1", {"action": "approve"})
+    await captured["runner"]()
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    start = next(e for e in events if e.get("kind") == "start")
+    # Персона утверждена — дальше тексты, остановка 03.
+    assert start["stage"] == 3
+
+
+@pytest.mark.asyncio
 async def test_collect_recipe_snapshots_human_decisions(tmp_path):
     """Рецепт собирает то, что решил человек: победитель, персона, карточка
     знаний, метафора и её комментарии."""

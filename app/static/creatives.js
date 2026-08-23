@@ -42,6 +42,10 @@
   // подписью шага: сопоставлять русские подписи здесь значило бы гасить полосу
   // при каждом переименовании шага на сервере. 0 — маршрут в покое.
   let liveStage = 0;
+  // Сколько единиц работы внутри текущей остановки позади. Числа приходят с
+  // сервера рядом с подписью — по той же причине, что и номер остановки.
+  let liveDone = 0;
+  let liveTotal = 0;
 
   const feedList = $("feedList");
   const feedCount = $("feedCount");
@@ -160,14 +164,22 @@
     return wrap;
   }
 
-  // Что лежит в ящике — зависит от состояния работы. Идущий прогон не
-  // открывается: показывать нечего, живой шаг стоит на самой строке.
+  // Что лежит в ящике — зависит от состояния работы.
   const STOP_PANEL = {
     awaiting_persona: "personaPanel",
     awaiting_text: "textPanel",
     awaiting_image: "imagePanel",
   };
   const HITL_PANELS = ["personaPanel", "textPanel", "imagePanel"];
+
+  // Вид содержимого ящика. Пустая строка значит «открывать нечего»: провалившийся
+  // и отменённый прогон рассказывают всё одной строкой, ящик им не нужен.
+  function drawerKind(t) {
+    if (STOP_PANEL[t.status]) return "stop";
+    if (t.status === "done") return "done";
+    if (t.status === "queued" || t.status === "running") return "build";
+    return "";
+  }
 
   // Панель остановки лежит в ящике строки как перемещённый узел, а не копия:
   // обработчики на ней навешаны при загрузке страницы и пересборку не переживут.
@@ -181,12 +193,27 @@
     });
   }
 
+  // Живая сборка одна на страницу — ящик раскрыт всегда один. Полотно крутит
+  // кадры через requestAnimationFrame, и брошенный без stop() экземпляр
+  // продолжал бы рисовать в оторванный от документа canvas до конца сессии.
+  let build = null;                       // { uid, cv, prog }
+  function dropBuild(box) {
+    if (build && box.contains(build.cv)) { build.prog.stop(); build = null; }
+  }
+
+  // Единственный обряд очистки ящика. Порядок обязателен: сначала вынуть чужое
+  // и остановить своё, и только потом стирать. Пока таких мест было три и каждое
+  // помнило порядок само, ровно одно из них про него забывало.
+  function clearBox(box) {
+    stowPanels(box);
+    dropBuild(box);
+    box.innerHTML = "";
+  }
+
   function toggleRow(uid) {
     const t = byUid(uid);
     const p = stateEls.get(uid);
     if (!t || !p) return;
-    if (t.status === "queued" || t.status === "running") return;
-    if (t.status === "failed" || t.status === "cancelled") return;
     if (p.wrap.classList.contains("is-open")) { closeRow(uid); return; }
     openRow(uid);
   }
@@ -201,24 +228,35 @@
     // отсюда прыжок вверх, — а панель остановки при этом умирала, и следующий
     // клик молча не делал ничего.
     if (p.wrap.classList.contains("is-open")) return;
+    // Решаем ДО первого действия: пустой ящик не должен стоить другому строке
+    // закрытия, а живая сборка не должна заводиться раньше, чем остановлена
+    // предыдущая — второй экземпляр остался бы крутить кадры без владельца.
+    if (!drawerKind(t)) return;               // открывать нечего — строка молчит
     // Открыт всегда один ящик: два раскрытых прогона рядом — это снова каша.
     stateEls.forEach((_, other) => { if (other !== uid) closeRow(other); });
-    stowPanels(p.panel);
-    p.panel.innerHTML = "";
-    const stop = STOP_PANEL[t.status];
-    if (stop) p.panel.appendChild($(stop));   // перемещение узла, а не копия
-    else if (t.status === "done") fillDoneDrawer(t, p.panel);
-    else return;                              // открывать нечего — строка молчит
+    fillDrawer(t, p);
     p.wrap.classList.add("is-open");
     p.hit.setAttribute("aria-expanded", "true");
+  }
+
+  // Наполняет ящик под текущее состояние и запоминает вид. Возвращает вид или
+  // пустую строку, если показывать нечего.
+  function fillDrawer(t, p) {
+    const kind = drawerKind(t);
+    clearBox(p.panel);
+    p.drawerKind = kind;
+    if (kind === "stop") p.panel.appendChild($(STOP_PANEL[t.status]));  // перенос узла, не копия
+    else if (kind === "done") fillDoneDrawer(t, p.panel);
+    else if (kind === "build") fillBuildDrawer(t, p.panel);
+    return kind;
   }
 
   function closeRow(uid) {
     const p = stateEls.get(uid);
     if (!p || !p.wrap.classList.contains("is-open")) return;
     // Панель возвращается в хранилище живой: узел тот же, обработчики те же.
-    stowPanels(p.panel);
-    p.panel.innerHTML = "";
+    clearBox(p.panel);
+    p.drawerKind = "";
     p.wrap.classList.remove("is-open");
     p.hit.setAttribute("aria-expanded", "false");
   }
@@ -248,6 +286,61 @@
     box.appendChild(body);
   }
 
+  // Идущий прогон: каркас партии, по которому идёт фронт сборки. Раньше строка
+  // в работе просто не открывалась — «показывать нечего», — и место, куда
+  // человек жмёт чаще всего, было единственным глухим. Показывать есть что:
+  // предмет заказа. Двенадцать плиток 1:2 — те самые 12 баннеров 300×600, а не
+  // отвлечённая крутилка, которая одинаково крутится в любом приложении.
+  // Полотно декоративное: словами то же самое говорит живая строка состояния
+  // на самой строке, и дублировать её подписью в ящике незачем. Отсюда
+  // role="img" с постоянным именем — что это за картинка, а не сколько там
+  // процентов: имя, меняющееся с каждым событием шага, экранный диктор читал бы
+  // вслух десятки раз за прогон.
+  function fillBuildDrawer(t, box) {
+    const body = el("div", "work__build");
+    const cv = document.createElement("canvas");
+    cv.className = "build";
+    cv.dataset.frame = "tiles";
+    cv.setAttribute("role", "img");
+    cv.setAttribute("aria-label", "Ход сборки партии");
+    body.appendChild(cv);
+    box.appendChild(body);
+    // Без модуля ящик остаётся пустым, но строка раскрывается и закрывается как
+    // все прочие: отсутствие украшения не должно ломать поведение.
+    const prog = window.CloudAscii ? window.CloudAscii.progress(cv) : null;
+    if (!prog) return;
+    build = { uid: t.task_uid, cv, prog };
+    prog.set(buildFrac(t)).start();
+  }
+
+  // Доля для фронта. Считанного числа ГОТОВЫХ баннеров у экрана нет: сборку в
+  // шаблоны сервер шлёт одним шагом. Поэтому фронт идёт по маршруту — по тем же
+  // остановкам, что подсвечены выше, — и уточняется счётом ВНУТРИ остановки.
+  // Картинка при этом не утверждает, что готово столько баннеров: вся партия
+  // размечена метками с первой секунды, а фронт означает, докуда дошла работа.
+  // Ровно так же читается полоса маршрута, и второй правды на экране не заводим.
+  //
+  // Остановки неравны по времени, и делить полосу поровну — врать: на 04 висят
+  // двенадцать сетевых генераций, это больше половины прогона, а бриф уже позади
+  // в момент, когда строка вообще появилась. Веса — оценка по числу единиц
+  // работы; настоящие секунды по узлам приходят в конце, в breakdown события
+  // done, и по ним эти числа и уточняются.
+  const STOP_WEIGHT = [0.05, 0.10, 0.20, 0.52, 0.13];
+  function buildFrac(t) {
+    const live = t.task_uid === taskUid;
+    const stage = (live && liveStage) || STAGE_OF_STATUS[t.status] || 1;
+    // Доля внутри остановки — только у живой задачи и только когда сервер
+    // прислал счёт числами. Разбирать её из подписи шага регуляркой значило бы
+    // читать текст, написанный для человека: правка формулировки на сервере
+    // молча останавливала бы полосу.
+    const within =
+      live && liveTotal > 0 ? Math.min(1, Math.max(0, liveDone / liveTotal)) : 0;
+    let acc = 0;
+    for (let i = 0; i < stage - 1 && i < STOP_WEIGHT.length; i++) acc += STOP_WEIGHT[i];
+    acc += (STOP_WEIGHT[stage - 1] || 0) * within;
+    return Math.min(1, Math.max(0, acc));
+  }
+
   function fillActs(t) {
     const p = stateEls.get(t.task_uid);
     if (!p) return;
@@ -267,9 +360,9 @@
 
   function renderFeed() {
     // Лента пересобирается целиком, и раскрытый ящик исчезает вместе со строкой.
-    // Панель остановки в нём — перемещённый узел, вынимаем до очистки.
-    stowPanels(feedList);
-    feedList.innerHTML = "";
+    // Панель остановки в нём — перемещённый узел, а сборка — живой кадровый
+    // цикл: и то и другое надо вынуть до очистки, обряд один на все места.
+    clearBox(feedList);
     stateEls.clear();
     views = [];
     for (const t of tasks) {
@@ -334,6 +427,19 @@
     p.bar.hidden = !(t.status === "queued" || t.status === "running");
     paintRoute();
     if (p.actsKey !== actsKeyOf(t)) fillActs(t);
+    if (!open) return;
+    // Раскрытый ящик обязан догонять состояние. Прогон уходит из работы в
+    // остановку и обратно, не закрываясь: без пересборки в ящике так и остался
+    // бы каркас сборки, пока строка уже просит решения. Пересобираем только на
+    // СМЕНЕ вида — событие шага приходит по нескольку раз в секунду, и полная
+    // пересборка на каждом гасила бы поле ввода прямо под курсором.
+    const kind = drawerKind(t);
+    if (kind !== p.drawerKind) {
+      if (!kind) closeRow(uid);
+      else fillDrawer(t, p);
+      return;
+    }
+    if (kind === "build" && build && build.uid === uid) build.prog.set(buildFrac(t));
   }
 
   async function loadTasks() {
@@ -395,8 +501,14 @@
         images: [], cards: [], brief: {}, created_at: new Date().toISOString(),
       });
       liveStep = "Запуск…";
-      liveStage = 0; // маршрут начинается заново — до первого события его ведёт статус
+      // Маршрут начинается заново — до первого события его ведёт статус.
+      liveStage = 0; liveDone = 0; liveTotal = 0;
       renderFeed();
+      // Прогон, который только что заказали, показывает свою сборку сам. Прятать
+      // её за клик значило бы завести ход работы и тут же его спрятать — а это
+      // единственное, что человеку сейчас интересно. Открываем один раз, при
+      // запуске: дальше ящик слушается человека, и закрытый обратно не всплывает.
+      openRow(taskUid);
       subscribe();
     } catch (e) {
       $("briefStatus").innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
@@ -450,6 +562,15 @@
     let d = {};
     try { d = JSON.parse(e.data) || {}; } catch (_) {}
     if (typeof d.stage === "number") liveStage = d.stage;
+    // Счёт внутри остановки едет с тем же событием. Приходит он не всегда —
+    // шаг без номера остановки считать нечем; тогда доля обнуляется, и фронт
+    // стоит на границе остановки, а не показывает счёт от прошлой.
+    if (typeof d.stage_total === "number" && d.stage_total > 0) {
+      liveDone = typeof d.stage_done === "number" ? d.stage_done : 0;
+      liveTotal = d.stage_total;
+    } else {
+      liveDone = 0; liveTotal = 0;
+    }
     setStep(d.step || "…");
   }
 
@@ -501,6 +622,10 @@
     // Фаза — источник правды о том, где задача встала: восстановление после
     // перезагрузки приходит сюда без единого события шага.
     liveStage = STAGE_OF_STATUS[status] || liveStage;
+    // Развилка — конец остановки, а не её середина: прогон уже сделал всю
+    // работу этапа и ждёт человека. Ставим счёт «всё», чтобы восстановление
+    // после перезагрузки не отбрасывало фронт к началу остановки.
+    liveDone = 1; liveTotal = 1;
     syncState(taskUid);
     if (d.phase === "persona_approve") {
       renderPersona(d.persona || {}, d.kb_match);
@@ -967,7 +1092,7 @@
   async function onDone(d) {
     if (es) es.close();
     clearActive(); resetWinner();
-    liveStep = ""; liveStage = 0;
+    liveStep = ""; liveStage = 0; liveDone = 0; liveTotal = 0;
     closeHitl();
     setStartLock(false);
     $("briefStatus").textContent = d.result_url
@@ -981,7 +1106,7 @@
     clearActive(); resetWinner();
     let msg = "Сбой генерации.";
     try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
-    liveStep = ""; liveStage = 0;
+    liveStep = ""; liveStage = 0; liveDone = 0; liveTotal = 0;
     const t = byUid(taskUid);
     if (t) { t.status = "failed"; t.error = msg; }
     closeHitl();
@@ -994,7 +1119,7 @@
   function onCancelled(d) {
     if (es) es.close();
     clearActive(); resetWinner();
-    liveStep = ""; liveStage = 0;
+    liveStep = ""; liveStage = 0; liveDone = 0; liveTotal = 0;
     const t = byUid(taskUid);
     if (t) t.status = "cancelled";
     closeHitl();

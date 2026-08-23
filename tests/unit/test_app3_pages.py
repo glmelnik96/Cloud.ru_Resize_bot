@@ -123,6 +123,47 @@ def test_creatives_js_paints_route_by_stage_number(tmp_path, monkeypatch):
         assert ".stage" in js  # число едет рядом с подписью
 
 
+def test_creatives_js_reads_substage_count_as_numbers(tmp_path, monkeypatch):
+    """Счёт внутри остановки едет по SSE числами (stage_done/stage_total), а не
+    выковыривается регуляркой из русской подписи шага. Разбор подписи означал
+    бы, что правка формулировки на сервере молча останавливает полосу сборки."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        step = js.split("function onStep(e) {", 1)[1].split("\n  }", 1)[0]
+        assert "d.stage_total" in step and "d.stage_done" in step
+        # Регулярки «(n/m)» в файле больше нет вовсе.
+        assert "N_OF_M" not in js
+        # Счёт живёт рядом с номером остановки и гаснет вместе с ним.
+        assert "let liveDone = 0;" in js and "let liveTotal = 0;" in js
+        frac = js.split("function buildFrac(t) {", 1)[1].split("\n  }", 1)[0]
+        assert "liveDone / liveTotal" in frac
+
+
+def test_creatives_js_weights_route_stops_unequally(tmp_path, monkeypatch):
+    """Остановки неравны по времени: на 04 висят двенадцать сетевых генераций.
+    Делить полосу поровну — врать, что кромка стоит на месте полпрогона."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        line = [ln for ln in js.splitlines() if "const STOP_WEIGHT" in ln]
+        assert len(line) == 1
+        weights = [
+            float(x) for x in line[0].split("[", 1)[1].split("]", 1)[0].split(",")
+        ]
+        assert len(weights) == 5              # столько же, сколько остановок
+        assert abs(sum(weights) - 1.0) < 1e-9  # полоса доходит ровно до конца
+        assert weights[3] == max(weights)      # hero — самая долгая остановка
+        assert weights[3] > 0.5                # и это больше половины прогона
+
+
+def test_creatives_js_park_marks_stop_complete(tmp_path, monkeypatch):
+    """Развилка — конец остановки, а не её середина. Без этого F5 на парковке
+    отбрасывал бы фронт к началу уже пройденного этапа."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/creatives.js").text
+        awaiting = js.split("function onAwaiting(d, silent) {", 1)[1].split("\n  }", 1)[0]
+        assert "liveDone = 1; liveTotal = 1;" in awaiting
+
+
 def test_static_css_has_route_component(tmp_path, monkeypatch):
     """Полоса маршрута — служебный регистр канона (mono-caps 11/700/.09em) и
     ни одной рамки: состояние метится волоском через inset box-shadow."""
@@ -490,19 +531,29 @@ def test_open_row_does_not_reopen_itself(tmp_path, monkeypatch):
 
 
 def test_stop_panels_are_stowed_before_any_box_is_emptied(tmp_path, monkeypatch):
-    """Панель остановки — перемещённый узел с обработчиками, навешанными при
-    загрузке; innerHTML = "" убивает её насовсем. Возврат в хранилище поэтому
-    вынесен в отдельную функцию и вызывается перед КАЖДОЙ очисткой — включая
-    пересборку ленты, где узел раньше уничтожался вместе со строкой."""
+    """В ящике живут два хрупких постояльца: панель остановки — перемещённый
+    узел с обработчиками, навешанными при загрузке (innerHTML = "" убивает её
+    насовсем), и каркас сборки — кадровый цикл, который без stop() продолжает
+    рисовать в оторванный от документа canvas. Обряд очистки поэтому ровно один
+    на весь файл: пока их было три и каждое место помнило порядок само, ровно
+    одно про него забывало. Прямых innerHTML = "" по ящикам не остаётся."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         js = c.get("/static/creatives.js").text
         assert "function stowPanels(box) {" in js
-        for fn, box in (("function openRow(uid) {", "p.panel"),
+        clear = js.split("function clearBox(box) {", 1)[1].split("\n  }", 1)[0]
+        before = clear.split('box.innerHTML = ""', 1)[0]
+        assert "stowPanels(box)" in before
+        assert "dropBuild(box)" in before
+        for fn, box in (("function fillDrawer(t, p) {", "p.panel"),
                         ("function closeRow(uid) {", "p.panel"),
                         ("function renderFeed() {", "feedList")):
             body = js.split(fn, 1)[1].split("\n  }", 1)[0]
-            before = body.split(f'{box}.innerHTML = ""', 1)[0]
-            assert f"stowPanels({box})" in before, fn
+            assert f"clearBox({box})" in body, fn
+            assert f'{box}.innerHTML = ""' not in body, fn
+        # Оторванный от документа каркас обязан остановиться, иначе кадровый
+        # цикл живёт до конца сессии.
+        drop = js.split("function dropBuild(box) {", 1)[1].split("\n  }", 1)[0]
+        assert "build.prog.stop(); build = null;" in drop
         # Отказ «Открыть решение» больше не проглатывается молча.
         attach = js.split("async function attach(uid) {", 1)[1].split("\n  }", 1)[0]
         assert "catch (_) {}" not in attach
@@ -567,17 +618,24 @@ def test_feed_frame_is_replaced_by_the_floor_border(tmp_path, monkeypatch):
     ширина СТОЛБЦА, а не окна, и на типовом экране формула вырождается в свой
     минимум 24. Поле справа выходило вдвое уже левого, и строка стояла в раме
     с разными полями. Мера при этом не потеряна: как только столбец
-    перерастает 1176, поле начинает расти само."""
+    перерастает 1176, поле начинает расти само.
+
+    Средние 48 — колонка стыка, а не зазор: полотно осыпи стоит В границе.
+    Своё поле лента при этом сохраняет: осыпь — зона, а не край, и строка,
+    начинающаяся сразу за последней ячейкой зерна, читается наехавшей на неё.
+    Между зоной и содержимым — шаг канона 48. Мера в формуле правого поля
+    похудела на те же 48 — 100% здесь ширина СТОЛБЦА, а столбец отдал их под
+    стык; без поправки правое поле начинало бы расти на 48 позже."""
     with TestClient(_app(tmp_path, monkeypatch)) as c:
         css = c.get("/static/app.css").text
         assert ".feed { position: relative; isolation: isolate" not in css
-        assert "grid-template-columns: 360px 1fr" in css
-        rail = css.split(".rail { min-width: 0;", 1)[1].split("}", 1)[0]
+        assert "grid-template-columns: 360px 48px 1fr" in css
+        rail = css.split(".rail { grid-column: 1;", 1)[1].split("}", 1)[0]
         assert "position: sticky; top: 0;" in rail  # рельс стоит, работы едут мимо
         assert "height: 100vh; overflow: hidden auto" in rail
         assert "padding: 96px 48px 48px" in rail
-        feed = css.split(".feed { min-width: 0;", 1)[1].split("}", 1)[0]
-        assert "padding: 96px max(48px, calc((100% - 1176px) / 2)) 96px 48px" in feed
+        feed = css.split(".feed { grid-column: 3;", 1)[1].split("}", 1)[0]
+        assert "padding: 96px max(48px, calc((100% - 1128px) / 2)) 96px 48px" in feed
         assert "var(--sl-gut)" not in feed  # жёлоб внутри столбца вырождается
 
 
@@ -715,10 +773,108 @@ def test_stone_floor_reaches_the_bottom_of_the_page(tmp_path, monkeypatch):
         assert ".rail { --lp-ink" not in css
         # rsplit, а не split: первое вхождение селектора — это блок токенов выше,
         # геометрия подвала описана ниже, в его собственном правиле.
-        foot = css.rsplit("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
-        assert "margin-left: 0" in foot  # это уже узкий экран
-        wide = css.split("body.is-tool .lp-foot { gap:", 1)[1].split("}", 1)[0]
-        assert "margin-left: 360px" in wide
-        # В одну колонку обходить нечего: этажи встают стопкой, камень снизу.
+        # Подвал стоит В сетке, второй строкой третьей колонки. Отступа в 408
+        # больше нет и быть не должно: кромку камня задаёт сама колонка, а не
+        # число, которое обязано совпасть с двумя другими числами вручную.
+        wide = css.split("body.is-tool .lp-foot { grid-column: 3;", 1)[1].split("}", 1)[0]
+        assert "grid-row: 2" in wide
+        assert "margin-left" not in wide
+        assert "padding: 48px var(--page-pad) 48px 48px" in wide
+        # Пока подвал лежал снаружи сетки, стык кончался по низу ленты. Теперь
+        # стык растянут на обе строки — до самого низа страницы.
+        seam = css.split(".seam { grid-column: 2;", 1)[1].split("}", 1)[0]
+        assert "grid-row: 1 / -1" in seam
+        # В одну колонку раскладывать нечего: явная расстановка снимается
+        # целиком, иначе подвал уехал бы в несуществующую третью колонку.
         narrow = css.split("@media (max-width: 860px) {", 1)[1]
-        assert "margin-left: 0" in narrow.split("body.is-tool .lp-foot {", 1)[1].split("}", 1)[0]
+        assert (
+            ".rail, .seam, .feed, body.is-tool .lp-foot { grid-column: 1; grid-row: auto; }"
+            in narrow
+        )
+
+
+def test_floor_border_crumbles_instead_of_being_ruled(tmp_path, monkeypatch):
+    """Граница этажей осыпается зерном, а не проведена по линейке. Полотно
+    стоит МЕЖДУ этажами: модуль берёт оба цвета с соседей и не знает ни одного
+    селектора приложения — поэтому перекраска этажа подхватывается сама.
+
+    Ось модуль выбирает по форме полотна, а не по атрибуту. У портала этажи
+    лежат друг на друге (полотно широкое и низкое), здесь стоят рядом (узкое и
+    высокое), а на узком экране схлопываются обратно — и то же полотно
+    поворачивается само. Атрибут «ось» был бы вторым местом, где живёт та же
+    правда, и разошёлся бы с раскладкой молча."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/ascii.js").text
+        draw = js.split("function drawSeam(cv) {", 1)[1].split("\n  }", 1)[0]
+        # Форма, а не атрибут: слова «ось» в разметке нет вовсе.
+        assert "var vertical = boxH > boxW;" in draw
+        assert "cv.dataset.axis" not in js
+        assert "var t = vertical ? x / w : y / h;" in draw
+        # Свой прошлый размер снимается ДО замера, иначе полотно, однажды став
+        # вертикальным, оставалось бы таким на любом экране.
+        head = draw.split("cv.clientWidth", 1)[0]
+        assert "cv.style.width = ''" in head
+        assert "cv.style.height = ''" in head
+
+        css = c.get("/static/app.css").text
+        seam = css.split(".seam { grid-column: 2;", 1)[1].split("}", 1)[0]
+        assert "position: sticky; top: 0;" in seam   # стык липнет ровно как рельс
+        assert "width: 48px; height: 100vh" in seam
+        assert "background: var(--lp-ink)" in seam   # без JS — просто прямая граница
+        narrow = css.split("@media (max-width: 860px) {", 1)[1]
+        flat = narrow.split(".seam { position: static;", 1)[1].split("}", 1)[0]
+        # 100%, а не auto: auto у <canvas> — это его атрибут width, то есть
+        # размер растра, и полотно схлопывалось в квадрат 48×48.
+        assert "width: 100%; height: 48px" in flat
+
+        for path in ("/", "/webinar", "/library"):
+            html = c.get(path, headers=_HDR).text
+            assert '<canvas class="seam" data-ascii-seam aria-hidden="true">' in html
+            assert "/static/ascii.js" in html
+            # Между этажами, а не где придётся: цвета берутся с соседей.
+            between = html.split("</aside>", 1)[1].split('<section class="feed"', 1)[0]
+            assert "data-ascii-seam" in between
+
+
+def test_a_running_row_shows_what_is_being_built(tmp_path, monkeypatch):
+    """Строка в работе раскрывается и показывает предмет заказа: двенадцать
+    плиток 1:2 — те самые 12 баннеров 300×600. Раньше она была единственной
+    глухой: «показывать нечего». Каркас сменный именно ради этого — зашитый
+    слайд 16:9 из портала показывал бы не то, что собирается, а это ровно то
+    враньё, от которого экран уводили.
+
+    Фронт идёт по маршруту и уточняется там, где сервер умеет считать («n/m» на
+    hero-этапе). Числом ГОТОВЫХ баннеров он не притворяется: партия размечена
+    метками с первой секунды, а фронт означает, докуда дошла работа."""
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        js = c.get("/static/ascii.js").text
+        # Каркас выбирается разметкой, а не кодом приложения.
+        assert "FRAMES[cv.dataset.frame] || FRAMES.deck" in js
+        frames = js.split("var FRAMES = {", 1)[1].split("};", 1)[0]
+        assert "deck:" in frames and "tiles:" in frames
+        # 44×24 знака: при ширине 528 ячейка ровно 12×12, плитка 5×10 — это
+        # 60×120, то есть 300×600 в одну пятую.
+        assert "cols: 44, rows: 24, zone: zoneTiles" in frames
+        assert "var T_W = 5, T_H = 10," in js and "T_ROW = 6" in js
+
+        app = c.get("/static/creatives.js").text
+        kind = app.split("function drawerKind(t) {", 1)[1].split("\n  }", 1)[0]
+        assert '"build"' in kind
+        # Идущий прогон больше не отсекается на входе.
+        toggle = app.split("function toggleRow(uid) {", 1)[1].split("\n  }", 1)[0]
+        assert 't.status === "queued"' not in toggle
+        build = app.split("function fillBuildDrawer(t, box) {", 1)[1].split("\n  }", 1)[0]
+        assert 'cv.dataset.frame = "tiles"' in build
+        assert 'cv.setAttribute("role", "img")' in build   # картинка, а не текст
+        assert "prog.set(buildFrac(t)).start()" in build
+        frac = app.split("function buildFrac(t) {", 1)[1].split("\n  }", 1)[0]
+        assert "STOP_WEIGHT[stage - 1]" in frac
+        # Ящик догоняет состояние только на СМЕНЕ вида: пересборка на каждом
+        # событии шага гасила бы поле ввода прямо под курсором.
+        sync = app.split("function syncState(uid) {", 1)[1].split("\n  }", 1)[0]
+        assert "if (kind !== p.drawerKind) {" in sync
+        assert 'if (kind === "build" && build && build.uid === uid) build.prog.set' in sync
+
+        css = c.get("/static/app.css").text
+        rule = css.split(".build { --lp-key: var(--lp-key-text);", 1)[1].split("}", 1)[0]
+        assert "max-width: 528px; aspect-ratio: 11 / 6" in rule

@@ -67,6 +67,34 @@ _NODE_STAGE: dict[str, int] = {
     "render_all": _STAGE_BANNERS,
 }
 
+# Узлы каждой остановки в порядке конвейера — словарь выше записан по маршруту,
+# и порядок ключей здесь несущий, а не декоративный: из него берётся, какой по
+# счёту узел только что закончился.
+_STAGE_NODES: dict[int, list[str]] = {}
+for _node, _stage in _NODE_STAGE.items():
+    _STAGE_NODES.setdefault(_stage, []).append(_node)
+
+# Отбор фиксирован схемой: SelectionSet.selected — ровно 12 позиций, значит и
+# hero-картинок ровно столько же.
+_HERO_IMAGES = 12
+
+# Остановка 04 считает узлы и картинки ОДНОЙ шкалой. Двумя нельзя: два узла
+# пишут промпт и доводят счёт до конца, а потом генерация начинается с нуля —
+# кромка откатилась бы назад ровно там, где начинается самая долгая часть.
+_STAGE_UNITS: dict[int, int] = {
+    stage: len(nodes) + (_HERO_IMAGES if stage == _STAGE_HERO else 0)
+    for stage, nodes in _STAGE_NODES.items()
+}
+
+# С какой остановки маршрута возобновляется прогон после каждой из трёх
+# развилок. Без этого браузер получал «Продолжаю» без номера и держал полосу на
+# предыдущей остановке весь следующий отрезок.
+_RESUME_STAGE = {
+    "awaiting_persona": _STAGE_TEXTS,
+    "awaiting_text": _STAGE_HERO,
+    "awaiting_image": _STAGE_BANNERS,
+}
+
 # Non-terminal statuses count toward a user's open-session budget. App3 gates
 # create() by a DB count of these (not TaskManager.has_capacity) because parked
 # tasks legitimately sit open for a long time.
@@ -253,9 +281,15 @@ class CreativesService:
 
         payload = Command(resume=decision)
 
+        # Номер остановки берём из ТОЙ развилки, с которой сняли задачу: после
+        # решения прогон уже стоит на следующей остановке, и полоса обязана
+        # переехать сразу, а не ждать первого закончившегося узла.
+        resume_stage = _RESUME_STAGE.get(prior)
+
         async def runner() -> None:
             await self._run_segment(
-                task_uid, user_id, payload, reporter, first_label="Продолжаю"
+                task_uid, user_id, payload, reporter,
+                first_label="Продолжаю", first_stage=resume_stage,
             )
 
         if not await self.manager.submit(user_id, runner):
@@ -314,7 +348,15 @@ class CreativesService:
             ]
             tmp_dir = self.manager.task_tmp(user_id, task_uid)
             total = len(prompts)
-            await reporter.start(f"Генерирую hero-картинки (0/{total})")
+            # Два узла остановки 04 к этому моменту уже позади: генерация идёт
+            # по промптам, которые они написали. Поэтому счёт продолжается с
+            # них, а не начинается заново — иначе кромка откатилась бы назад.
+            base_units = len(_STAGE_NODES[_STAGE_HERO])
+            total_units = base_units + total
+            await reporter.start(
+                f"Генерирую hero-картинки (0/{total})",
+                stage=_STAGE_HERO, stage_done=base_units, stage_total=total_units,
+            )
 
             sem = asyncio.Semaphore(_HERO_GEN_CONCURRENCY)
             done_count = 0
@@ -329,7 +371,10 @@ class CreativesService:
                     )
                 done_count += 1
                 await reporter.step(
-                    f"Генерирую hero-картинки ({done_count}/{total})", stage=_STAGE_HERO
+                    f"Генерирую hero-картинки ({done_count}/{total})",
+                    stage=_STAGE_HERO,
+                    stage_done=base_units + done_count,
+                    stage_total=total_units,
                 )
                 return {
                     "url": None,
@@ -496,7 +541,14 @@ class CreativesService:
                     final.update(update)
                 label = _NODE_LABELS.get(node_name)
                 if label:
-                    await reporter.step(label, stage=_NODE_STAGE.get(node_name))
+                    stage = _NODE_STAGE.get(node_name)
+                    done = total = None
+                    if stage is not None:
+                        done = _STAGE_NODES[stage].index(node_name) + 1
+                        total = _STAGE_UNITS[stage]
+                    await reporter.step(
+                        label, stage=stage, stage_done=done, stage_total=total
+                    )
         return final
 
     async def _park(self, task_uid: str, reporter: WebStatusReporter, value: Any) -> None:

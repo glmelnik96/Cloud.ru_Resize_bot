@@ -43,7 +43,7 @@
       <div class="tool__grid">
 
       {# Рельс — только бриф. Пять «шагов» пайплайна не пять экранов, а одна
-         задача: её остановки живут в плитке ленты и открываются лайтбоксом. #}
+         задача: её остановки живут в ящике строки ленты и раскрываются на месте. #}
       <aside class="rail">
         <form id="briefForm" class="gen-form">
           <label for="productSlug">
@@ -97,6 +97,11 @@
         </details>
       </aside>
 
+      {# Стык этажей. Модуль берёт оба цвета с соседей — поэтому полотно обязано
+         стоять между ними и не знает о палитре ничего. Без JS остаётся сплошная
+         полоса цвета рельса: граница просто снова становится прямой. #}
+      <canvas class="seam" data-ascii-seam aria-hidden="true"></canvas>
+
       {# Лента — единственное место жизни задачи. Строка = один прогон;
          пока баннеров нет, строка показывает его состояние. #}
       <section class="feed" id="feed">
@@ -127,13 +132,16 @@
         <p class="feed__foot" id="feedFoot" hidden>История и файлы хранятся {{ retention_hours }} ч, затем удаляются.</p>
       </section>
 
+      {# Подвал стоит В сетке, второй строкой этажа камня. Снаружи он был блоком
+         под страницей: стык кончался по низу ленты, и последние полторы сотни
+         пикселей граница снова шла прямой линией. #}
+      <footer class="lp-foot">
+        <a href="{{ prefix }}/library">Библиотека знаний</a>
+        <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
+      </footer>
+
       </div><!-- /.tool__grid -->
     </section>
-
-    <footer class="lp-foot">
-      <a href="{{ prefix }}/library">Библиотека знаний</a>
-      <a href="{{ prefix }}/webinar">Вебинарные ресайзы</a>
-    </footer>
   </main>
 
   {# Лайтбокс — просмотр баннера, и только он. Остановки пайплайна отсюда ушли:
@@ -256,6 +264,7 @@
 
   </div>
 
+  <script src="{{ prefix }}/static/ascii.js?v=20260823v1" defer></script>
   <script>window.APP_PREFIX = "{{ prefix }}";</script>
   <script src="{{ prefix }}/static/creatives.js?v=20260823v1"></script>
 </body>

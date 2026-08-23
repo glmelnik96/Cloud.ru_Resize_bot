@@ -30,7 +30,14 @@ class WebStatusReporter:
             {"kind": "queued", "queue_pos": queue_pos, "eta_sec": self.eta_sec},
         )
 
-    async def start(self, first_step: str, *, stage: int | None = None) -> None:
+    async def start(
+        self,
+        first_step: str,
+        *,
+        stage: int | None = None,
+        stage_done: int | None = None,
+        stage_total: int | None = None,
+    ) -> None:
         now = time.monotonic()
         self._run_started = now
         self._step_started = now
@@ -39,15 +46,29 @@ class WebStatusReporter:
             self.task_uid,
             {
                 "kind": "start", "step": first_step, "stage": stage,
+                "stage_done": stage_done, "stage_total": stage_total,
                 "eta_sec": self.eta_sec, "ts": time.time(),
             },
         )
 
-    async def step(self, name: str, *, stage: int | None = None) -> None:
+    async def step(
+        self,
+        name: str,
+        *,
+        stage: int | None = None,
+        stage_done: int | None = None,
+        stage_total: int | None = None,
+    ) -> None:
         """`stage` — номер остановки маршрута (1..5), по которому браузер метит
         полосу прогресса. Число, а не подпись: подпись шага — текст для
         человека, её правка не должна гасить подсветку. None означает «шаг
-        остановку не меняет» — браузер оставляет ту, что уже подсвечена."""
+        остановку не меняет» — браузер оставляет ту, что уже подсвечена.
+
+        `stage_done` / `stage_total` — сколько единиц работы ВНУТРИ этой
+        остановки уже позади. Тоже числами и по той же причине: счёт
+        «(3/12)» уже ехал внутри подписи, и браузер выковыривал его оттуда
+        регуляркой — то есть разбирал текст, написанный для человека. Любая
+        правка формулировки молча останавливала бы полосу сборки."""
         now = time.monotonic()
         if self._step_started is not None and self._sub:
             self._step_times.append((self._sub, now - self._step_started))
@@ -55,7 +76,11 @@ class WebStatusReporter:
         self._step_started = now
         await self.bus.publish(
             self.task_uid,
-            {"kind": "step", "step": name, "stage": stage, "ts": time.time()},
+            {
+                "kind": "step", "step": name, "stage": stage,
+                "stage_done": stage_done, "stage_total": stage_total,
+                "ts": time.time(),
+            },
         )
 
     # ── App3 interactive HITL ────────────────────────────────────
